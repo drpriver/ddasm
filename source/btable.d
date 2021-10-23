@@ -843,7 +843,7 @@ struct BTable(K, V, Allocator, size_t small_size=16){
             vrange.popFront;
         }
     }
-    size_t 
+    size_t
     allocated_size(){
         return common.bdata.data.length;
     }

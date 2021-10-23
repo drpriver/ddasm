@@ -10,28 +10,28 @@ struct ZString {
         return ptr? length+1 : 0;
     }
 
-    bool 
+    bool
     opEquals(const(char)[] other){
         return ptr[0 .. length] == other;
     }
 
-    const(char)[] 
+    const(char)[]
     opIndex(){ return ptr[0 .. length]; }
 
-    char 
+    char
     opIndex(size_t i){ return ptr[i]; }
 
-    size_t[2] 
+    size_t[2]
     opSlice(size_t start, size_t end){
         size_t[2] result = [start, end];
         return result;
     }
 
-    const(char)[] 
+    const(char)[]
     opIndex(size_t[2] slice){ return ptr[slice[0] .. slice[1]]; }
 
 
-    size_t 
+    size_t
     opDollar(){ return length; }
 
     this(const(char)[] str){

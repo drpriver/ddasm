@@ -291,7 +291,7 @@ print_argparse_help(const ArgParser* p, int columns){
         putchar('\n');
         }
     if(p.positional.length){
-        puts("Positional Arguments:\n" 
+        puts("Positional Arguments:\n"
            ~ "---------------------");
         foreach(ref arg; p.positional){
             print_arg_help(&arg, columns);
@@ -314,7 +314,7 @@ print_argparse_help(const ArgParser* p, int columns){
     }
 }
 
-void 
+void
 print_wrapped_help(const(char)[] help, int columns){
     if(!help.length){
         putchar('\n');

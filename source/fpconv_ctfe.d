@@ -231,11 +231,11 @@ double build_double(Fp fp)
   else
   {
      bits = fp.frac - hiddenbit;
-     bits |= ((ulong(fp.exp + expbias) << fracbits) & expmask); 
+     bits |= ((ulong(fp.exp + expbias) << fracbits) & expmask);
   }
 
   double r = *(cast(double*) &bits);
-  return r; 
+  return r;
 }
 
 static assert (build_fp(double.max).build_double == double.max);
@@ -535,10 +535,10 @@ int fpconv_dtoa(double d, /*ref char[24]*/ char* dest)
        return ++str_len;
     }
 
-   // manually inlined is_special 
+   // manually inlined is_special
 
     bool is_nan = ((bits & expmask) == expmask);
-   
+
     if (is_nan)
     {
         // this case is unlikely

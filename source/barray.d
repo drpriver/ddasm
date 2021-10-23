@@ -11,7 +11,7 @@ struct Barray(T, Allocator){
         ensure_total(needed);
     }
 
-    void 
+    void
     ensure_total(size_t needed){
         if(bdata.data.length >= needed)
             return;
@@ -21,7 +21,7 @@ struct Barray(T, Allocator){
         bdata.good_resize(new_capacity);
     }
 
-    void 
+    void
     push(in T item){
         *alloc_item() = cast()item;
     }

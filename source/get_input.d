@@ -472,14 +472,14 @@ redisplay(LineState* ls){
         memcpy(seq.ptr+seq_pos, ls.prompt.ptr, plen);
         seq_pos += plen;
     }
-    else 
+    else
         return;
     // Copy the visible section of the buffer.
     if(seq_pos + len < LINESIZE){
         memcpy(seq.ptr+seq_pos, buff, len);
         seq_pos += len;
         }
-    else 
+    else
         return;
     // Erase anything remaining on this line to the right.
     enum ERASERIGHT = "\x1b[0K";

@@ -25,20 +25,20 @@ struct Mallocator {
     }
 
     static
-    void[] 
+    void[]
     realloc(void*data, size_t orig_size, size_t new_size){
         void* result = .realloc(cast(void*)data, new_size);
         return result[0..new_size];
     }
 
     static
-    void 
+    void
     free(const(void)* ptr, size_t size){
         .free(cast(void*)ptr);
     }
 
     static
-    size_t 
+    size_t
     good_size(size_t size){
         version(darwin){
             size_t result = malloc_good_size(size);
@@ -142,7 +142,7 @@ struct LinkAllocator(Allocator){
         return result;
     }
 
-    void 
+    void
     free(const(void)*ptr, size_t size){
         if(!ptr) return;
         auto link = (cast(LinkAllocation*)ptr)-1;
@@ -173,7 +173,7 @@ struct LinkAllocator(Allocator){
 //
 // This is similar to LinkAllocator, but it stores the
 // allocations in a dynamic array instead of a linked list.
-// This means the allocations themselves don't need to be 
+// This means the allocations themselves don't need to be
 // intruded and you don't have to do pointer chasing.
 // However, it means realloc is slower as the allocation
 // has to be found in an array.
@@ -283,7 +283,7 @@ struct RecordingAllocator(Allocator){
 
 //
 // Arena Allocator
-// 
+//
 struct Arena {
     enum ARENA_PAGE_SIZE = 4096;
     enum ARENA_SIZE = ARENA_PAGE_SIZE*64;
@@ -390,7 +390,7 @@ struct ArenaAllocator(BaseAllocator){
     LinkAllocator!BaseAllocator big_allocator;
 
     static
-    size_t 
+    size_t
     good_size(size_t size){
         return round_size_up(size);
     }
@@ -504,7 +504,7 @@ struct ArenaAllocator(BaseAllocator){
             arena.used -= size;
     }
 
-    void 
+    void
     free_all(){
         Arena* a = arena;
         while(a){
@@ -844,12 +844,12 @@ struct RcAllocator(Allocator){
         }
     }
     static
-    void 
+    void
     rc_free(RcAllocation* rc){
         allocator.free(rc, rc.size+RcAllocation.sizeof);
     }
     static
-    Rc!T 
+    Rc!T
     rc_alloc(T)(){
         void[] buff = alloc(T.sizeof);
         return Rc!T(cast(T*)buff.ptr);
@@ -862,7 +862,7 @@ struct RcAllocator(Allocator){
         return Rc!(T[])(p);
     }
     static
-    Rc!T 
+    Rc!T
     rc_zalloc(T)(){
         void[] buff = zalloc(T.sizeof);
         return Rc!T(cast(T*)buff.ptr);
@@ -885,7 +885,7 @@ struct RcAllocation {
 
 struct Rc(T)if(!is(T == U[], U)){
     T* pointer;
-    void 
+    void
     release(){
         auto rc = (cast(RcAllocation*)pointer)-1;
         assert(rc.count);
@@ -897,7 +897,7 @@ struct Rc(T)if(!is(T == U[], U)){
             rc.count--;
         }
     }
-    void 
+    void
     retain(){
         auto rc = (cast(RcAllocation*)pointer)-1;
         rc.count++;
@@ -915,7 +915,7 @@ struct Rc(T)if(!is(T == U[], U)){
 }
 struct Rc(T) if(is(T == U[], U)){
     T data;
-    void 
+    void
     release(){
         auto rc = (cast(RcAllocation*)data.ptr)-1;
         assert(rc.count);
@@ -934,7 +934,7 @@ struct Rc(T) if(is(T == U[], U)){
         rc.rc_realloc(&rc, rc.size, typeof(T.init.ptr[0]).sizeof*N);
         data = (cast(typeof(T.init.ptr[0])*)rc.buff.ptr)[0 .. N];
     }
-    void 
+    void
     retain(){
         auto rc = (cast(RcAllocation*)data.ptr)-1;
         rc.count++;
@@ -977,7 +977,7 @@ struct LoggingAllocator(Allocator){
             return result;
         }
 
-        void[] 
+        void[]
         realloc(void*data, size_t orig_size, size_t new_size){
             fprintf(stderr, "realloc: %p, %zu, %zu requested\n", data, orig_size, new_size);
             void[] result = allocator.realloc(data, orig_size, new_size);
@@ -985,13 +985,13 @@ struct LoggingAllocator(Allocator){
             return result;
         }
 
-        void 
+        void
         free(const(void)* ptr, size_t size){
             fprintf(stderr, "freeing: %p, %zu\n", ptr, size);
             return allocator.free(ptr, size);
         }
         static if(__traits(hasMember, allocator, "free_all"))
-            void 
+            void
             free_all(){
                 fprintf(stderr, "freeing all\n");
                 allocator.free_all;
@@ -1026,7 +1026,7 @@ struct LoggingAllocator(Allocator){
         }
 
         static
-        void[] 
+        void[]
         realloc(void*data, size_t orig_size, size_t new_size){
             fprintf(stderr, "realloc: %p, %zu, %zu requested\n", data, orig_size, new_size);
             void[] result = allocator.realloc(data, orig_size, new_size);
@@ -1035,14 +1035,14 @@ struct LoggingAllocator(Allocator){
         }
 
         static
-        void 
+        void
         free(const(void)* ptr, size_t size){
             fprintf(stderr, "freeing: %p, %zu\n", ptr, size);
             return allocator.free(ptr, size);
         }
         static if(__traits(hasMember, allocator, "free_all"))
             static
-            void 
+            void
             free_all(){
                 fprintf(stderr, "freeing all\n");
                 allocator.free_all;
@@ -1251,7 +1251,7 @@ struct Box(T, Allocator, bool inline_allocator=false){
             data = null;
         }
 
-        void 
+        void
         resize(size_t N){
             static if(isVoid){
                 data = allocator.realloc(data.ptr, data.length, N);
@@ -1263,7 +1263,7 @@ struct Box(T, Allocator, bool inline_allocator=false){
                 data = (cast(U*)d.ptr)[0..N];
             }
         }
-        void 
+        void
         good_resize(size_t N){
             static if(isVoid){
                 N = allocator.good_size(N);
@@ -1271,14 +1271,14 @@ struct Box(T, Allocator, bool inline_allocator=false){
             }
             else {
                 N = allocator.good_size(N*U.sizeof)/U.sizeof;
-                auto d = allocator.realloc(cast(void*)data.ptr, data.length*U.sizeof, N*U.sizeof); 
+                auto d = allocator.realloc(cast(void*)data.ptr, data.length*U.sizeof, N*U.sizeof);
                 data = (cast(U*)d.ptr)[0..N];
             }
         }
     }
 }
 
-// 
+//
 // Turns a stateful allocator into a
 // "stateless" allocator by making it a
 // global.
@@ -1298,7 +1298,7 @@ struct GlobalAllocator(alias a){
     enum state_size = 0;
     static if(__traits(hasMember, a, "free_all"))
         static
-        void 
+        void
         free_all(){
             The.free_all;
         }
@@ -1314,19 +1314,19 @@ struct GlobalAllocator(alias a){
     }
 
     static
-    void[] 
+    void[]
     realloc(void*data, size_t orig_size, size_t new_size){
         return The.realloc(data, orig_size, new_size);
     }
 
     static
-    void 
+    void
     free(const(void)* ptr, size_t size){
         return The.free(ptr, size);
     }
 
     static
-    size_t 
+    size_t
     good_size(size_t size){
         return The.good_size(size);
     }
