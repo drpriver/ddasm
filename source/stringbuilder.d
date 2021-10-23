@@ -57,6 +57,18 @@ struct StringBuilder(Allocator){
         cursor = 0;
         return result;
     }
+    Box!(char[], Allocator)
+    take(){
+        typeof(return) result;
+        static if(Allocator.state_size)
+            result.allocator = allocator;
+        result.data = data[0..capacity];
+        result.resize(cursor);
+        data = null;
+        capacity = 0;
+        cursor = 0;
+        return result;
+    }
     const(char)[]
     borrow(){
         nul_terminate;
@@ -129,7 +141,7 @@ struct StringBuilder(Allocator){
         write(cast(int)value);
     }
 
-    void 
+    void
     write(uint value){
         char[10] buff = void;
         char* p = uint32_to_str_buffer(buff.ptr, value);
@@ -270,8 +282,8 @@ struct StringBuilder(Allocator){
                         case '\''   : write("\\'"); break;
                         case '"'    : write("\\\""); break;
                         case 0: .. case 8: case 14: .. case 26: case 28:  .. case 31: case 127: .. case 255:
-                            write("\\x"); 
-                            write(hextable[c]); 
+                            write("\\x");
+                            write(hextable[c]);
                             break;
                         default:
                             write(c);
@@ -297,8 +309,8 @@ struct StringBuilder(Allocator){
                 case '\''   : write("\\'"); break;
                 case '"'    : write("\\\""); break;
                 case 0: .. case 8: case 14: .. case 26: case 28:  .. case 31: case 127: .. case 255:
-                    write("\\x"); 
-                    write(hextable[c]); 
+                    write("\\x");
+                    write(hextable[c]);
                     break;
                 default:
                     write(c);
@@ -309,6 +321,27 @@ struct StringBuilder(Allocator){
 
     void write(T)(Escaped!T e){
         escaped(e.val);
+    }
+    static if(Allocator.state_size){
+        static
+        Box!(char[], Allocator)
+        mwrite(R...)(Allocator* a, R args){
+            StringBuilder sb;
+            sb.allocator = a;
+            foreach(a; args)
+                sb.write(a);
+            return sb.take;
+        }
+    }
+    else {
+        static
+        Box!(char[], Allocator)
+        mwrite(R...)(R args){
+            StringBuilder sb;
+            foreach(a; args)
+                sb.write(a);
+            return sb.take;
+        }
     }
 }
 

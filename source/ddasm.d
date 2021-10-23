@@ -112,7 +112,7 @@ int main(int argc, char** argv){
         const char* HISTORYFILE = "ddasm.history";
         history.load_history(HISTORYFILE);
         scope(exit) {
-            history.dump(HISTORYFILE); 
+            history.dump(HISTORYFILE);
             history.cleanup;
         }
         char[4096] buff = void;
@@ -185,7 +185,7 @@ BUILTINS(){
         table.allocator = &va;
         __gshared Function Printf1 = {
             native_function_aa: (uintptr_t fmt, uintptr_t arg){
-                                                    
+
                 if(devnull) return;
                 fprintf(stdout, cast(char*)fmt, arg);
                 },
@@ -240,7 +240,7 @@ struct Machine {
     bool badend;
     bool debugging;
     LineHistory!VAllocator debugger_history;
-    int 
+    int
     run(RunFlags flags = RunFlags.NONE)(LinkedProgram* prog, size_t stack_size, const char* debug_history_file = null){
         if(!prog.start || !prog.start.instructions_)
             return 1;
@@ -266,7 +266,7 @@ struct Machine {
         return result;
     }
 
-    int 
+    int
     call_function(Function* func){with(RegisterNames){
         switch(func.type) with(FunctionType){
             default:
@@ -375,7 +375,7 @@ struct Machine {
         return result;
     }
 
-    void 
+    void
     backtrace(){
         auto current = current_program.addr_to_function(cast(uintptr_t*)registers[RegisterNames.RIP]);
         fprintf(stderr, "[%zu] %.*s\n", call_depth, cast(int)current.name.length, current.name.ptr);
@@ -385,7 +385,7 @@ struct Machine {
         }
     }
 
-    void 
+    void
     print_current_function(uintptr_t* ip){
         auto func = current_program.addr_to_function(ip);
         size_t i = 0;
@@ -459,7 +459,7 @@ struct Machine {
             registers[RIP]+= uintptr_t.sizeof;
             return result;
         }
-        
+
         uintptr_t
         get_unsigned(){
             uintptr_t result = *cast(uintptr_t*)registers[RIP];
@@ -557,7 +557,7 @@ struct Machine {
         }
         else static if(flags & RunFlags.DISASSEMBLE_EACH){
             pragma(inline, true)
-            int 
+            int
             begin(Instruction inst){
                 auto ip = cast(uintptr_t*)registers[RIP];
                 ip--;
@@ -1282,7 +1282,7 @@ struct ParseContext{
             sb.write(a);
         errmess = sb.detach;
     }
-    int 
+    int
     parse_asm(){
         with(TokenType) with(AsmError) with(ArgumentKind){
             Token tok;
@@ -1375,6 +1375,10 @@ struct ParseContext{
                         err_print(tok, "Only function or variable declarations are legal at global scope, not ", Q(tok.text));
                         return PARSE_ERROR;
                     }
+                }
+                else {
+                    err_print(tok, "Only function or variable declarations are legal at global scope, not ", Q(tok.text));
+                    return PARSE_ERROR;
                 }
             }
         }
@@ -2197,7 +2201,7 @@ struct LinkContext {
     FunctionTable* builtins;
     UnlinkedProgram* unlinked;
     LinkedProgram prog;
-    ZString errmess;
+    Box!(char[], Mallocator) errmess;
 
     void
     err_print(A...)(Token tok, A args){
@@ -2205,7 +2209,7 @@ struct LinkContext {
         sb.FORMAT(tok.line, ':', tok.column, ": LinkError: ");
         foreach(a; args)
             sb.write(a);
-        errmess = sb.detach;
+        errmess = sb.take;
     }
 
     AsmError
@@ -2412,7 +2416,7 @@ struct LinkContext {
 
     AsmError
     link_variables(){with(ArgumentKind){
-        foreach(i, var; unlinked.variables[]){ 
+        foreach(i, var; unlinked.variables[]){
             uintptr_t* dest = &prog.variables.data[i];
             switch(var.value.kind){
                 default:
@@ -2606,8 +2610,9 @@ link_asm(VAllocator* allocator, VAllocator* temp_allocator, FunctionTable* built
     ctx.prog.source_text = prog.source_text;
     AsmError err = ctx.link();
     if(err){
-        fprintf(stderr, "%.*s\n", cast(int)ctx.errmess.length, ctx.errmess.ptr);
-        Mallocator.free(ctx.errmess.ptr, ctx.errmess.mem_size);
+        auto mess = ctx.errmess.data;
+        fprintf(stderr, "%.*s\n", cast(int)mess.length, mess.ptr);
+        ctx.errmess.dealloc;
         // TODO: cleanup ctx.prog
         return err;
     }
