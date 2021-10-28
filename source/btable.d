@@ -648,7 +648,7 @@ struct BTableCommon(K, V, Allocator){
     size_t capacity;
 }
 
-struct BTable(K, V, Allocator, size_t small_size=16){
+struct BTable(K, V, Allocator, size_t small_size=64){
     union {
         BTableCommon!(K, V, Allocator) common;
         BHashlessFlatTable!(K, V, Allocator) flat;

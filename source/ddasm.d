@@ -150,10 +150,14 @@ int main(int argc, char** argv){
         // fprintf(stderr, "Parsing failed\n");
         return err;
     }
-    auto temp_va = VAllocator.from!(Mallocator);
     LinkedProgram linked_prog;
     linked_prog.source_text = btext;
-    err = link_asm(&va, &temp_va, BUILTINS, &prog, &linked_prog);
+    {
+        ArenaAllocator!(Mallocator) arena;
+        scope(exit) arena.free_all;
+        auto temp_va = VAllocator.from(&arena);
+        err = link_asm(&va, &temp_va, BUILTINS, &prog, &linked_prog);
+    }
     if(err){
         // fprintf(stderr, "Linking failed\n");
         return err;
@@ -163,7 +167,7 @@ int main(int argc, char** argv){
         return 1;
     }
     Machine machine;
-    auto recorder = RecordingAllocator!Mallocator();
+    auto recorder = RecordingAllocator!(Mallocator)();
     machine.allocator = VAllocator.from(&recorder);
     if(!disassemble)
         err = machine.run(&linked_prog, 1024*1024);
@@ -179,7 +183,7 @@ FunctionTable*
 BUILTINS(){
     __gshared initialized = false;
     __gshared FunctionTable table;
-    __gshared VAllocator va = VAllocator.from!Mallocator;
+    __gshared VAllocator va = VAllocator.from!(Mallocator);
     if(!initialized){
         initialized = true;
         table.allocator = &va;

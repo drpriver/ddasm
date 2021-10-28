@@ -510,10 +510,10 @@ struct ArenaAllocator(BaseAllocator){
         while(a){
             Arena* to_free = a;
             a = a.prev;
-            base_allocator.free(a, Arena.sizeof);
+            base_allocator.free(to_free, Arena.sizeof);
         }
-        big_allocator.free_all();
         arena = null;
+        big_allocator.free_all();
     }
 }
 
