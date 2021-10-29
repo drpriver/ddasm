@@ -1296,7 +1296,7 @@ struct ParseContext{
                     tok = tokenizer.current_token_and_advance;
                 }
                 while(tok.type == POUND){
-                    while(tok.type == NEWLINE && tok.type != EOF){
+                    while(tok.type != NEWLINE && tok.type != EOF){
                         tok = tokenizer.current_token_and_advance;
                     }
                 }
