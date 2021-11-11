@@ -1134,6 +1134,17 @@ struct Token {
     }
 }
 
+Token
+skip_comment(ref Tokenizer tokenizer, Token tok){
+    with(TokenType){
+        if(tok.type != POUND) return tok;
+        while(tok.type != EOF && tok.type != NEWLINE){
+            tok = tokenizer.current_token_and_advance;
+        }
+        return tok;
+    }
+}
+
 struct Tokenizer {
     const(char)[] text;
     size_t cursor;
@@ -1295,11 +1306,7 @@ struct ParseContext{
                 while(tok.type == SPACE || tok.type == NEWLINE || tok.type == TAB){
                     tok = tokenizer.current_token_and_advance;
                 }
-                while(tok.type == POUND){
-                    while(tok.type != NEWLINE && tok.type != EOF){
-                        tok = tokenizer.current_token_and_advance;
-                    }
-                }
+                tok = tokenizer.skip_comment(tok);
                 if(tok.type == EOF)
                     break;
                 if(tok.type == IDENTIFIER){
@@ -1399,14 +1406,9 @@ struct ParseContext{
                 err_print(tok, "Unexpected end of file");
                 return PARSE_ERROR;
             }
+
             if(tok.type == POUND){
-                while(tok.type != NEWLINE){
-                    if(tok.type == EOF){
-                        err_print(tok, "Unexpected end of file");
-                        return PARSE_ERROR;
-                    }
-                    tok = tokenizer.current_token_and_advance;
-                }
+                tok = tokenizer.skip_comment(tok);
                 continue;
             }
             if(tok.type != IDENTIFIER){
@@ -1473,13 +1475,7 @@ struct ParseContext{
             if(tok.type == NEWLINE)
                 break;
             if(tok.type == POUND){
-                while(tok.type != NEWLINE){
-                    tok = tokenizer.current_token_and_advance;
-                    if(tok.type == EOF){
-                        err_print(tok, "Unexpected end of file");
-                        return PARSE_ERROR;
-                    }
-                }
+                tok = tokenizer.skip_comment(tok);
                 break;
             }
             auto arg = parse_one_argument(tok);
