@@ -92,7 +92,7 @@ struct StringBuilder(Allocator){
     void
     _check_remaining_size(size_t len){
         if(cursor + len > capacity){
-            size_t new_size = capacity?(capacity*3)/2:16;
+            size_t new_size = capacity?((capacity*3)/2):16;
             while(new_size < cursor+len)
                 new_size *= 2;
             if(new_size & 15)

@@ -4,6 +4,7 @@ import core.stdc.string: memcpy, memset;
 
 version(darwin){
 extern(C) size_t malloc_good_size(size_t);
+// extern(C) size_t malloc_size(const void* ptr);
 }
 //
 // Mallocator
@@ -27,7 +28,11 @@ struct Mallocator {
     static
     void[]
     realloc(void*data, size_t orig_size, size_t new_size){
+        // fprintf(stderr, "%d:realloc, sizeof(%p) = %zu\n", __LINE__, data, malloc_size(data));
+        // fprintf(stderr, "%d:realloc %p, %zu, %zu\n", __LINE__, data, orig_size, new_size);
         void* result = .realloc(cast(void*)data, new_size);
+        // fprintf(stderr, "%d:realloc %p\n", __LINE__, result);
+        // fprintf(stderr, "%d:realloc sizeof(%p): %zu\n", __LINE__, result, malloc_size(result));
         return result[0..new_size];
     }
 

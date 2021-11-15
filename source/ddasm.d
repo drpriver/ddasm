@@ -16,12 +16,23 @@ alias uintptr_t = size_t;
 bool devnull = false;
 
 version(Fuzz){
+    enum Fuzzing = true;
+    __gshared RecordingAllocator!Mallocator recorder;
     extern(C)
-    int LLVMFuzzerTestOneInput(const uint8_t *Data, size_t Size){
+    int LLVMFuzzerTestOneInput(const ubyte *Data, size_t Size){
+        const char* d = cast(const char*)Data;
+        const char[] data = d[0 .. Size];
+
+        UnlinkedProgram prog;
+        auto va = VAllocator.from!(GlobalAllocator!recorder);
+        int err = parse_asm_string(&va, data, &prog);
+        va.free_all;
         return 0;
     }
 }
 else {
+    enum Fuzzing = false;
+
 extern(C)
 int main(int argc, char** argv){
     bool disassemble = false;
@@ -92,7 +103,7 @@ int main(int argc, char** argv){
             print_argparse_help(&parser, columns);
             return 0;
         case VERSION:
-            fprintf(stdout, "ddasm V1337\n");
+            if(!Fuzzing)fprintf(stdout, "ddasm V1337\n");
             return 0;
         default:
             break;
@@ -100,7 +111,7 @@ int main(int argc, char** argv){
     auto error = parse_args(&parser, argc?argv[1..argc]:null, NONE);
     if(error) {
         print_argparse_error(&parser, error);
-        fprintf(stderr, "Use --help to see usage.\n");
+        if(!Fuzzing)fprintf(stderr, "Use --help to see usage.\n");
         return error;
     }
     }
@@ -110,10 +121,10 @@ int main(int argc, char** argv){
         auto fe = read_file!VAllocator(sourcefile.ptr, &va);
         if(fe.errored){
             version(Posix)
-                fprintf(stderr, "Unable to read from '%s': %s\n", sourcefile.ptr, strerror(fe.errored));
+                if(!Fuzzing)fprintf(stderr, "Unable to read from '%s': %s\n", sourcefile.ptr, strerror(fe.errored));
             // TODO: get error message from windows
             version(Windows)
-                fprintf(stderr, "Unable to read from '%s'\n", sourcefile.ptr);
+                if(!Fuzzing)fprintf(stderr, "Unable to read from '%s'\n", sourcefile.ptr);
             return fe.errored;
         }
         btext = cast(typeof(btext))fe.value;
@@ -160,7 +171,7 @@ int main(int argc, char** argv){
     UnlinkedProgram prog;
     int err = parse_asm_string(&va, btext.data, &prog);
     if(err){
-        // fprintf(stderr, "Parsing failed\n");
+        // if(!Fuzzing)fprintf(stderr, "Parsing failed\n");
         return err;
     }
     LinkedProgram linked_prog;
@@ -172,11 +183,11 @@ int main(int argc, char** argv){
         err = link_asm(&va, &temp_va, BUILTINS, &prog, &linked_prog);
     }
     if(err){
-        // fprintf(stderr, "Linking failed\n");
+        // if(!Fuzzing)fprintf(stderr, "Linking failed\n");
         return err;
     }
     if(!linked_prog.start){
-        fprintf(stderr, "Program needs a 'start' function as an entry point\n");
+        if(!Fuzzing)fprintf(stderr, "Program needs a 'start' function as an entry point\n");
         return 1;
     }
     Machine machine;
@@ -190,7 +201,7 @@ int main(int argc, char** argv){
     else
         err = machine.run!(RunFlags.DISASSEMBLE_EACH)(&linked_prog, 1024*1024);
     if(err){
-        fprintf(stderr, "Running failed\n");
+        if(!Fuzzing)fprintf(stderr, "Running failed\n");
         return err;
     }
     return 0;
@@ -215,7 +226,7 @@ BUILTINS(){
             native_function_aa: (uintptr_t fmt, uintptr_t arg){
 
                 if(devnull) return;
-                fprintf(stdout, cast(char*)fmt, arg);
+                if(!Fuzzing)fprintf(stdout, cast(char*)fmt, arg);
                 },
             type: FunctionType.NATIVE,
             n_args: 2,
@@ -224,7 +235,7 @@ BUILTINS(){
         __gshared Function Printf2 = {
             native_function_aaa: (uintptr_t fmt, uintptr_t arg, uintptr_t arg2){
                 if(devnull) return;
-                fprintf(stdout, cast(char*)fmt, arg, arg2);
+                if(!Fuzzing)fprintf(stdout, cast(char*)fmt, arg, arg2);
                 },
             type: FunctionType.NATIVE,
             n_args: 3,
@@ -233,7 +244,7 @@ BUILTINS(){
         __gshared Function Puts = {
             native_function_a: (uintptr_t arg){
                 if(devnull) return;
-                fprintf(stdout, "%s\n", cast(char*)arg);
+                if(!Fuzzing)fprintf(stdout, "%s\n", cast(char*)arg);
                 },
             type: FunctionType.NATIVE,
             n_args: 1,
@@ -388,13 +399,13 @@ struct Machine {
         foreach(i, reg; registers){
             foreach(ri; registerinfos){
                 if(ri.register == i){
-                    fprintf(stderr, "[%s] = %#zx\n", ri.NAME.ptr, reg);
+                    if(!Fuzzing)fprintf(stderr, "[%s] = %#zx\n", ri.NAME.ptr, reg);
                     break;
                 }
             }
         }
         for(size_t i = 0; i < 4; i++){
-            fprintf(stderr, "ip[%zu] = %#zx\n", i, (cast(uintptr_t*)registers[RegisterNames.RIP])[i]);
+            if(!Fuzzing)fprintf(stderr, "ip[%zu] = %#zx\n", i, (cast(uintptr_t*)registers[RegisterNames.RIP])[i]);
         }
         StringBuilder!VAllocator temp;
         temp.allocator = &allocator;
@@ -405,7 +416,7 @@ struct Machine {
             temp.write("\n     ");
         }
         auto text = temp.borrow;
-        fprintf(stderr, "Dis: %.*s\n", cast(int)text.length, text.ptr);
+        if(!Fuzzing)fprintf(stderr, "Dis: %.*s\n", cast(int)text.length, text.ptr);
     }
 
     int
@@ -424,10 +435,10 @@ struct Machine {
     void
     backtrace(){
         auto current = current_program.addr_to_function(cast(uintptr_t*)registers[RegisterNames.RIP]);
-        fprintf(stderr, "[%zu] %.*s\n", call_depth, cast(int)current.name.length, current.name.ptr);
+        if(!Fuzzing)fprintf(stderr, "[%zu] %.*s\n", call_depth, cast(int)current.name.length, current.name.ptr);
         for(ptrdiff_t i = call_depth-1; i >= 0; i--){
             auto fi = current_program.addr_to_function(cast(uintptr_t*)call_stack[i]);
-            fprintf(stderr, "[%zu] %.*s\n", i, cast(int)fi.name.length, fi.name.ptr);
+            if(!Fuzzing)fprintf(stderr, "[%zu] %.*s\n", i, cast(int)fi.name.length, fi.name.ptr);
         }
     }
 
@@ -448,7 +459,7 @@ struct Machine {
         }
         sb.write("end");
         auto text = sb.borrow;
-        fprintf(stderr, "\n%.*s\n", cast(int)text.length, text.ptr);
+        if(!Fuzzing)fprintf(stderr, "\n%.*s\n", cast(int)text.length, text.ptr);
     }
     enum {
         BEGIN_OK = 0,
@@ -495,7 +506,7 @@ struct Machine {
             sb.write("    ...\n");
         sb.write("end");
         auto text = sb.borrow;
-        fprintf(stderr, "\n%.*s\n", cast(int)text.length, text.ptr);
+        if(!Fuzzing)fprintf(stderr, "\n%.*s\n", cast(int)text.length, text.ptr);
     }
 
     int
@@ -620,7 +631,7 @@ struct Machine {
                 scope(exit) sb.cleanup;
                 disassemble_one_instruction(current_program, &sb, ip);
                 auto text = sb.borrow;
-                fprintf(stderr, "%.*s\n", cast(int)text.length, text.ptr);
+                if(!Fuzzing)fprintf(stderr, "%.*s\n", cast(int)text.length, text.ptr);
                 return BEGIN_OK;
             }
         }
@@ -1076,7 +1087,7 @@ struct Machine {
                     break;
                 case MSG:
                     if(auto b = begin(MSG)) return b;
-                    fprintf(stderr, "%s\n", cast(char*)get_unsigned);
+                    if(!Fuzzing)fprintf(stderr, "%s\n", cast(char*)get_unsigned);
                     break;
                 case MEMCPY_I:{
                     if(auto b = begin(MEMCPY_I)) return b;
@@ -1138,7 +1149,7 @@ parse_asm_string(VAllocator* allocator, const(char)[] text, UnlinkedProgram* pro
     ctx.prog.arrays.bdata.allocator = ctx.allocator;
     auto err = ctx.parse_asm();
     if(err){
-        fprintf(stderr, "%.*s\n", cast(int)ctx.errmess.length, ctx.errmess.ptr);
+        if(!Fuzzing)fprintf(stderr, "%.*s\n", cast(int)ctx.errmess.length, ctx.errmess.ptr);
         Mallocator.free(ctx.errmess.ptr, ctx.errmess.mem_size);
         ctx.prog.functions.cleanup;
         ctx.prog.variables.cleanup;
@@ -1250,15 +1261,16 @@ struct Tokenizer {
     }
     void
     _tokenizer_a_token(Token* tok){ with(TokenType){
+        tok.line = line;
+        tok.column = column;
         if(cursor == text.length){
-            tok._text = "";
+            tok._text = "(EOF)";
+            tok.length = 5;
             tok.type = EOF;
             return;
         }
         tok._text = &text[cursor];
         auto first_c = text[cursor];
-        tok.line = line;
-        tok.column = column;
         switch(first_c){
             // 93
             // 35
@@ -2183,7 +2195,7 @@ struct LinkedProgram {
         while(tok._text != first_char){
             tok = tokenizer.current_token_and_advance;
             if(tok.type == TokenType.EOF){
-                fprintf(stderr, "Unable to find: %p: %s\n", first_char, first_char);
+                if(!Fuzzing)fprintf(stderr, "Unable to find: %p: %s\n", first_char, first_char);
                 return tok;
             }
         }
@@ -2411,7 +2423,7 @@ struct LinkContext {
                             if(i < text.length - 3){
                                 auto v = parse_hex_inner(text[i+2 .. i+4]);
                                 if(v.errored){
-                                    fprintf(stderr, "parse_hex_inner failed: '%.*s'\n", 2, text.ptr+i+2);
+                                    if(!Fuzzing)fprintf(stderr, "parse_hex_inner failed: '%.*s'\n", 2, text.ptr+i+2);
                                     break;
                                 }
                                 sb.write(cast(char)v.value);
@@ -2684,7 +2696,7 @@ link_asm(VAllocator* allocator, VAllocator* temp_allocator, FunctionTable* built
     AsmError err = ctx.link();
     if(err){
         auto mess = ctx.errmess.data;
-        fprintf(stderr, "%.*s\n", cast(int)mess.length, mess.ptr);
+        if(!Fuzzing)fprintf(stderr, "%.*s\n", cast(int)mess.length, mess.ptr);
         ctx.errmess.dealloc;
         // TODO: cleanup ctx.prog
         return err;
