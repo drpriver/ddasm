@@ -252,12 +252,13 @@ struct StringBuilder(Allocator){
         }
         ubyte[8] b = void;
         memcpy(b.ptr, &value, 8);
-        size_t i = 0;
+        int i = 7;
         while(b[i] == 0){
-            i++;
+            i--;
         }
-        for(;i < 8; i++)
-            write(hextable[b[i]]);
+        for(int z = 0;z <= i; z++){
+            write(hextable[b[z]]);
+        }
     }
 
     void

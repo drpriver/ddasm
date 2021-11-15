@@ -15,12 +15,20 @@ alias uintptr_t = size_t;
 
 bool devnull = false;
 
+version(Fuzz){
+    extern(C)
+    int LLVMFuzzerTestOneInput(const uint8_t *Data, size_t Size){
+        return 0;
+    }
+}
+else {
 extern(C)
 int main(int argc, char** argv){
     bool disassemble = false;
     bool early_exit = false;
     bool force_interactive = false;
     bool no_interactive = false;
+    bool debugger = false;
     ZString sourcefile;
     with(ArgParseFlags) with(ArgToParseFlags) {
     ArgToParse[1] pos_args = [
@@ -31,7 +39,7 @@ int main(int argc, char** argv){
             ARGDEST(&sourcefile),
         },
     ];
-    ArgToParse[4] kw_args = [
+    ArgToParse[5] kw_args = [
         {
             "--force-interactive", null,
             "Force interactive mode when reading from stdin.",
@@ -52,6 +60,11 @@ int main(int argc, char** argv){
             "Print out the disassembly before executing each op",
             ARGDEST(&disassemble),
         },
+        {
+            "--debug", "-g", 
+            "Executes in debug mode",
+            ARGDEST(&debugger),
+        }
     ];
     enum {HELP=0, VERSION=1}
     ArgToParse[2] early_args = [
@@ -169,8 +182,11 @@ int main(int argc, char** argv){
     Machine machine;
     auto recorder = RecordingAllocator!(Mallocator)();
     machine.allocator = VAllocator.from(&recorder);
-    if(!disassemble)
-        err = machine.run(&linked_prog, 1024*1024);
+    if(debugger){
+        err = machine.run!(RunFlags.DEBUG)(&linked_prog, 1024*1024);
+    }
+    else if(!disassemble)
+        err = machine.run!(RunFlags.NONE)(&linked_prog, 1024*1024);
     else
         err = machine.run!(RunFlags.DISASSEMBLE_EACH)(&linked_prog, 1024*1024);
     if(err){
@@ -179,6 +195,14 @@ int main(int argc, char** argv){
     }
     return 0;
 }
+}
+
+struct timespec {
+	long tv_sec;
+	long tv_nsec;
+}
+extern(C) 
+int clock_gettime(int __clock_id, timespec *__tp);
 FunctionTable*
 BUILTINS(){
     __gshared initialized = false;
@@ -215,9 +239,21 @@ BUILTINS(){
             n_args: 1,
             n_ret: 0,
         };
+        __gshared Function Clock = {
+            native_function_r: (){
+                timespec tv;
+                clock_gettime(6, &tv);
+                auto result =  tv.tv_sec * 1000*1000*1000 + tv.tv_nsec;
+                return result;
+                },
+            type: FunctionType.NATIVE,
+            n_args: 0,
+            n_ret: 1,
+        };
         table["Printf1"] = FunctionInfo("Printf1", &Printf1);
         table["Printf2"] = FunctionInfo("Printf2", &Printf2);
         table["Puts"] = FunctionInfo("Puts", &Puts);
+        table["Clock"] = FunctionInfo("Clock", &Clock);
     }
     return &table;
 }
@@ -263,6 +299,12 @@ struct Machine {
             debugger_history.load_history(debug_history_file);
         }
         int result = run_interpreter!flags;
+        static if(flags & RunFlags.DEBUG){
+            if(result == BEGIN_CONTINUE){
+                registers[RegisterNames.RIP] -= uintptr_t.sizeof;
+                result = run_interpreter!(RunFlags.NONE);
+            }
+        }
         if(debug_history_file){
             debugger_history.dump(debug_history_file);
         }
@@ -408,6 +450,12 @@ struct Machine {
         auto text = sb.borrow;
         fprintf(stderr, "\n%.*s\n", cast(int)text.length, text.ptr);
     }
+    enum {
+        BEGIN_OK = 0,
+        BEGIN_BAD = 1,
+        BEGIN_CONTINUE = 2,
+        BEGIN_END = 3,
+    }
 
     void
     print_context(uintptr_t* ip){
@@ -508,11 +556,14 @@ struct Machine {
                     return (registers[RFLAGS] & (CARRY|ZERO)) == 0;
                 case LE:
                     return !!(registers[RFLAGS] & (CARRY|ZERO));
+                case GE:
+                    return (registers[RFLAGS] & CARRY) != CARRY;
                 case TRUE:
                     return 1;
                 case FALSE:
                     return 0;
-                default: return -1;
+                default: 
+                    return -1;
             }
         }
 
@@ -525,22 +576,22 @@ struct Machine {
                     auto len = get_input_line(&debugger_history, "> ", buff[]);
                     if(len < 0){
                         halted = true;
-                        return 1;
+                        return BEGIN_BAD;
                     }
                     if(!len){
-                        return 0;
+                        return BEGIN_OK;
                     }
                     switch(buff[0..len]){
                         case "next": case "n":
                             debugger_history.add_line(buff[0..len]);
-                            return 0;
+                            return BEGIN_OK;
                         case "c": case "continue":
                             debugger_history.add_line(buff[0..len]);
-                            return 2;
+                            return BEGIN_CONTINUE;
                         case "q": case "quit":
                             debugger_history.add_line(buff[0..len]);
                             halted = true;
-                            return 1;
+                            return BEGIN_END;
                         case "l": case "list":
                             debugger_history.add_line(buff[0..len]);
                             print_current_function((cast(uintptr_t*)registers[RIP])-1);
@@ -570,14 +621,14 @@ struct Machine {
                 disassemble_one_instruction(current_program, &sb, ip);
                 auto text = sb.borrow;
                 fprintf(stderr, "%.*s\n", cast(int)text.length, text.ptr);
-                return 0;
+                return BEGIN_OK;
             }
         }
         else {
             pragma(inline, true)
             int
             begin(Instruction inst){
-                return 0;
+                return BEGIN_OK;
             }
         }
 
@@ -666,6 +717,12 @@ struct Machine {
                     auto dst = get_reg;
                     auto rhs = cast(float_t*)get_reg;
                     *dst = cast(typeof(*dst))*rhs;
+                }break;
+                case NOT:{
+                    if(auto b = begin(NOT)) return b;
+                    auto dst = get_reg;
+                    auto rhs = get_reg;
+                    *dst = !rhs;
                 }break;
                 case FADD_I:{
                     if(auto b = begin(FADD_I)) return b;
@@ -892,6 +949,13 @@ struct Machine {
                         badend = true;
                         return err;
                     }
+                    if(f.type == FunctionType.NATIVE){
+                        if(!call_depth){
+                            halted = true;
+                            return 0;
+                        }
+                        registers[RIP] = call_stack[--call_depth];
+                    }
                 }break;
                 case TAIL_CALL_R:{
                     if(auto b = begin(TAIL_CALL_R)) return b;
@@ -901,6 +965,13 @@ struct Machine {
                         backtrace;
                         badend = true;
                         return err;
+                    }
+                    if(f.type == FunctionType.NATIVE){
+                        if(!call_depth){
+                            halted = true;
+                            return 0;
+                        }
+                        registers[RIP] = call_stack[--call_depth];
                     }
                 }break;
                 case RET:{
@@ -1421,8 +1492,8 @@ struct ParseContext{
                     return PARSE_ERROR;
                 }
                 auto end = func.instructions[$-1].instruction;
-                if(end != HALT && end != RET && end != ABORT){
-                    err_print(tok, "Last instruction of a function should be a halt, ret or abort.");
+                if(end != HALT && end != RET && end != ABORT && end != TAIL_CALL_I && end != TAIL_CALL_R){
+                    err_print(tok, "Last instruction of a function should be a halt, ret, tail_call or abort.");
                     return PARSE_ERROR;
                 }
                 break;
@@ -1862,6 +1933,7 @@ immutable InstructionInfo[Instruction.max+1] INSTRUCTION_INFOS = {
         I(BACKTRACE,        "BACKTRACE",        "bt"),
         I(ITOF,             "ITOF",             "itof", rr),
         I(FTOI,             "FTOI",             "ftoi", rr),
+        I(NOT,             "NOT",             "not", rr),
     ];
     foreach(index, ii; result)
         assert(index == ii.instruction, "mismatch for instruction ");
@@ -1985,6 +2057,7 @@ enum Instruction: uintptr_t {
     BACKTRACE,
     ITOF,
     FTOI,
+    NOT,
 }
 enum RegisterNames:uintptr_t {
     R0      = 0,  R1  =  1, R2  = 2,  R3 = 3, R4 = 4, R5 = 5, R6 = 6, R7 = 7, R8 = 8, R9 = 9,
@@ -2004,14 +2077,14 @@ enum RegisterNames:uintptr_t {
     RERROR = 20,
 }
 enum CmpMode: uintptr_t {
-   EQ,
-   NE,
-   LT,
-   GT,
-   GE,
-   LE,
-   TRUE,
-   FALSE,
+   EQ = 0,
+   NE = 1,
+   LT = 2,
+   GT = 3,
+   GE = 4,
+   LE = 5,
+   TRUE = 6,
+   FALSE = 7,
 }
 
 struct CmpModeInfo {
