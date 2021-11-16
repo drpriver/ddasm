@@ -119,7 +119,7 @@ parse_psize(const char[] s){ with(ParseNumberError){
         return IntegerResult!ulong(0LU, UNEXPECTED_END);
     if(s[0] != '0')
         return IntegerResult!ulong(0LU, INVALID_CHARACTER);
-    if(s[1] != 'p' && s[1] != 'p')
+    if(s[1] != 'p' && s[1] != 'P')
         return IntegerResult!ulong(0LU, INVALID_CHARACTER);
     auto result = parse_hex_inner(s[2..$]);
     if(result.errored) return result;

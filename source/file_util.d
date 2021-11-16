@@ -1,4 +1,4 @@
-import allocator;
+import box: Box;
 import core.stdc.string: memset;
 
 struct FileResult(Allocator) {

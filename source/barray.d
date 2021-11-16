@@ -1,9 +1,13 @@
-import allocator: Box, Mallocator;
+import allocator: Mallocator;
+import box: Box;
 import core.stdc.string: memmove, memcpy;
 
 struct Barray(T, Allocator){
     size_t count;
     Box!(T[], Allocator) bdata;
+
+    void
+    clear(){ count = 0; }
 
     void
     ensure_additional(size_t N){
@@ -116,6 +120,9 @@ struct Barray(T, Allocator){
             result.extend(values);
             return result;
         }
+    }
+    void opOpAssign(string op)(in T value){
+        push(value);
     }
 }
 

@@ -1,4 +1,4 @@
-import allocator;
+import box: Box;
 import zstring;
 import core.stdc.string: memcpy, memset;
 import core.simd;

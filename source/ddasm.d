@@ -10,6 +10,7 @@ import allocator;
 import barray;
 import parse_numbers: parse_hex_inner, parse_unsigned_human;
 import btable;
+import box: Box;
 
 alias uintptr_t = size_t;
 
@@ -52,7 +53,7 @@ int main(int argc, char** argv){
     ];
     ArgToParse[5] kw_args = [
         {
-            "--force-interactive", null,
+            "--force-interactive", "-i",
             "Force interactive mode when reading from stdin.",
             ARGDEST(&force_interactive),
         },
@@ -676,6 +677,22 @@ struct Machine {
                     auto dst = get_reg();
                     auto src = get_reg();
                     *dst = *src;
+                }break;
+                case LOCAL_READ:{
+                    if(auto b = begin(LOCAL_READ)) return b;
+                    auto dst = get_reg();
+                    auto offset = get_unsigned();
+                    auto src = cast(ubyte*)registers[RBP];
+                    src += offset;
+                    *dst = *cast(uintptr_t*)src;
+                }break;
+                case LOCAL_WRITE:{
+                    if(auto b = begin(LOCAL_WRITE)) return b;
+                    auto dst = cast(ubyte*)registers[RBP];
+                    auto offset = get_unsigned();
+                    dst += offset;
+                    auto src = get_reg();
+                    *cast(uintptr_t*)dst = *src;
                 }break;
                 case MOVE_I:{
                     if(auto b = begin(MOVE_I)) return b;
@@ -1880,6 +1897,7 @@ immutable InstructionInfo[Instruction.max+1] INSTRUCTION_INFOS = {
     immutable r = [REGISTER];
     immutable rr = [REGISTER, REGISTER];
     immutable ri = [REGISTER, IMM];
+    immutable ir = [IMM, REGISTER];
     immutable rrr = [REGISTER, REGISTER, REGISTER];
     immutable rri = [REGISTER, REGISTER, IMM];
     immutable rrrr = [REGISTER, REGISTER, REGISTER, REGISTER];
@@ -1890,6 +1908,8 @@ immutable InstructionInfo[Instruction.max+1] INSTRUCTION_INFOS = {
         I(NOP,              "NOP",              "nop"),
         I(READ,             "READ",             "read",  rr),
         I(READ_I,           "READ_I",           "read",  ri),
+        I(LOCAL_READ,       "LOCAL_READ",       "local_read", ri),
+        I(LOCAL_WRITE,      "LOCAL_WRITE",      "local_write", ir),
         I(WRITE_R,          "WRITE_R",          "write", rr),
         I(WRITE_I,          "WRITE_I",          "write", ri),
         I(MOVE_R,           "MOVE_R",           "move",  rr),
@@ -1979,7 +1999,7 @@ struct RegisterInfo {
     string name;
 }
 
-immutable RegisterInfo[27] registerinfos = [
+immutable RegisterInfo[28] registerinfos = [
     RegisterInfo(RegisterNames.R0,      "R0",       "r0"),
     RegisterInfo(RegisterNames.R1,      "R1",       "r1"),
     RegisterInfo(RegisterNames.R2,      "R2",       "r2"),
@@ -2004,6 +2024,7 @@ immutable RegisterInfo[27] registerinfos = [
     RegisterInfo(RegisterNames.ROUT2,   "ROUT2",    "rout2"),
     RegisterInfo(RegisterNames.RJUNK,   "RJUNK",    "rjunk"),
     RegisterInfo(RegisterNames.RSP,     "RSP",      "rsp"),
+    RegisterInfo(RegisterNames.RBP,     "RBP",      "rbp"),
     RegisterInfo(RegisterNames.RIP,     "RIP",      "rip"),
     RegisterInfo(RegisterNames.RFLAGS,  "RFLAGS",   "rflags"),
     RegisterInfo(RegisterNames.RERROR,  "RERROR",   "rerror"),
@@ -2014,6 +2035,8 @@ enum Instruction: uintptr_t {
     NOP,
     READ,
     READ_I,
+    LOCAL_READ,
+    LOCAL_WRITE,
     WRITE_R,
     WRITE_I,
     MOVE_R,
@@ -2084,9 +2107,10 @@ enum RegisterNames:uintptr_t {
     ROUT2   = R15,
     RJUNK = 16,
     RSP = 17,
-    RIP = 18,
-    RFLAGS = 19,
-    RERROR = 20,
+    RBP = 18,
+    RIP = 19,
+    RFLAGS = 20,
+    RERROR = 21,
 }
 enum CmpMode: uintptr_t {
    EQ = 0,

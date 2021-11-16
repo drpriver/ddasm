@@ -1,4 +1,5 @@
-import allocator: Box, Mallocator;
+import allocator: Mallocator;
+import box: Box;
 import core.stdc.string: memset, memcpy;
 struct Item(K, V) {
     K key;
