@@ -1,8 +1,8 @@
 .PHONY: ddasm
 ddasm:
-	ldc2 -i source/ddasm.d -I source -betterC
+	ldc2 -i source/ddasm.d -I source -betterC -g
 
-highlevel:
-	ldc2 -i source/highlevel.d -I source -g -betterC
-.PHONY: highlevel
-.DEFAULT_GOAL:= highlevel
+dsdasm:
+	ldc2 -i source/dsdasm.d -I source -betterC  -g
+.PHONY: dsdasm
+.DEFAULT_GOAL:= dsdasm
