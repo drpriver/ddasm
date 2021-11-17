@@ -694,6 +694,14 @@ struct Machine {
                     auto src = get_reg();
                     *cast(uintptr_t*)dst = *src;
                 }break;
+                case LOCAL_WRITE_I:{
+                    if(auto b = begin(LOCAL_WRITE_I)) return b;
+                    auto dst = cast(ubyte*)registers[RBP];
+                    auto offset = get_unsigned();
+                    dst += offset;
+                    auto src = get_unsigned();
+                    *cast(uintptr_t*)dst = src;
+                }break;
                 case MOVE_I:{
                     if(auto b = begin(MOVE_I)) return b;
                     auto dst = get_reg();
@@ -750,7 +758,13 @@ struct Machine {
                     if(auto b = begin(NOT)) return b;
                     auto dst = get_reg;
                     auto rhs = get_reg;
-                    *dst = !rhs;
+                    *dst = !*rhs;
+                }break;
+                case NEG:{
+                    if(auto b = begin(NEG)) return b;
+                    auto dst = get_reg;
+                    auto rhs = get_reg;
+                    *dst = ~*rhs;
                 }break;
                 case FADD_I:{
                     if(auto b = begin(FADD_I)) return b;
@@ -1894,6 +1908,7 @@ immutable InstructionInfo[Instruction.max+1] INSTRUCTION_INFOS = {
     // at link time.
     enum IMM = IMMEDIATE | STRING | FUNCTION | LABEL | ARRAY | VARIABLE;
     immutable i = [IMM];
+    immutable ii = [IMM, IMM];
     immutable r = [REGISTER];
     immutable rr = [REGISTER, REGISTER];
     immutable ri = [REGISTER, IMM];
@@ -1910,6 +1925,7 @@ immutable InstructionInfo[Instruction.max+1] INSTRUCTION_INFOS = {
         I(READ_I,           "READ_I",           "read",  ri),
         I(LOCAL_READ,       "LOCAL_READ",       "local_read", ri),
         I(LOCAL_WRITE,      "LOCAL_WRITE",      "local_write", ir),
+        I(LOCAL_WRITE_I,    "LOCAL_WRITE_I",    "local_write", ii),
         I(WRITE_R,          "WRITE_R",          "write", rr),
         I(WRITE_I,          "WRITE_I",          "write", ri),
         I(MOVE_R,           "MOVE_R",           "move",  rr),
@@ -1965,10 +1981,11 @@ immutable InstructionInfo[Instruction.max+1] INSTRUCTION_INFOS = {
         I(BACKTRACE,        "BACKTRACE",        "bt"),
         I(ITOF,             "ITOF",             "itof", rr),
         I(FTOI,             "FTOI",             "ftoi", rr),
-        I(NOT,             "NOT",             "not", rr),
+        I(NOT,              "NOT",              "not", rr),
+        I(NEG,              "NEG",              "neg", rr),
     ];
-    foreach(index, ii; result)
-        assert(index == ii.instruction, "mismatch for instruction ");
+    foreach(index, res; result)
+        assert(index == res.instruction, "mismatch for instruction ");
     return result;
     }
 }();
@@ -2037,6 +2054,7 @@ enum Instruction: uintptr_t {
     READ_I,
     LOCAL_READ,
     LOCAL_WRITE,
+    LOCAL_WRITE_I,
     WRITE_R,
     WRITE_I,
     MOVE_R,
@@ -2093,6 +2111,7 @@ enum Instruction: uintptr_t {
     ITOF,
     FTOI,
     NOT,
+    NEG,
 }
 enum RegisterNames:uintptr_t {
     R0      = 0,  R1  =  1, R2  = 2,  R3 = 3, R4 = 4, R5 = 5, R6 = 6, R7 = 7, R8 = 8, R9 = 9,
