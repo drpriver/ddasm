@@ -1,28 +1,29 @@
-alias str = const(char)[];
-
-
-import argparse;
-import term_util: stdin_is_interactive, get_cols;
-import core.stdc.string: strlen, strerror;
 import core.stdc.stdio: fprintf, stdout, stderr, stdin, fread;
-import zstring: ZString;
-import file_util: read_file, FileFlags;
 import allocator: Mallocator, ArenaAllocator;
 import box: Box;
 import stringbuilder: StringBuilder, P;
-import get_input: LineHistory, get_input_line;
-import barray: Barray, Array;
+import barray: Barray, Array, make_barray;
 import parse_numbers: parse_unsigned_human;
 import btable: Table;
+import bettercobject: BCObject;
 static import core.time;
+alias str = const(char)[];
 
 
 extern(C)
 int main(int argc, char** argv){
+    import zstring: ZString;
+    static import argparse;
+    static import core.stdc.string;
+    import term_util: stdin_is_interactive, get_cols;
+    import get_input: LineHistory, get_input_line;
+    import file_util: read_file, FileFlags;
+
     powerup();
     bool force_interactive = false;
     ZString sourcefile;
-    with(ArgParseFlags) with(ArgToParseFlags){
+    with(argparse)with(ArgParseFlags) with(ArgToParseFlags){
+        import core.stdc.stdio: fprintf, stdout, stderr;
         ArgToParse[1] pos_args = [
             {
                 "source", null,
@@ -51,7 +52,7 @@ int main(int argc, char** argv){
         ];
         int columns = get_cols();
         ArgParser parser = {
-            argc?argv[0][0..strlen(argv[0])]:"dscript",
+            argc?argv[0][0 .. core.stdc.string.strlen(argv[0])]:"dscript",
             "A davescript compiler",
             early_args,
             pos_args,
@@ -59,7 +60,7 @@ int main(int argc, char** argv){
             null,
             null,
         };
-        switch(check_for_early_out_args(&parser, argc?argv[1..argc]:null)){
+        switch(check_for_early_out_args(&parser, argc?argv[1 .. argc]:null)){
             case HELP:
                 print_argparse_help(&parser, columns);
                 return 0;
@@ -69,7 +70,7 @@ int main(int argc, char** argv){
             default:
                 break;
         }
-        auto error = parse_args(&parser, argc?argv[1..argc]:null, NONE);
+        auto error = parse_args(&parser, argc?argv[1 .. argc]:null, NONE);
         if(error) {
             print_argparse_error(&parser, error);
             fprintf(stderr, "Use --help to see usage.\n");
@@ -80,7 +81,7 @@ int main(int argc, char** argv){
     if(sourcefile.length){
         auto fe = read_file!Mallocator(sourcefile.ptr);
         if(fe.errored){
-                fprintf(stderr, "Unable to read from '%s': %s\n", sourcefile.ptr, strerror(fe.errored));
+                fprintf(stderr, "Unable to read from '%s': %s\n", sourcefile.ptr, core.stdc.string.strerror(fe.errored));
             // TODO: get error message from windows
             version(Windows)
                 fprintf(stderr, "Unable to read from '%s'\n", sourcefile.ptr);
@@ -126,34 +127,35 @@ int main(int argc, char** argv){
         bscript = sb.take.as!(const(ubyte)[]);
     }
     // fprintf(stderr, "%.*s\n", cast(int)bscript.data.length, bscript.data.ptr);
-    run(bscript.data);
+    Box!(char[], Mallocator) progtext;
+    int err = compile_to_dasm(bscript.data, &progtext);
+    if(err) return err;
+    fprintf(stdout, "%s\n", progtext.data.ptr);
     return 0;
 }
 
 
 int
-run(const ubyte[] source){
+compile_to_dasm(const ubyte[] source, Box!(char[], Mallocator)* progtext){
     ArenaAllocator!Mallocator arena;
     scope(exit) arena.free_all;
-    // Our only allocations are with this, so we can efficiently append to it.
-    Barray!(Token, typeof(arena)) tokens;
-    tokens.bdata.allocator = &arena;
+    auto tokens = make_barray!Token(&arena);
     auto tokenizer = Tokenizer!(typeof(tokens))(source, &tokens);
     int err = tokenizer.tokenizeTokens();
     if(err) return 1;
     tokens.bdata.resize(tokens.count);
-    auto parser = Parser(&arena, tokens[]);
-    Barray!(Statement*, typeof(arena)) statements;
-    statements.bdata.allocator = &arena;
-    err = parser.parse(statements);
+    auto parser = Parser!(typeof(arena))(&arena, tokens[]);
+    auto statements = make_barray!(Statement*)(&arena);
+    err = parser.parse(&statements);
     if(err) return 1;
     StringBuilder!Mallocator sb;
-    scope writer = new DasmWriter!(typeof(sb))();
-    writer.sb = &sb;
+    scope writer = new DasmWriter!(typeof(sb), typeof(arena))(&sb, &arena);
     err = writer.do_it(statements[]);
-    if(err) return err;
-    auto text = sb.detach;
-    fprintf(stdout, "%s\n", text.ptr);
+    if(err){
+        sb.cleanup;
+        return err;
+    }
+    *progtext = sb.take;
     return 0;
 }
 
@@ -773,8 +775,8 @@ struct VarStmt {
 
 // Parser
 
-struct Parser {
-    ArenaAllocator!Mallocator* allocator;
+struct Parser(A) {
+    A* allocator;
     Token[] tokens;
     int current = 0;
     int funcdepth = 0;
@@ -790,11 +792,11 @@ struct Parser {
             fprintf(stderr, "[line %d]: Parse Error at '%.*s': %.*s\n", line, cast(int)token.lexeme.length, token.lexeme.ptr, cast(int)message.length, message.ptr);
     }
 
-    int parse(R)(ref R result){
+    int parse(R)(R* result){
         while(!isAtEnd){
             auto s = declaration();
             if(ERROR_OCCURRED) return 1;
-            result ~= s;
+            *result ~= s;
         }
         return 0;
     }
@@ -812,8 +814,7 @@ struct Parser {
         if(ERROR_OCCURRED) return null;
         consume(LEFT_PAREN, "Expected a paren noob");
         if(ERROR_OCCURRED) return null;
-        Barray!(Token, typeof(*allocator)) params;
-        params.bdata.allocator = allocator;
+        auto params = make_barray!Token(allocator);
         if(!check(RIGHT_PAREN)){
             do {
                 if(params.count >= 255){
@@ -828,8 +829,7 @@ struct Parser {
         if(ERROR_OCCURRED) return null;
         consume(LEFT_BRACE, "Expect {");
         if(ERROR_OCCURRED) return null;
-        Barray!(Statement*, typeof(*allocator)) bod;
-        bod.bdata.allocator = allocator;
+        auto bod = make_barray!(Statement*)(allocator);
         int err = parse_statement_list(bod);
         if(err) return null;
         return FuncStatement.make(allocator, name, params[], bod[]);
@@ -960,8 +960,7 @@ struct Parser {
     }
 
     Statement* block(){
-        Barray!(Statement*, typeof(*allocator)) stmts;
-        stmts.bdata.allocator = allocator;
+        auto stmts = make_barray!(Statement*)(allocator);
         int err = parse_statement_list(stmts);
         if(err) return null;
         return Block.make(allocator, stmts[]);
@@ -1097,8 +1096,7 @@ struct Parser {
     }
 
     Expr* finishCall(Expr* callee){
-        Barray!(Expr*, typeof(*allocator)) args;
-        args.bdata.allocator = allocator;
+        auto args = make_barray!(Expr*)(allocator);
         if(!check(TokenType.RIGHT_PAREN)){
             do {
                 auto e = expression;
@@ -1167,27 +1165,6 @@ struct Parser {
     }
 }
 
-class MyObj {
-    override
-    int opCmp(Object o){
-        if(!o) return 1;
-        if(o is this) return 0;
-        return 1;
-    }
-    override
-    size_t toHash(){ return 0;}
-
-    override
-    bool opEquals(Object o){
-        return this is o;
-    }
-    override
-    string toString(){
-        return "MyObj";
-    }
-
-}
-
 struct RegisterAllocator {
     int alloced;
     int local_max = 0;
@@ -1231,12 +1208,16 @@ struct LabelAllocator {
     }
 }
 
-struct Analysis {
-    Array!str vars;
+struct Analysis(A) {
+    Barray!(str, A) vars;
     bool vars_on_stack;
 }
-class DasmAnalyzer: MyObj, Visitor!void, StatementVisitor!void {
-    Analysis analysis;
+class DasmAnalyzer(A): BCObject, Visitor!void, StatementVisitor!void {
+    @disable this();
+    Analysis!A analysis;
+    this(A* allocator){
+        analysis.vars.bdata.allocator = allocator;
+    }
 
     void visit(Binary* expr){
         expr.left.accept(this);
@@ -1298,15 +1279,22 @@ class DasmAnalyzer: MyObj, Visitor!void, StatementVisitor!void {
     }
 
 }
-class DasmWriter(SB): MyObj, RegVisitor!int, StatementVisitor!int {
+class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
+    A* allocator;
     SB* sb;
     RegisterAllocator regallocator;
     StackAllocator stackallocator;
     LabelAllocator labelallocator;
     Table!(str, int) locals;
     Table!(str, int) reglocals;
-    Analysis analysis;
+    Analysis!A analysis;
     bool ERROR_OCCURRED = false;
+
+    @disable this();
+    this(SB* s, A* a){
+        allocator = a;
+        sb = s;
+    }
 
     void
     error(Token token, str message){
@@ -1791,10 +1779,9 @@ class DasmWriter(SB): MyObj, RegVisitor!int, StatementVisitor!int {
             error(stmt.name, "Nested function");
             return -1;
         }
-        scope analyzer = new DasmAnalyzer();
+        scope analyzer = new DasmAnalyzer!(typeof(*allocator))(allocator);
         analyzer.visit(stmt);
         analysis = analyzer.analysis;
-        // std.stdio.stderr.writefln("used vars: %s", analysis.vars);
         funcdepth++;
         scope(exit) {
             funcdepth--;
@@ -1803,6 +1790,7 @@ class DasmWriter(SB): MyObj, RegVisitor!int, StatementVisitor!int {
             regallocator.reset();
             stackallocator.reset();
             labelallocator.reset();
+            analysis.vars.cleanup();
         }
         sb.writef("function % %\n", stmt.name.lexeme, stmt.params.length);
         int rarg = 10;
@@ -1968,5 +1956,3 @@ class DasmWriter(SB): MyObj, RegVisitor!int, StatementVisitor!int {
     }
 }
 
-extern(C) void _d_callfinalizer(void*p){
-}

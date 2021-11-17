@@ -127,6 +127,13 @@ struct Barray(T, Allocator){
     }
 }
 
+Barray!(T, A)
+make_barray(T, A)(A* allocator){
+    Barray!(T, A) result;
+    result.bdata.allocator = allocator;
+    return result;
+}
+
 struct Array(T){
     Barray!(T, Mallocator) array;
     alias array this;

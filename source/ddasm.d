@@ -2286,7 +2286,7 @@ disassemble_one_instruction(SB)(LinkedProgram* prog, SB* sb, uintptr_t* ip){
                             }
                         }
                         // default:
-                            sb.hex(value);
+                            sb.hex("0x", value);
                             handled:
                             continue;
                         case STRING:{
@@ -2309,7 +2309,7 @@ disassemble_one_instruction(SB)(LinkedProgram* prog, SB* sb, uintptr_t* ip){
                             }
                             if(!written){
                                 sb.write("REGISTER");
-                                sb.hex(value);
+                                sb.hex("0x", value);
                             }
                             continue;
                         }
@@ -2319,7 +2319,7 @@ disassemble_one_instruction(SB)(LinkedProgram* prog, SB* sb, uintptr_t* ip){
                             }
                             else {
                                 sb.write("CMPMODE");
-                                sb.hex(value);
+                                sb.hex("0x", value);
                             }
                             continue;
                         }
@@ -2330,7 +2330,7 @@ disassemble_one_instruction(SB)(LinkedProgram* prog, SB* sb, uintptr_t* ip){
         }
         else {
             sb.write("UNK");
-            sb.hex(inst);
+            sb.hex("0x", inst);
             return 1;
         }
     }
