@@ -27,7 +27,8 @@ struct Barray(T, Allocator){
 
     void
     push(in T item){
-        *alloc_item() = cast()item;
+        // this cast seems bad?
+        *alloc_item() = *cast(T*)&item;
     }
 
     T*
@@ -55,7 +56,7 @@ struct Barray(T, Allocator){
         ensure_additional(1);
         size_t n_move = count - index;
         memmove(bdata.data.ptr+index+1, bdata.data.ptr+index, n_move*T.sizeof);
-        bdata.data[index] = cast()value;
+        bdata.data[index] = *cast(T*)&value; // this cast seems bad?
         count++;
     }
     void

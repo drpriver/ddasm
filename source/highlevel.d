@@ -1,6 +1,3 @@
-static import std.stdio;
-static import std.file;
-static import core.time;
 alias str = const(char)[];
 
 
@@ -12,11 +9,12 @@ import zstring: ZString;
 import file_util: read_file, FileFlags;
 import allocator: Mallocator, ArenaAllocator;
 import box: Box;
-import stringbuilder: StringBuilder;
+import stringbuilder: StringBuilder, P;
 import get_input: LineHistory, get_input_line;
 import barray: Barray, Array;
 import parse_numbers: parse_unsigned_human;
 import btable: Table;
+static import core.time;
 
 
 extern(C)
@@ -35,7 +33,7 @@ int main(int argc, char** argv){
         ];
         ArgToParse[1] kw_args = [
             {
-                "--force-interactive", "-i", 
+                "--force-interactive", "-i",
                 "Force interactive command history mode when reading from stdin.",
                 ARGDEST(&force_interactive),
             },
@@ -127,7 +125,7 @@ int main(int argc, char** argv){
             sb.write(' ');
         bscript = sb.take.as!(const(ubyte)[]);
     }
-    fprintf(stderr, "%.*s\n", cast(int)bscript.data.length, bscript.data.ptr);
+    // fprintf(stderr, "%.*s\n", cast(int)bscript.data.length, bscript.data.ptr);
     run(bscript.data);
     return 0;
 }
@@ -145,11 +143,18 @@ run(const ubyte[] source){
     if(err) return 1;
     tokens.bdata.resize(tokens.count);
     auto parser = Parser(&arena, tokens[]);
-    Statement*[] statements;
+    Barray!(Statement*, typeof(arena)) statements;
+    statements.bdata.allocator = &arena;
     err = parser.parse(statements);
     if(err) return 1;
-    scope writer = new DasmWriter();
-    return writer.do_it(statements);
+    StringBuilder!Mallocator sb;
+    scope writer = new DasmWriter!(typeof(sb))();
+    writer.sb = &sb;
+    err = writer.do_it(statements[]);
+    if(err) return err;
+    auto text = sb.detach;
+    fprintf(stdout, "%s\n", text.ptr);
+    return 0;
 }
 
 enum TokenType: ubyte{
@@ -198,7 +203,7 @@ struct Tokenizer(B) {
 
     bool ERROR_OCCURRED = false;
 
-    void 
+    void
     error(int line, str message){
         ERROR_OCCURRED = true;
         fprintf(stderr, "[line %d]: Parse Error: %.*s\n", line, cast(int)message.length, message.ptr);
@@ -298,7 +303,7 @@ struct Tokenizer(B) {
             return;
         }
         current++; // closing '"'
-        auto value = cast(const char[])source[start+1 .. current-1]; 
+        auto value = cast(const char[])source[start+1 .. current-1];
         addToken(TokenType.STRING, value);
     }
     void do_number(){
@@ -411,13 +416,13 @@ void powerup(){
 // Expressions
 
 enum ExprType {
-    ASSIGN, 
-    BINARY, 
-    GROUPING, 
-    LITERAL, 
-    UNARY, 
-    VARIABLE, 
-    LOGICAL, 
+    ASSIGN,
+    BINARY,
+    GROUPING,
+    LITERAL,
+    UNARY,
+    VARIABLE,
+    LOGICAL,
     CALL,
 }
 
@@ -634,94 +639,136 @@ struct Statement {
 }
 
 struct ReturnStatement {
-    Statement stmt = Statement(StatementType.RETURN);
+    Statement stmt;
     Token keyword;
     Expr* value;
     static
-    Statement* make(Token k, Expr* v){
-        return cast(Statement*) new ReturnStatement(Statement(StatementType.RETURN), k, v);
+    Statement* make(A)(A* allocator, Token k, Expr* v){
+        auto data = allocator.alloc(typeof(this).sizeof);
+        auto p = cast(typeof(this)*)data.ptr;
+        p.stmt.type = StatementType.RETURN;
+        p.keyword = k;
+        p.value = v;
+        return &p.stmt;
     }
 }
 
 
 
 struct FuncStatement {
-    Statement stmt = Statement(StatementType.FUNCTION);
+    Statement stmt;
     Token name;
     Token[] params;
     Statement*[] body;
-}
-
-Statement* funcstmt(Token n, Token[] p, Statement*[] s){
-    return cast(Statement*) new FuncStatement(Statement(StatementType.FUNCTION), n, p, s);
+    static
+    Statement*
+    make(A)(A* allocator, Token n, Token[] params, Statement*[] s){
+        auto data = allocator.alloc(typeof(this).sizeof);
+        auto p = cast(typeof(this)*)data.ptr;
+        p.stmt.type = StatementType.FUNCTION;
+        p.name = n;
+        p.params = params;
+        p.body = s;
+        return &p.stmt;
+    }
 }
 
 struct WhileStatement {
-    Statement stmt = Statement(StatementType.WHILE);
+    Statement stmt;
     Expr* condition;
     Statement* statement;
-    this(Expr* c, Statement* s){
-        statement = s, condition = c;
-    }
-}
 
-Statement* whilestmt(Expr* c, Statement* s){
-    return cast(Statement*) new WhileStatement(c, s);
+    static
+    Statement*
+    make(A)(A* allocator, Expr* c, Statement* s){
+        auto data = allocator.alloc(typeof(this).sizeof);
+        auto p = cast(typeof(this)*)data.ptr;
+        p.stmt.type = StatementType.WHILE;
+        p.condition = c;
+        p.statement = s;
+        return &p.stmt;
+    }
 }
 
 struct IfStmt {
-    Statement stmt = Statement(StatementType.IF);
+    Statement stmt;
     Expr* condition;
     Statement* thenBranch;
     Statement* elseBranch;
-    this(Expr* cond, Statement* then, Statement* els=null){
-        condition = cond, thenBranch = then, elseBranch=els;
+
+    static
+    Statement*
+    make(A)(A* allocator, Expr* c, Statement* t, Statement* e){
+        auto data = allocator.alloc(typeof(this).sizeof);
+        auto p = cast(typeof(this)*)data.ptr;
+        p.stmt.type = StatementType.IF;
+        p.condition = c;
+        p.thenBranch = t;
+        p.elseBranch = e;
+        return &p.stmt;
     }
-}
-Statement* ifstatement(Expr* c, Statement* t, Statement* e){
-    return cast(Statement*) new IfStmt(c, t, e);
 }
 
 struct Print {
-    Statement stmt = Statement(StatementType.PRINT);
+    Statement stmt;
     Expr* expr;
-    this(Expr* e){expr = e;}
-}
 
-Statement* print(Expr* e){
-    return cast(Statement*) new Print(e);
-
+    static
+    Statement*
+    make(A)(A* allocator, Expr* e){
+        auto data = allocator.alloc(typeof(this).sizeof);
+        auto p = cast(typeof(this)*)data.ptr;
+        p.stmt.type = StatementType.PRINT;
+        p.expr = e;
+        return &p.stmt;
+    }
 }
 
 struct Block {
-    Statement stmt = Statement(StatementType.BLOCK);
+    Statement stmt;
     Statement*[] statements;
-    this(Statement*[] s){statements=s;}
-}
 
-Statement* block(Statement*[] statements){
-    return cast(Statement*)new Block(statements);
+    static
+    Statement*
+    make(A)(A* allocator, Statement*[] s){
+        auto data = allocator.alloc(typeof(this).sizeof);
+        auto p = cast(typeof(this)*)data.ptr;
+        p.stmt.type = StatementType.BLOCK;
+        p.statements = s;
+        return &p.stmt;
+    }
 }
 
 struct ExpressionStmt {
-    Statement stmt = Statement(StatementType.EXPRESSION);
+    Statement stmt;
     Expr* expr;
-    this(Expr* e){expr=e;}
-}
 
-Statement* exprstmt(Expr* e){
-    return cast(Statement*) new ExpressionStmt(e);
+    static
+    Statement*
+    make(A)(A* allocator, Expr* e){
+        auto data = allocator.alloc(typeof(this).sizeof);
+        auto p = cast(typeof(this)*)data.ptr;
+        p.stmt.type = StatementType.EXPRESSION;
+        p.expr = e;
+        return &p.stmt;
+    }
 }
 
 struct VarStmt {
-    Statement stmt = Statement(StatementType.VAR);
+    Statement stmt;
     Token name;
     Expr* initializer;
-    this(Token t, Expr* e){name=t, initializer=e;}
-}
 
-Statement* varstmt(Token name, Expr* e){
-    return cast(Statement*) new VarStmt(name, e);
+    static
+    Statement*
+    make(A)(A* allocator, Token t, Expr* i){
+        auto data = allocator.alloc(typeof(this).sizeof);
+        auto p = cast(typeof(this)*)data.ptr;
+        p.stmt.type = StatementType.VAR;
+        p.name = t;
+        p.initializer = i;
+        return &p.stmt;
+    }
 }
 
 // Parser
@@ -733,7 +780,7 @@ struct Parser {
     int funcdepth = 0;
     bool ERROR_OCCURRED = false;
 
-    void 
+    void
     error(Token token, str message){
         ERROR_OCCURRED = true;
         int line = token.line;
@@ -743,7 +790,7 @@ struct Parser {
             fprintf(stderr, "[line %d]: Parse Error at '%.*s': %.*s\n", line, cast(int)token.lexeme.length, token.lexeme.ptr, cast(int)message.length, message.ptr);
     }
 
-    int parse(out Statement*[] result){
+    int parse(R)(ref R result){
         while(!isAtEnd){
             auto s = declaration();
             if(ERROR_OCCURRED) return 1;
@@ -753,22 +800,23 @@ struct Parser {
     }
 
     Statement* declaration(){
-        if(match(TokenType.FUN)) return function_("function");
+        if(match(TokenType.FUN)) return function_!"function"();
         if(match(TokenType.VAR)) return varDeclaration();
         return statement();
     }
 
-    Statement* function_(string kind){with(TokenType){
+    Statement* function_(string kind)(){with(TokenType){
         funcdepth++;
         scope(exit) funcdepth--;
         Token name = consume(IDENTIFIER, "Expect " ~ kind ~ " name");
         if(ERROR_OCCURRED) return null;
         consume(LEFT_PAREN, "Expected a paren noob");
         if(ERROR_OCCURRED) return null;
-        Token[] params;
+        Barray!(Token, typeof(*allocator)) params;
+        params.bdata.allocator = allocator;
         if(!check(RIGHT_PAREN)){
             do {
-                if(params.length >= 255){
+                if(params.count >= 255){
                     error(peek(), "Too many params, can only have 255");
                     return null;
                 }
@@ -780,10 +828,11 @@ struct Parser {
         if(ERROR_OCCURRED) return null;
         consume(LEFT_BRACE, "Expect {");
         if(ERROR_OCCURRED) return null;
-        Statement*[] bod;
+        Barray!(Statement*, typeof(*allocator)) bod;
+        bod.bdata.allocator = allocator;
         int err = parse_statement_list(bod);
         if(err) return null;
-        return funcstmt(name, params, bod);
+        return FuncStatement.make(allocator, name, params[], bod[]);
     }}
 
     Statement* varDeclaration(){
@@ -795,7 +844,7 @@ struct Parser {
             if(!initializer) return null;
         }
         consume(TokenType.SEMICOLON, "Expect ';' after var decl");
-        return varstmt(name, initializer);
+        return VarStmt.make(allocator, name, initializer);
 
     }
     Statement* statement(){
@@ -821,7 +870,7 @@ struct Parser {
         }
         consume(TokenType.SEMICOLON, "Expect ';' after return");
         if(ERROR_OCCURRED) return null;
-        return ReturnStatement.make(keyword, value);
+        return ReturnStatement.make(allocator, keyword, value);
     }
 
     Statement* forStatement(){
@@ -851,11 +900,21 @@ struct Parser {
         Statement* body = statement();
         if(body is null) return null;
         if(increment !is null){
-            body = .block([body, exprstmt(increment)]);
+            auto p = allocator.alloc((Statement*).sizeof*2);
+            Statement*[] s = (cast(Statement**)p.ptr)[0 .. 2];
+            s[0] = body;
+            s[1] = ExpressionStmt.make(allocator, increment);
+            body = Block.make(allocator, s);
         }
         if(condition is null) condition = Literal.make(allocator, Token(TokenType.TRUE, "true", 0));
-        body = whilestmt(condition, body);
-        if(initializer !is null) body = .block([initializer, body]);
+        body = WhileStatement.make(allocator, condition, body);
+        if(initializer !is null) {
+            auto p = allocator.alloc((Statement*).sizeof*2);
+            Statement*[] s = (cast(Statement**)p.ptr)[0 .. 2];
+            s[0] = initializer;
+            s[1] = body;
+            body = Block.make(allocator, s);
+        }
         return body;
 
     }
@@ -869,7 +928,7 @@ struct Parser {
         if(ERROR_OCCURRED) return null;
         auto stmt = statement();
         if(stmt is null) return null;
-        return whilestmt(condition, stmt);
+        return WhileStatement.make(allocator, condition, stmt);
     }
 
     Statement* ifStatement(){
@@ -886,10 +945,10 @@ struct Parser {
             else_ = statement();
             if(else_ is null) return null;
         }
-        return ifstatement(condition, then, else_);
+        return IfStmt.make(allocator, condition, then, else_);
     }
 
-    int parse_statement_list(out Statement*[] stmts){
+    int parse_statement_list(ref Barray!(Statement*, typeof(*allocator)) stmts){
         while(!check(TokenType.RIGHT_BRACE) && !isAtEnd){
             auto d = declaration();
             if(d is null) return 1;
@@ -901,22 +960,23 @@ struct Parser {
     }
 
     Statement* block(){
-        Statement*[] stmts;
+        Barray!(Statement*, typeof(*allocator)) stmts;
+        stmts.bdata.allocator = allocator;
         int err = parse_statement_list(stmts);
         if(err) return null;
-        return .block(stmts);
+        return Block.make(allocator, stmts[]);
     }
 
     Statement* printStatement(){
         auto value = expression();
         consume(TokenType.SEMICOLON, "Expected ';' after value");
-        return print(value);
+        return Print.make(allocator, value);
     }
 
     Statement* expressionStatement(){
         auto value = expression();
         consume(TokenType.SEMICOLON, "Expected ';' after value");
-        return exprstmt(value);
+        return ExpressionStmt.make(allocator, value);
     }
 
     Expr* comma(){
@@ -1037,21 +1097,23 @@ struct Parser {
     }
 
     Expr* finishCall(Expr* callee){
-        Expr*[] args;
+        Barray!(Expr*, typeof(*allocator)) args;
+        args.bdata.allocator = allocator;
         if(!check(TokenType.RIGHT_PAREN)){
             do {
                 auto e = expression;
                 if(e is null) return null;
                 args ~= e;
-                if(args.length >= 255){
+                if(args.count >= 255){
                     error(peek, "Can't have more than 255 args");
                     return null;
                 }
             }while(match(TokenType.COMMA));
         }
+        if(args.count) args.bdata.resize(args.count);
         Token paren = consume(TokenType.RIGHT_PAREN, "Expect a ')' after args");
         if(ERROR_OCCURRED) return null;
-        return Call.make(allocator, callee, paren, args);
+        return Call.make(allocator, callee, paren, args[]);
     }
 
     Expr* primary(){with(TokenType){
@@ -1105,6 +1167,27 @@ struct Parser {
     }
 }
 
+class MyObj {
+    override
+    int opCmp(Object o){
+        if(!o) return 1;
+        if(o is this) return 0;
+        return 1;
+    }
+    override
+    size_t toHash(){ return 0;}
+
+    override
+    bool opEquals(Object o){
+        return this is o;
+    }
+    override
+    string toString(){
+        return "MyObj";
+    }
+
+}
+
 struct RegisterAllocator {
     int alloced;
     int local_max = 0;
@@ -1152,7 +1235,7 @@ struct Analysis {
     Array!str vars;
     bool vars_on_stack;
 }
-class DasmAnalyzer: Visitor!void, StatementVisitor!void {
+class DasmAnalyzer: MyObj, Visitor!void, StatementVisitor!void {
     Analysis analysis;
 
     void visit(Binary* expr){
@@ -1215,23 +1298,24 @@ class DasmAnalyzer: Visitor!void, StatementVisitor!void {
     }
 
 }
-class DasmWriter: RegVisitor!int, StatementVisitor!int {
+class DasmWriter(SB): MyObj, RegVisitor!int, StatementVisitor!int {
+    SB* sb;
     RegisterAllocator regallocator;
     StackAllocator stackallocator;
     LabelAllocator labelallocator;
-    int[string] locals;
-    int[string] reglocals;
+    Table!(str, int) locals;
+    Table!(str, int) reglocals;
     Analysis analysis;
     bool ERROR_OCCURRED = false;
 
-    void 
+    void
     error(Token token, str message){
         ERROR_OCCURRED = true;
         int line = token.line;
         fprintf(stderr, "[line %d]: Write Error at '%.*s': %.*s\n", line, cast(int)token.lexeme.length, token.lexeme.ptr, cast(int)message.length, message.ptr);
     }
 
-    void 
+    void
     error(int line, str message){
         ERROR_OCCURRED = true;
         fprintf(stderr, "[line %d]: Write Error: %.*s\n", line, cast(int)message.length, message.ptr);
@@ -1239,22 +1323,22 @@ class DasmWriter: RegVisitor!int, StatementVisitor!int {
 
     void save_reglocals(){
         for(int i = 0; i < regallocator.alloced; i++){
-            std.stdio.writefln("  push r%d", i);
+            sb.writef("  push r%\n", i);
         }
     }
     void restore_reglocals(){
         for(int i = regallocator.alloced-1; i >= 0; i--){
-            std.stdio.writefln("  pop r%d", i);
+            sb.writef("  pop r%\n", i);
         }
     }
 
     void restore_stack(){
-        std.stdio.writeln("  move rsp rbp");
-        std.stdio.writeln("  pop rbp");
+        sb.write("  move rsp rbp\n");
+        sb.write("  pop rbp\n");
     }
     void save_stack(){
-        std.stdio.writeln("  push rbp");
-        std.stdio.writeln("  move rbp rsp");
+        sb.write("  push rbp\n");
+        sb.write("  move rbp rsp\n");
     }
     int funcdepth;
     enum {TARGET_IS_CMP_FLAGS = -2};
@@ -1268,14 +1352,14 @@ class DasmWriter: RegVisitor!int, StatementVisitor!int {
         if(expr.right.type == ExprType.LITERAL && (cast(Literal*)expr.right).value.type == TokenType.NUMBER){
             auto lit = cast(Literal*)expr.right;
             auto rhs = cast(size_t)lit.value.number;
-            std.stdio.writefln("  scmp r%d %u", lhs, rhs);
+            sb.writef("  scmp r% %\n", lhs, rhs);
             return 0;
         }
         else {
             int rhs = regallocator.allocate();
             int res2 = expr.right.accept(this, rhs);
             if(res2 != 0) return res2;
-            std.stdio.writefln("  scmp r%d r%d", lhs, rhs);
+            sb.writef("  scmp r% r%\n", lhs, rhs);
             return 0;
         }
     }
@@ -1295,46 +1379,46 @@ class DasmWriter: RegVisitor!int, StatementVisitor!int {
                 auto rhs = cast(size_t) lit.value.number;
                 switch(expr.operator.type)with(TokenType){
                     case MINUS:
-                        std.stdio.writefln("  sub r%d r%d %u", target, lhs, rhs);
+                        sb.writef("  sub r% r% %\n", target, lhs, rhs);
                         break;
                     case PLUS:
-                        std.stdio.writefln("  add r%d r%d %u", target, lhs, rhs);
+                        sb.writef("  add r% r% %\n", target, lhs, rhs);
                         break;
                     case STAR:
-                        std.stdio.writefln("  mul r%d r%d %u", target, lhs, rhs);
+                        sb.writef("  mul r% r% %\n", target, lhs, rhs);
                         break;
                     case SLASH:
-                        std.stdio.writefln("  mul r%d rjunk r%d %u", target, lhs, rhs);
+                        sb.writef("  mul r% rjunk r% %\n", target, lhs, rhs);
                         break;
                     case BANG_EQUAL:
-                        std.stdio.writefln("  scmp r%d %u", lhs, rhs);
-                        std.stdio.writefln("  move r%d 0", target);
-                        std.stdio.writefln("  cmov ne r%d 1", target);
+                        sb.writef("  scmp r% %\n", lhs, rhs);
+                        sb.writef("  move r% 0\n", target);
+                        sb.writef("  cmov ne r% 1\n", target);
                         break;
                     case EQUAL_EQUAL:
-                        std.stdio.writefln("  scmp r%d %u", lhs, rhs);
-                        std.stdio.writefln("  move r%d 0", target);
-                        std.stdio.writefln("  cmov eq r%d 1", target);
+                        sb.writef("  scmp r% %\n", lhs, rhs);
+                        sb.writef("  move r% 0\n", target);
+                        sb.writef("  cmov eq r% 1\n", target);
                         break;
                     case GREATER:
-                        std.stdio.writefln("  scmp r%d %u", lhs, rhs);
-                        std.stdio.writefln("  move r%d 0", target);
-                        std.stdio.writefln("  cmov gt r%d 1", target);
+                        sb.writef("  scmp r% %\n", lhs, rhs);
+                        sb.writef("  move r% 0\n", target);
+                        sb.writef("  cmov gt r% 1\n", target);
                         break;
                     case GREATER_EQUAL:
-                        std.stdio.writefln("  scmp r%d %u", lhs, rhs);
-                        std.stdio.writefln("  move r%d 0", target);
-                        std.stdio.writefln("  cmov ge r%d 1", target);
+                        sb.writef("  scmp r% %\n", lhs, rhs);
+                        sb.writef("  move r% 0\n", target);
+                        sb.writef("  cmov ge r% 1\n", target);
                         break;
                     case LESS:
-                        std.stdio.writefln("  scmp r%d %u", lhs, rhs);
-                        std.stdio.writefln("  move r%d 0", target);
-                        std.stdio.writefln("  cmov lt r%d 1", target);
+                        sb.writef("  scmp r% %\n", lhs, rhs);
+                        sb.writef("  move r% 0\n", target);
+                        sb.writef("  cmov lt r% 1\n", target);
                         break;
                     case LESS_EQUAL:
-                        std.stdio.writefln("  scmp r%d %u", lhs, rhs);
-                        std.stdio.writefln("  move r%d 0", target);
-                        std.stdio.writefln("  cmov le r%d 1", target);
+                        sb.writef("  scmp r% %\n", lhs, rhs);
+                        sb.writef("  move r% 0\n", target);
+                        sb.writef("  cmov le r% 1\n", target);
                         break;
                     default:
                         error(expr.operator, "Unhandled binary op");
@@ -1345,16 +1429,16 @@ class DasmWriter: RegVisitor!int, StatementVisitor!int {
                 auto rhs = lit.value.string_;
                 switch(expr.operator.type)with(TokenType){
                     case MINUS:
-                        std.stdio.writefln("  sub r%d r%d %s", target, lhs, rhs);
+                        sb.writef("  sub r% r% %\n", target, lhs, rhs);
                         break;
                     case PLUS:
-                        std.stdio.writefln("  add r%d r%d %s", target, lhs, rhs);
+                        sb.writef("  add r% r% %\n", target, lhs, rhs);
                         break;
                     case STAR:
-                        std.stdio.writefln("  mul r%d r%d %s", target, lhs, rhs);
+                        sb.writef("  mul r% r% %\n", target, lhs, rhs);
                         break;
                     case SLASH:
-                        std.stdio.writefln("  mul r%d rjunk r%d %s", target, lhs, rhs);
+                        sb.writef("  mul r% rjunk r% %\n", target, lhs, rhs);
                         break;
                     default:
                         error(expr.operator, "Unhandled binary op");
@@ -1371,46 +1455,46 @@ class DasmWriter: RegVisitor!int, StatementVisitor!int {
             if(res != 0) return res;
             switch(expr.operator.type)with(TokenType){
                 case MINUS:
-                    std.stdio.writefln("  sub r%d r%d r%d", target, lhs, rhs);
+                    sb.writef("  sub r% r% r%\n", target, lhs, rhs);
                     break;
                 case PLUS:
-                    std.stdio.writefln("  add r%d r%d r%d", target, lhs, rhs);
+                    sb.writef("  add r% r% r%\n", target, lhs, rhs);
                     break;
                 case STAR:
-                    std.stdio.writefln("  mul r%d r%d r%d", target, lhs, rhs);
+                    sb.writef("  mul r% r% r%\n", target, lhs, rhs);
                     break;
                 case SLASH:
-                    std.stdio.writefln("  mul r%d rjunk r%d r%d", target, lhs, rhs);
+                    sb.writef("  mul r% rjunk r% r%\n", target, lhs, rhs);
                     break;
                 case BANG_EQUAL:
-                    std.stdio.writefln("  scmp r%d r%d", lhs, rhs);
-                    std.stdio.writefln("  move r%d 0", target);
-                    std.stdio.writefln("  cmov ne r%d 1", target);
+                    sb.writef("  scmp r% r%\n", lhs, rhs);
+                    sb.writef("  move r% 0\n", target);
+                    sb.writef("  cmov ne r% 1\n", target);
                     break;
                 case EQUAL_EQUAL:
-                    std.stdio.writefln("  scmp r%d r%d", lhs, rhs);
-                    std.stdio.writefln("  move r%d 0", target);
-                    std.stdio.writefln("  cmov eq r%d 1", target);
+                    sb.writef("  scmp r% r%\n", lhs, rhs);
+                    sb.writef("  move r% 0\n", target);
+                    sb.writef("  cmov eq r% 1\n", target);
                     break;
                 case GREATER:
-                    std.stdio.writefln("  scmp r%d r%d", lhs, rhs);
-                    std.stdio.writefln("  move r%d 0", target);
-                    std.stdio.writefln("  cmov gt r%d 1", target);
+                    sb.writef("  scmp r% r%\n", lhs, rhs);
+                    sb.writef("  move r% 0\n", target);
+                    sb.writef("  cmov gt r% 1\n", target);
                     break;
                 case GREATER_EQUAL:
-                    std.stdio.writefln("  scmp r%d r%d", lhs, rhs);
-                    std.stdio.writefln("  move r%d 0", target);
-                    std.stdio.writefln("  cmov ge r%d 1", target);
+                    sb.writef("  scmp r% r%\n", lhs, rhs);
+                    sb.writef("  move r% 0\n", target);
+                    sb.writef("  cmov ge r% 1\n", target);
                     break;
                 case LESS:
-                    std.stdio.writefln("  scmp r%d r%d", lhs, rhs);
-                    std.stdio.writefln("  move r%d 0", target);
-                    std.stdio.writefln("  cmov lt r%d 1", target);
+                    sb.writef("  scmp r% r%\n", lhs, rhs);
+                    sb.writef("  move r% 0\n", target);
+                    sb.writef("  cmov lt r% 1\n", target);
                     break;
                 case LESS_EQUAL:
-                    std.stdio.writefln("  scmp r%d r%d", lhs, rhs);
-                    std.stdio.writefln("  move r%d 0", target);
-                    std.stdio.writefln("  cmov le r%d 1", target);
+                    sb.writef("  scmp r% r%\n", lhs, rhs);
+                    sb.writef("  move r% 0\n", target);
+                    sb.writef("  cmov le r% 1\n", target);
                     break;
                 default:
                     error(expr.operator, "Unhandled binary op");
@@ -1424,14 +1508,14 @@ class DasmWriter: RegVisitor!int, StatementVisitor!int {
         if(target == TARGET_IS_NOTHING) return 0;
         double n;
         if(expr.value.type == TokenType.NUMBER){
-            std.stdio.writefln("  move r%d %u", target, cast(size_t)expr.value.number);
+            sb.writef("  move r% %\n", target, cast(size_t)expr.value.number);
             return 0;
         }
         if(expr.value.type == TokenType.STRING){
-            std.stdio.writefln("  move r%d \"%s\"", target, expr.value.string_);
+            sb.writef("  move r% \"%\"\n", target, expr.value.string_);
             return 0;
         }
-        
+
         return -1;
     }
     int visit(Unary* expr, int target){
@@ -1442,7 +1526,7 @@ class DasmWriter: RegVisitor!int, StatementVisitor!int {
         int v = expr.right.accept(this, target);
         if(v < 0) return v;
         if(target != TARGET_IS_NOTHING)
-            std.stdio.writefln("  not r%d r%d", target, target);
+            sb.writef("  not r% r%\n", target, target);
         return 0;
     }
     int visit(Call* expr, int target){
@@ -1454,12 +1538,12 @@ class DasmWriter: RegVisitor!int, StatementVisitor!int {
             if(res != 0) return res;
             if(i != expr.args.length-1){
                 //can elide the push/pop for last arg
-                std.stdio.writefln("  push r%d", rarg1+i);
+                sb.writef("  push r%\n", rarg1+i);
             }
             regallocator.reset_to(before);
         }
         for(int i = 1; i < expr.args.length; i++){
-            std.stdio.writefln("  pop r%d", rarg1+expr.args.length-1-i);
+            sb.writef("  pop r%\n", rarg1+expr.args.length-1-i);
         }
         bool called = false;
         // this is wrong but whatever
@@ -1470,7 +1554,7 @@ class DasmWriter: RegVisitor!int, StatementVisitor!int {
                 bool hack = (target == regallocator.alloced-1);
                 if(hack) regallocator.alloced--;
                 save_reglocals();
-                std.stdio.writefln("  call function %s", l.value.lexeme);
+                sb.writef("  call function %\n", l.value.lexeme);
                 restore_reglocals();
                 if(hack) regallocator.alloced++;
                 called = true;
@@ -1483,11 +1567,11 @@ class DasmWriter: RegVisitor!int, StatementVisitor!int {
             if(res != 0) return res;
             regallocator.reset_to(before);
             save_reglocals();
-            std.stdio.writefln("  call r%d", func);
+            sb.writef("  call r%\n", func);
             restore_reglocals();
         }
         if(target != TARGET_IS_NOTHING)
-            std.stdio.writefln(  "  move r%d rout1", target);
+            sb.writef(  "  move r% rout1\n", target);
         return 0;
     }
     int do_tail_call(Call* expr){
@@ -1506,7 +1590,7 @@ class DasmWriter: RegVisitor!int, StatementVisitor!int {
             if(l.value.type == TokenType.IDENTIFIER){
                 if(analysis.vars_on_stack)
                     restore_stack();
-                std.stdio.writefln("  tail_call function %s", l.value.lexeme);
+                sb.writef("  tail_call function %\n", l.value.lexeme);
                 called = true;
             }
         }
@@ -1518,7 +1602,7 @@ class DasmWriter: RegVisitor!int, StatementVisitor!int {
             regallocator.reset_to(before);
             if(analysis.vars_on_stack)
                 restore_stack();
-            std.stdio.writefln("  tail_call r%d", func);
+            sb.writef("  tail_call r%\n", func);
         }
         return 0;
     }
@@ -1532,11 +1616,11 @@ class DasmWriter: RegVisitor!int, StatementVisitor!int {
                 // loading into the same register
                 return 0;
             }
-            std.stdio.writefln("  move r%d r%d", target, *rlocal);
+            sb.writef("  move r% r%\n", target, *rlocal);
             return 0;
         }
         if(auto local = expr.name.lexeme in locals){
-            std.stdio.writefln("  local_read r%d 0p%X", target, *local);
+            sb.writef("  local_read r% %\n", target, P(*local));
             return 0;
         }
         error(expr.name, "Unhandled local variables");
@@ -1550,16 +1634,16 @@ class DasmWriter: RegVisitor!int, StatementVisitor!int {
                 switch(lit.value.type)with(TokenType){
                     case NIL:
                     case FALSE:
-                        std.stdio.writefln("  move r%d 0", *rlocal);
+                        sb.writef("  move r% 0\n", *rlocal);
                         break;
                     case TRUE:
-                        std.stdio.writefln("  move r%d 1", *rlocal);
+                        sb.writef("  move r% 1\n", *rlocal);
                         break;
                     case STRING:
-                        std.stdio.writefln("  move r%d \"%s\"", *rlocal, lit.value.string_);
+                        sb.writef("  move r% \"%\"\n", *rlocal, lit.value.string_);
                         break;
                     case NUMBER:
-                        std.stdio.writefln("  move r%d %u", *rlocal, cast(size_t)lit.value.number);
+                        sb.writef("  move r% %\n", *rlocal, cast(size_t)lit.value.number);
                         break;
                     default:
                         error(lit.value, "Unhandled literal type in assign");
@@ -1573,7 +1657,7 @@ class DasmWriter: RegVisitor!int, StatementVisitor!int {
                 int res = expr.right.accept(this, temp);
                 if(res != 0) return res;
                 regallocator.reset_to(before);
-                std.stdio.writefln("  move r%d r%d", *rlocal, temp);
+                sb.writef("  move r% r%\n", *rlocal, temp);
             }
             return 0;
         }
@@ -1616,7 +1700,7 @@ class DasmWriter: RegVisitor!int, StatementVisitor!int {
             int res = stmt.initializer.accept(this, temp);
             if(res != 0) return res;
             regallocator.reset_to(before);
-            std.stdio.writefln("  local_write 0p%X r%d", *local, temp);
+            sb.writef("  local_write % r%\n", P(*local), temp);
             return 0;
         }
         error(stmt.name, "Unhandled var stmt");
@@ -1680,7 +1764,7 @@ class DasmWriter: RegVisitor!int, StatementVisitor!int {
                 default:
                     assert(0);
             }
-            std.stdio.writefln("  jump %s label L%d", jmpmode, label);
+            sb.writef("  jump % label L%\n", jmpmode, label);
         }
         else {
             Lgeneric:
@@ -1689,12 +1773,12 @@ class DasmWriter: RegVisitor!int, StatementVisitor!int {
             scope(exit) regallocator.reset_to(before);
             int res = stmt.condition.accept(this, cond);
             if(res != 0) return res;
-            std.stdio.writefln("  cmp r%d 0", cond);
-            std.stdio.writefln("  jump ne label L%d", label);
+            sb.writef("  cmp r% 0\n", cond);
+            sb.writef("  jump ne label L%\n", label);
         }
         int res = stmt.thenBranch.accept(this);
         if(res != 0) return res;
-        std.stdio.writefln("  label L%d", label);
+        sb.writef("  label L%\n", label);
         if(stmt.elseBranch){
             int r = stmt.elseBranch.accept(this);
             if(r != 0) return r;
@@ -1714,18 +1798,18 @@ class DasmWriter: RegVisitor!int, StatementVisitor!int {
         funcdepth++;
         scope(exit) {
             funcdepth--;
-            locals = null;
-            reglocals = null;
+            locals.cleanup();
+            reglocals.cleanup();
             regallocator.reset();
             stackallocator.reset();
             labelallocator.reset();
         }
-        std.stdio.writefln("function %s %u", stmt.name.lexeme, stmt.params.length);
+        sb.writef("function % %\n", stmt.name.lexeme, stmt.params.length);
         int rarg = 10;
         foreach(p; stmt.params){
             auto r = regallocator.allocate();
-            reglocals[""~cast(string)p.lexeme] = r;
-            std.stdio.writefln("  move r%d r%d", r, rarg++);
+            reglocals[p.lexeme] = r;
+            sb.writef("  move r% r%\n", r, rarg++);
         }
         if(analysis.vars[].length >= 4)
             analysis.vars_on_stack = true;
@@ -1734,7 +1818,7 @@ class DasmWriter: RegVisitor!int, StatementVisitor!int {
         if(!analysis.vars_on_stack){
             foreach(v; analysis.vars){
                 auto r = regallocator.allocate();
-                reglocals[""~cast(string)v] = r;
+                reglocals[v] = r;
             }
         }
         else {
@@ -1742,10 +1826,10 @@ class DasmWriter: RegVisitor!int, StatementVisitor!int {
             uint nvars = 0;
             foreach(v; analysis.vars){
                 auto s = stackallocator.allocate();
-                locals[""~cast(string)v] = cast(int)s;
+                locals[v] = cast(int)s;
                 nvars++;
             }
-            std.stdio.writefln("  add rsp rsp 0p%X", nvars);
+            sb.writef("  add rsp rsp %\n", P(nvars));
         }
         foreach(s; stmt.body){
             int res = s.accept(this);
@@ -1754,9 +1838,9 @@ class DasmWriter: RegVisitor!int, StatementVisitor!int {
         if(!stmt.body.length || stmt.body[$-1].type != StatementType.RETURN){
             if(analysis.vars_on_stack)
                 restore_stack();
-            std.stdio.writeln("  ret");
+            sb.write("  ret\n");
         }
-        std.stdio.writeln("end");
+        sb.write("end\n");
         return 0;
     }
     int visit(ReturnStatement* stmt){
@@ -1773,12 +1857,12 @@ class DasmWriter: RegVisitor!int, StatementVisitor!int {
             int rout = 14;
             int res = stmt.value.accept(this, temp);
             regallocator.reset_to(before);
-            std.stdio.writefln("  move r%d r%d", rout, temp);
+            sb.writef("  move r% r%\n", rout, temp);
             if(res != 0) return res;
         }
         if(analysis.vars_on_stack)
             restore_stack();
-        std.stdio.writeln("  ret");
+        sb.write("  ret\n");
         return 0;
     }
     int visit(WhileStatement* stmt){
@@ -1795,7 +1879,7 @@ class DasmWriter: RegVisitor!int, StatementVisitor!int {
             auto lit = cast(Literal*)stmt.condition;
             switch(lit.value.type)with(TokenType){
                 case TRUE:
-                    std.stdio.writefln("  label L%d", top);
+                    sb.writef("  label L%\n", top);
                     break;
                 case FALSE:
                     labelallocator.nalloced = top-1;
@@ -1805,7 +1889,7 @@ class DasmWriter: RegVisitor!int, StatementVisitor!int {
                     return 0;
                 case NUMBER:
                     if(lit.value.number){
-                        std.stdio.writefln("  label L%d", top);
+                        sb.writef("  label L%\n", top);
                         break;
                     }
                     labelallocator.nalloced = top-1;
@@ -1816,7 +1900,7 @@ class DasmWriter: RegVisitor!int, StatementVisitor!int {
             }
         }
         else if(stmt.condition.type == ExprType.BINARY){
-            std.stdio.writefln("  label L%d", top);
+            sb.writef("  label L%\n", top);
             Binary* b = cast(Binary*)stmt.condition;
             switch(b.operator.type)with(TokenType){
                 case GREATER:
@@ -1856,23 +1940,23 @@ class DasmWriter: RegVisitor!int, StatementVisitor!int {
                 default:
                     assert(0);
             }
-            std.stdio.writefln("  jump %s label L%d", jmpmode, after);
+            sb.writef("  jump % label L%\n", jmpmode, after);
         }
         else {
-            std.stdio.writefln("  label L%d", top);
+            sb.writef("  label L%\n", top);
             Lgeneric:
             int before = regallocator.alloced;
             int cond = regallocator.allocate();
             scope(exit) regallocator.reset_to(before);
             int res = stmt.condition.accept(this, cond);
             if(res != 0) return res;
-            std.stdio.writefln("  cmp r%d 0", cond);
-            std.stdio.writefln("  jump ne label L%d", after);
+            sb.writef("  cmp r% 0\n", cond);
+            sb.writef("  jump ne label L%\n", after);
         }
         int res = stmt.statement.accept(this);
         if(res != 0) return res;
-        std.stdio.writefln("  move rip label L%d", top);
-        std.stdio.writefln("  label L%d", after);
+        sb.writef("  move rip label L%\n", top);
+        sb.writef("  label L%\n", after);
         return 0;
     }
     int do_it(Statement*[] stmts){
@@ -1884,3 +1968,5 @@ class DasmWriter: RegVisitor!int, StatementVisitor!int {
     }
 }
 
+extern(C) void _d_callfinalizer(void*p){
+}

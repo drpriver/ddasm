@@ -4,6 +4,7 @@ import core.stdc.string: memcpy, memset;
 import core.simd;
 import ldc.simd;
 import fpconv_ctfe: fpconv_dtoa;
+import str_util: split, Split;
 
 static __gshared immutable hextable = {
     string[] result;
@@ -212,7 +213,12 @@ struct StringBuilder(Allocator){
 
     void
     write(T)(Hex!T h){
-        hex(h.val);
+        hex("0x", h.val);
+    }
+
+    void
+    write(T)(PHex!T p){
+        hex("0p", p.val);
     }
 
     void
@@ -244,8 +250,21 @@ struct StringBuilder(Allocator){
     }
 
     void
-    hex(ulong value){
-        write("0x");
+    writef(A...)(const(char)[] fmt, A args){
+        foreach(a; args){
+            assert(fmt.length);
+            Split s = fmt.split('%');
+            if(s.head.length)
+                write(s.head);
+            fmt = s.tail;
+            write(a);
+        }
+        if(fmt.length) write(fmt);
+    }
+
+    void
+    hex(string prefix, ulong value){
+        write(prefix);
         if(!value){
             write('0');
             return;
@@ -359,10 +378,17 @@ Q(T)(T val, char quote_char = '\''){
 struct Hex(T){
     T val;
 }
+struct PHex(T){
+    T val;
+}
 
 Hex!T
 H(T)(T val){
     return Hex!T(val);
+}
+PHex!T
+P(T)(T val){
+    return PHex!T(val);
 }
 
 struct
