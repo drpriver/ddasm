@@ -643,12 +643,15 @@ struct BHashTable(K, V, Allocator){
     }
 }
 
+// intersection of above two data structures
 struct BTableCommon(K, V, Allocator){
     Box!(void[], Allocator) bdata;
     size_t occupancy;
     size_t capacity;
 }
 
+// A table that is flat for small sizes, then switches to a hash
+// table for larger sizes.
 struct BTable(K, V, Allocator, size_t small_size=64){
     union {
         BTableCommon!(K, V, Allocator) common;
@@ -850,6 +853,7 @@ struct BTable(K, V, Allocator, size_t small_size=64){
     }
 }
 
+// Convenience template.
 struct Table(K, V){
     BTable!(K, V, Mallocator) table;
     alias table this;

@@ -1,10 +1,8 @@
 static import std.stdio;
 static import std.file;
-static import std.conv;
 static import core.time;
 alias str = const(char)[];
 
-bool ERROR_OCCURRED = false;
 
 import argparse;
 import term_util: stdin_is_interactive, get_cols;
@@ -17,6 +15,8 @@ import box: Box;
 import stringbuilder: StringBuilder;
 import get_input: LineHistory, get_input_line;
 import barray: Barray, Array;
+import parse_numbers: parse_unsigned_human;
+import btable: Table;
 
 
 extern(C)
@@ -135,35 +135,21 @@ int main(int argc, char** argv){
 
 int
 run(const ubyte[] source){
-    auto scanner = Scanner!Mallocator(source);
-    auto tokens = scanner.scanTokens();
     ArenaAllocator!Mallocator arena;
-
+    scope(exit) arena.free_all;
+    // Our only allocations are with this, so we can efficiently append to it.
+    Barray!(Token, typeof(arena)) tokens;
+    tokens.bdata.allocator = &arena;
+    auto tokenizer = Tokenizer!(typeof(tokens))(source, &tokens);
+    int err = tokenizer.tokenizeTokens();
+    if(err) return 1;
+    tokens.bdata.resize(tokens.count);
     auto parser = Parser(&arena, tokens[]);
     Statement*[] statements;
-    int err = parser.parse(statements);
+    err = parser.parse(statements);
     if(err) return 1;
     scope writer = new DasmWriter();
     return writer.do_it(statements);
-}
-
-void
-error(int line, str message){
-    report(line, "", message);
-}
-
-void 
-error(Token token, str message){
-    if(token.type == TokenType.EOF)
-        report(token.line, " at end", message);
-    else
-        report(token.line, " at '" ~ token.lexeme ~ "'", message);
-}
-
-void
-report(int line, str where, str message){
-    ERROR_OCCURRED = true;
-    std.stdio.writefln("[line %d]: Error%s: %s", line, where, message);
 }
 
 enum TokenType: ubyte{
@@ -185,16 +171,15 @@ enum TokenType: ubyte{
     EOF = 0,
 }
 
-
 struct Token {
     TokenType type;
     str lexeme;
     union {
-        double number;
+        ulong number;
         str string_;
     }
     int line;
-    this(TokenType ty, str lex, double num, int l){
+    this(TokenType ty, str lex, ulong num, int l){
         type = ty, number = num, line = l, lexeme=lex;
     }
     this(TokenType ty, str lex, str string__, int l){
@@ -203,49 +188,42 @@ struct Token {
     this(TokenType ty, str lex, int l){
         type = ty, line = l, lexeme = lex;
     }
-    str toString(){
-        switch(type)with(TokenType){
-            case IDENTIFIER:
-                return lexeme;
-            case STRING:
-                return string_;
-            case NUMBER:
-                return std.conv.to!string(number);
-            case TRUE:
-                return "true";
-            case FALSE:
-                return "false";
-            case NIL:
-                return "nil";
-            default:
-                return lexeme;
-        }
-    }
 }
 
-struct Scanner(A) {
+struct Tokenizer(B) {
     @disable this();
     const ubyte[] source;
-    Barray!(Token, A) tokens;
+    B* tokens;
     int start = 0, current = 0, line = 1;
-    this(const ubyte[] s){
+
+    bool ERROR_OCCURRED = false;
+
+    void 
+    error(int line, str message){
+        ERROR_OCCURRED = true;
+        fprintf(stderr, "[line %d]: Parse Error: %.*s\n", line, cast(int)message.length, message.ptr);
+    }
+
+    this(const ubyte[] s, B* toks){
         source = s;
+        tokens = toks;
     }
 
     bool isAtEnd(){
         return current >= source.length;
     }
 
-    Barray!(Token, A) 
-    scanTokens(){
+    int
+    tokenizeTokens(){
         while(!isAtEnd){
             start = current;
-            scanToken;
+            tokenizeToken();
+            if(ERROR_OCCURRED) return 1;
         }
-        tokens ~= Token(TokenType.EOF, "", line);
-        return tokens;
+        *tokens ~= Token(TokenType.EOF, "", line);
+        return 0;
     }
-    void scanToken(){ with(TokenType){
+    void tokenizeToken(){ with(TokenType){
         auto c = advance();
         switch(c){
             case '(':
@@ -316,7 +294,7 @@ struct Scanner(A) {
             current++;
         }
         if(isAtEnd){
-            error(line, "Unterminated string");
+            error(current, "Unterminated string");
             return;
         }
         current++; // closing '"'
@@ -325,12 +303,17 @@ struct Scanner(A) {
     }
     void do_number(){
         while(peek.isDigit) current++;
-        if(peek == '.' && peekNext.isDigit)
-            current++;
-        while(peek.isDigit) current++;
+        if(peek == '.'){
+            error(current, "Non-integer numbers are not allowed");
+            return;
+        }
         auto slice = cast(const(char)[])source[start .. current];
-        double num = std.conv.parse!double(slice);
-        addToken(TokenType.NUMBER, num);
+        auto res = parse_unsigned_human(slice);
+        if(res.errored){
+            error(current, "Unable to parse number");
+            return;
+        }
+        addToken(TokenType.NUMBER, res.value);
     }
     bool match(ubyte c){
         if(isAtEnd) return false;
@@ -350,34 +333,37 @@ struct Scanner(A) {
     // and found them to be valid.
     void addToken(TokenType type){
         auto lex = cast(char[])(source[start .. current]);
-        tokens ~= Token(type, lex, line);
+        *tokens ~= Token(type, lex, line);
     }
     void addToken(TokenType type, str string_){
         auto lex = cast(char[])(source[start .. current]);
-        tokens ~= Token(type, lex, string_, line);
+        *tokens ~= Token(type, lex, string_, line);
     }
-    void addToken(TokenType type, double num){
+    void addToken(TokenType type, ulong num){
         auto lex = cast(char[])(source[start .. current]);
-        tokens ~= Token(type, lex, num, line);
+        *tokens ~= Token(type, lex, num, line);
     }
 }
 
-bool isAlpha(ubyte c){
+bool isAlpha()(ubyte c){
     c |= 32; // ascii tolower
     return c >= 'a' && c <= 'z';
 }
 
-bool isDigit(ubyte c){
+bool isDigit()(ubyte c){
     return c >= '0' && c <= '9';
 }
 
-bool isAlphaNumeric(ubyte c){
+bool isAlphaNumeric()(ubyte c){
     return isAlpha(c) || isDigit(c);
 }
 
-__gshared TokenType[string] KEYWORDS;
+__gshared Table!(str, TokenType) KEYWORDS;
 
 void powerup(){
+    __gshared powered = false;
+    if(powered) return;
+    powered = true;
     with(TokenType){
         immutable string[16] keys = [
             "and",
@@ -745,6 +731,17 @@ struct Parser {
     Token[] tokens;
     int current = 0;
     int funcdepth = 0;
+    bool ERROR_OCCURRED = false;
+
+    void 
+    error(Token token, str message){
+        ERROR_OCCURRED = true;
+        int line = token.line;
+        if(token.type == TokenType.EOF)
+            fprintf(stderr, "[line %d]: Parse Error at end: %.*s\n", line, cast(int)message.length, message.ptr);
+        else
+            fprintf(stderr, "[line %d]: Parse Error at '%.*s': %.*s\n", line, cast(int)token.lexeme.length, token.lexeme.ptr, cast(int)message.length, message.ptr);
+    }
 
     int parse(out Statement*[] result){
         while(!isAtEnd){
@@ -1225,6 +1222,21 @@ class DasmWriter: RegVisitor!int, StatementVisitor!int {
     int[string] locals;
     int[string] reglocals;
     Analysis analysis;
+    bool ERROR_OCCURRED = false;
+
+    void 
+    error(Token token, str message){
+        ERROR_OCCURRED = true;
+        int line = token.line;
+        fprintf(stderr, "[line %d]: Write Error at '%.*s': %.*s\n", line, cast(int)token.lexeme.length, token.lexeme.ptr, cast(int)message.length, message.ptr);
+    }
+
+    void 
+    error(int line, str message){
+        ERROR_OCCURRED = true;
+        fprintf(stderr, "[line %d]: Write Error: %.*s\n", line, cast(int)message.length, message.ptr);
+    }
+
     void save_reglocals(){
         for(int i = 0; i < regallocator.alloced; i++){
             std.stdio.writefln("  push r%d", i);
