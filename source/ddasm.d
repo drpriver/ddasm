@@ -1162,7 +1162,15 @@ struct Machine {
                     if(auto b = begin(BACKTRACE)) return b;
                     backtrace;
                     break;
-
+                case LEA:{
+                    if(auto b = begin(LEA)) return b;
+                        auto dst = get_reg();
+                        auto x = get_reg();
+                        auto a = get_unsigned();
+                        auto y = get_reg();
+                        auto z = get_unsigned();
+                        *dst = *x + a*(*y) + z;
+                    }break;
             }
         }
     }
@@ -1915,8 +1923,11 @@ immutable InstructionInfo[Instruction.max+1] INSTRUCTION_INFOS = {
     immutable ir = [IMM, REGISTER];
     immutable rrr = [REGISTER, REGISTER, REGISTER];
     immutable rri = [REGISTER, REGISTER, IMM];
+    immutable rir = [REGISTER, IMM, REGISTER];
+    immutable rii = [REGISTER, IMM, IMM];
     immutable rrrr = [REGISTER, REGISTER, REGISTER, REGISTER];
     immutable rrri = [REGISTER, REGISTER, REGISTER, IMM];
+    immutable rriri = [REGISTER, REGISTER, IMM, REGISTER, IMM];
     alias I = InstructionInfo;
     immutable result = cast(immutable)[
         I(ABORT,            "ABORT",            "abort"),
@@ -1983,6 +1994,7 @@ immutable InstructionInfo[Instruction.max+1] INSTRUCTION_INFOS = {
         I(FTOI,             "FTOI",             "ftoi", rr),
         I(NOT,              "NOT",              "not", rr),
         I(NEG,              "NEG",              "neg", rr),
+        I(LEA,              "LEA",              "lea", rriri),
     ];
     foreach(index, res; result)
         assert(index == res.instruction, "mismatch for instruction ");
@@ -2112,6 +2124,7 @@ enum Instruction: uintptr_t {
     FTOI,
     NOT,
     NEG,
+    LEA,
 }
 enum RegisterNames:uintptr_t {
     R0      = 0,  R1  =  1, R2  = 2,  R3 = 3, R4 = 4, R5 = 5, R6 = 6, R7 = 7, R8 = 8, R9 = 9,
