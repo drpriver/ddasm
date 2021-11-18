@@ -1521,6 +1521,7 @@ struct ParseContext{
                                 return PARSE_ERROR;
                             default:
                                 var.value = arg;
+                                break;
                         }
                         prog.variables.push(var);
                     }
@@ -2702,7 +2703,7 @@ struct LinkContext {
                         break;
                     case VARIABLE:
                         if(auto var = arg.variable in prog.variable_table){
-                            *(ip++) = cast(uintptr_t)var;
+                            *(ip++) = cast(uintptr_t)*var;
                         }
                         else {
                             err_print(prog.find_token(arg.first_char), "Reference to unknown variable: ", Q(arg.variable));
