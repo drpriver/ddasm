@@ -47,7 +47,7 @@ enum TokenType: ubyte{
 
     // Keywords
     AND, CLASS, ELSE, FALSE, FUN, FOR, IF, NIL, OR, PRINT, RETURN, SUPER, THIS, TRUE, VAR,
-    WHILE,
+    WHILE, GOTO, LABEL,
 
     EOF = 0,
 }
@@ -246,7 +246,7 @@ void powerup(){
     if(powered) return;
     powered = true;
     with(TokenType){
-        immutable string[16] keys = [
+        immutable string[18] keys = [
             "and",
             "class",
             "else",
@@ -263,8 +263,10 @@ void powerup(){
             "true",
             "let",
             "while",
+            "goto",
+            "label",
         ];
-        immutable TokenType[16] values = [
+        immutable TokenType[18] values = [
             AND,
             CLASS,
             ELSE,
@@ -281,6 +283,8 @@ void powerup(){
             TRUE,
             VAR,
             WHILE,
+            GOTO,
+            LABEL,
         ];
         static assert(keys.length == values.length);
         for(size_t i = 0; i < keys.length; i++){
@@ -485,6 +489,8 @@ enum StatementType {
     WHILE,
     FUNCTION,
     RETURN,
+    GOTO,
+    LABEL,
 }
 
 interface StatementVisitor(R){
@@ -496,6 +502,8 @@ interface StatementVisitor(R){
     R visit(WhileStatement* stmt);
     R visit(FuncStatement* stmt);
     R visit(ReturnStatement* stmt);
+    R visit(GotoStatement* stmt);
+    R visit(LabelStatement* stmt);
 }
 
 struct Statement {
@@ -510,6 +518,8 @@ struct Statement {
         case WHILE      : return visitor.visit(cast(WhileStatement*)&this);
         case FUNCTION   : return visitor.visit(cast(FuncStatement*)&this);
         case RETURN     : return visitor.visit(cast(ReturnStatement*)&this);
+        case GOTO     : return visitor.visit(cast(GotoStatement*)&this);
+        case LABEL     : return visitor.visit(cast(LabelStatement*)&this);
         }
     }
 }
@@ -647,6 +657,35 @@ struct VarStmt {
     }
 }
 
+struct GotoStatement {
+    Statement stmt;
+    Token label;
+
+    static
+    Statement*
+    make(A)(A* allocator, Token t){
+        auto data = allocator.alloc(typeof(this).sizeof);
+        auto p = cast(typeof(this)*)data.ptr;
+        p.stmt.type = StatementType.GOTO;
+        p.label = t;
+        return &p.stmt;
+    }
+}
+struct LabelStatement {
+    Statement stmt;
+    Token label;
+
+    static
+    Statement*
+    make(A)(A* allocator, Token t){
+        auto data = allocator.alloc(typeof(this).sizeof);
+        auto p = cast(typeof(this)*)data.ptr;
+        p.stmt.type = StatementType.LABEL;
+        p.label = t;
+        return &p.stmt;
+    }
+}
+
 // Parser
 
 struct Parser(A) {
@@ -728,7 +767,22 @@ struct Parser(A) {
         if(match(TokenType.PRINT)) return printStatement();
         if(match(TokenType.WHILE)) return whileStatement();
         if(match(TokenType.LEFT_BRACE)) return block();
+        if(match(TokenType.LABEL)) return label();
+        if(match(TokenType.GOTO)) return goto_();
         return expressionStatement();
+    }
+
+    Statement* label(){
+        Token target = consume(TokenType.IDENTIFIER, "Expect label name");
+        if(ERROR_OCCURRED) return null;
+        consume(TokenType.SEMICOLON, "Expect ';' after label decl");
+        return LabelStatement.make(allocator, target);
+    }
+    Statement* goto_(){
+        Token target = consume(TokenType.IDENTIFIER, "Expect goto target");
+        if(ERROR_OCCURRED) return null;
+        consume(TokenType.SEMICOLON, "Expect ';' after goto target");
+        return GotoStatement.make(allocator, target);
     }
 
     Statement* returnStatement(){
@@ -1150,6 +1204,10 @@ class DasmAnalyzer(A): BCObject, Visitor!void, StatementVisitor!void {
         analysis.vars.clear();
         foreach(s; stmt.body)
             s.accept(this);
+    }
+    void visit(GotoStatement* stmt){
+    }
+    void visit(LabelStatement* stmt){
     }
 
 }
@@ -1924,6 +1982,14 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
             int res = s.accept(this);
             if(res != 0) return res;
         }
+        return 0;
+    }
+    int visit(GotoStatement* stmt){
+        sb.writef("  move rip label L%\n", stmt.label.lexeme);
+        return 0;
+    }
+    int visit(LabelStatement* stmt){
+        sb.writef("  label L%\n", stmt.label.lexeme);
         return 0;
     }
 }
