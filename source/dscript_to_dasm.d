@@ -1660,14 +1660,14 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
         return 0;
     }
     int visit(Logical* expr, int target){
+        if(target == TARGET_IS_NOTHING){
+        }
         error(expr.operator, "Unhandled logical operator");
         return -1;
-        return 0;
     }
     int visit(Print* stmt){
         error(0, "Print not supported");
         return -1;
-        return 0;
     }
     int visit(ExpressionStmt* stmt){
         if(!funcdepth){
@@ -1705,7 +1705,6 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
                     error(lit.value, "Unhandled literal type");
                     return -1;
             }
-            return 0;
         }
         if(auto rlocal = stmt.name.lexeme in reglocals){
             int res = stmt.initializer.accept(this, *rlocal);
@@ -1723,7 +1722,6 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
         }
         error(stmt.name, "Unhandled var stmt");
         return -1;
-        return 0;
     }
     int visit(Block* stmt){
         if(!funcdepth) {

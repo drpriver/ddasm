@@ -9,6 +9,7 @@ ddasm.dll
 ddasm.a
 ddasm.lib
 ddasm-test-*
+dsdasm
 *.exe
 *.o
 *.obj

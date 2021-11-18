@@ -12,11 +12,6 @@
 		{
 			"name": "ddasm",
 			"targetType": "executable"
-		},
-		{
-			"name": "wddasm",
-			"targetType": "library",
-			"platforms": ["wasm"]
 		}
 	]
 }

@@ -6,3 +6,6 @@ dsdasm:
 	ldc2 -i source/dsdasm.d -I source -betterC -g -fsanitize=address
 .PHONY: dsdasm
 .DEFAULT_GOAL:= dsdasm
+
+.PHONY: all
+all: dsdasm ddasm
