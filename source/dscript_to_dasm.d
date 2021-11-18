@@ -1485,8 +1485,9 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
             sb.writef("  local_read r% %\n", target, P(*local));
             return 0;
         }
-        error(expr.name, "Unhandled local variables");
-        return -1;
+        // must be a global.
+        sb.writef("  read r% var %\n", target, expr.name.lexeme);
+        return 0;
     }
     int visit(Assign* expr, int target){
         // ignore target;
@@ -1555,8 +1556,9 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
             }
             return 0;
         }
-        error(expr.name, "Unhandled assignment");
-        return -1;
+        // must be a global.
+        sb.writef("  write var % %\n", expr.name.lexeme, target);
+        return 0;
     }
     int visit(Logical* expr, int target){
         error(expr.operator, "Unhandled logical operator");
@@ -1580,8 +1582,31 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
     }
     int visit(VarStmt* stmt){
         if(!funcdepth) {
-            error(stmt.name, "Var statement outside of function");
-            return -1;
+            // global variable;
+            if(stmt.initializer.type != ExprType.LITERAL){
+                error(stmt.name, "Non constant initializer for global variable");
+                return -1;
+            }
+            auto lit = cast(Literal*)stmt.initializer;
+            switch(lit.value.type) with(TokenType){
+                case FALSE:
+                case NIL:
+                    sb.writef("var % 0\n", stmt.name.lexeme);
+                    return 0;
+                case TRUE:
+                    sb.writef("var % 1\n", stmt.name.lexeme);
+                    return 0;
+                case STRING:
+                    sb.writef("var % \"%\"\n", stmt.name.lexeme, lit.value.string_);
+                    return 0;
+                case NUMBER:
+                    sb.writef("var % %\n", stmt.name.lexeme, lit.value.number);
+                    return 0;
+                default:
+                    error(lit.value, "Unhandled literal type");
+                    return -1;
+            }
+            return 0;
         }
         if(auto rlocal = stmt.name.lexeme in reglocals){
             int res = stmt.initializer.accept(this, *rlocal);
