@@ -1381,14 +1381,21 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
         return -1;
     }
     int visit(Unary* expr, int target){
-        if(expr.operator.type != TokenType.MINUS){
-            error(expr.operator, "Unhandled unary operator");
-            return -1;
-        }
         int v = expr.right.accept(this, target);
         if(v < 0) return v;
-        if(target != TARGET_IS_NOTHING)
-            sb.writef("  not r% r%\n", target, target);
+        if(target != TARGET_IS_NOTHING){
+            switch(expr.operator.type)with(TokenType){
+                case MINUS:
+                    sb.writef("  neg r% r%\n", target, target);
+                    break;
+                case BANG:
+                    sb.writef("  not r% r%\n", target, target);
+                    break;
+                default:
+                    error(expr.operator, "Unhandled unary operator");
+                    return -1;
+            }
+        }
         return 0;
     }
     int visit(Call* expr, int target){
@@ -1557,7 +1564,41 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
             return 0;
         }
         // must be a global.
-        sb.writef("  write var % %\n", expr.name.lexeme, target);
+        if(expr.right.type == ExprType.LITERAL){
+            auto lit = cast(Literal*)expr.right;
+            int before = regallocator.alloced;
+            int temp = regallocator.allocate();
+            sb.writef("  move r% var %\n", temp, expr.name.lexeme);
+            regallocator.reset_to(before);
+            switch(lit.value.type)with(TokenType){
+                case NIL:
+                case FALSE:
+                    sb.writef("  write r% 0\n", temp);
+                    break;
+                case TRUE:
+                    sb.writef("  write r% 1\n", temp);
+                    break;
+                case STRING:
+                    sb.writef("  write r% \"%\"\n", temp, lit.value.string_);
+                    break;
+                case NUMBER:
+                    sb.writef("  write r% %\n", temp, cast(size_t)lit.value.number);
+                    break;
+                default:
+                    error(lit.value, "Unhandled literal type in assign");
+                    return -1;
+            }
+        }
+        else {
+            int before = regallocator.alloced;
+            int lhs = regallocator.allocate();
+            int rhs = regallocator.allocate();
+            int res = expr.right.accept(this, rhs);
+            if(res != 0) return res;
+            regallocator.reset_to(before);
+            sb.writef("  move r% var %\n", lhs, expr.name.lexeme);
+            sb.writef("  write r% r%\n", lhs, rhs);
+        }
         return 0;
     }
     int visit(Logical* expr, int target){

@@ -784,6 +784,12 @@ struct Machine {
                     if(auto b = begin(NEG)) return b;
                     auto dst = get_reg;
                     auto rhs = get_reg;
+                    *dst = -*rhs;
+                }break;
+                case BINNEG:{
+                    if(auto b = begin(BINNEG)) return b;
+                    auto dst = get_reg;
+                    auto rhs = get_reg;
                     *dst = ~*rhs;
                 }break;
                 case FADD_I:{
@@ -2015,6 +2021,7 @@ immutable InstructionInfo[Instruction.max+1] INSTRUCTION_INFOS = {
         I(FTOI,             "FTOI",             "ftoi", rr),
         I(NOT,              "NOT",              "not", rr),
         I(NEG,              "NEG",              "neg", rr),
+        I(BINNEG,           "BINNEG",           "binneg", rr),
         I(LEA,              "LEA",              "lea", rriri),
     ];
     foreach(index, res; result)
@@ -2145,6 +2152,7 @@ enum Instruction: uintptr_t {
     FTOI,
     NOT,
     NEG,
+    BINNEG,
     LEA,
 }
 enum RegisterNames:uintptr_t {
