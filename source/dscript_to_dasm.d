@@ -1693,7 +1693,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
             int res = stmt.condition.accept(this, cond);
             if(res != 0) return res;
             sb.writef("  cmp r% 0\n", cond);
-            sb.writef("  jump ne label L%\n", label);
+            sb.writef("  jump eq label L%\n", label);
         }
         int res = stmt.thenBranch.accept(this);
         if(res != 0) return res;
