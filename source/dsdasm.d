@@ -124,6 +124,6 @@ int main(int argc, char** argv){
     Box!(char[], Mallocator) progtext;
     int err = compile_to_dasm(bscript.data, &progtext);
     if(err) return err;
-    fprintf(stdout, "%s\n", progtext.data.ptr);
+    fprintf(stdout, "%.*s\n", cast(int)progtext.data.length, progtext.data.ptr);
     return 0;
 }

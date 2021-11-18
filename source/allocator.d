@@ -140,6 +140,9 @@ struct LinkAllocator(Allocator){
         void[] result = changed[LinkAllocation.sizeof .. $];
         if(changed.ptr == data)
             return result;
+        if(link is last_allocation){
+            last_allocation = cast(LinkAllocation*)changed.ptr;
+        }
         if(prev)
             prev.next = cast(LinkAllocation*)changed.ptr;
         if(next)
@@ -152,6 +155,10 @@ struct LinkAllocator(Allocator){
         if(!ptr) return;
         auto link = (cast(LinkAllocation*)ptr)-1;
         assert(link.buffsize == size);
+        if(link is last_allocation){
+            assert(!link.prev);
+            last_allocation = link.next;
+        }
         auto prev = link.prev;
         auto next = link.next;
         if(prev)

@@ -47,3 +47,11 @@ split(const(char)[]str, char c){
         return Split(str[0..(s-str.ptr)], str[(s-str.ptr)+1..$]);
     }
 }
+
+bool
+endswith(const(char)[]str, const(char)[] tail){
+    if(tail.length > str.length) return false;
+    if(!tail.length) return true;
+    auto strtail = str[$-tail.length .. $];
+    return strtail == tail;
+}

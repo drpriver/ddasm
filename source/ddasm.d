@@ -11,6 +11,9 @@ import barray;
 import parse_numbers: parse_hex_inner, parse_unsigned_human;
 import btable;
 import box: Box;
+import str_util: endswith;
+
+static import dscript_to_dasm;
 
 alias uintptr_t = size_t;
 
@@ -41,6 +44,7 @@ int main(int argc, char** argv){
     bool force_interactive = false;
     bool no_interactive = false;
     bool debugger = false;
+    bool highlevel = false;
     ZString sourcefile;
     with(ArgParseFlags) with(ArgToParseFlags) {
     ArgToParse[1] pos_args = [
@@ -51,7 +55,7 @@ int main(int argc, char** argv){
             ARGDEST(&sourcefile),
         },
     ];
-    ArgToParse[5] kw_args = [
+    ArgToParse[6] kw_args = [
         {
             "--force-interactive", "-i",
             "Force interactive mode when reading from stdin.",
@@ -76,7 +80,13 @@ int main(int argc, char** argv){
             "--debug", "-g", 
             "Executes in debug mode",
             ARGDEST(&debugger),
-        }
+        },
+        {
+            "--ds", "--davescript",
+            "Force interpretation of the source as
+            davescript instead of dasm",
+            ARGDEST(&highlevel),
+        },
     ];
     enum {HELP=0, VERSION=1}
     ArgToParse[2] early_args = [
@@ -168,6 +178,16 @@ int main(int argc, char** argv){
         if(!sb.cursor)
             sb.write(' ');
         btext = btext.from(&va, sb.detach()[]);
+    }
+    if(highlevel || sourcefile[].endswith(".ds")){
+        dscript_to_dasm.powerup();
+        Box!(char[], Mallocator) dasmtext;
+        auto data = btext.data;
+        auto d = (cast(const(ubyte)*)data.ptr)[0 .. data.length];
+        int err = dscript_to_dasm.compile_to_dasm(d, &dasmtext);
+        if(err) return err;
+        btext.dealloc();
+        btext = btext.from(btext.allocator, dasmtext.data);
     }
     UnlinkedProgram prog;
     int err = parse_asm_string(&va, btext.data, &prog);

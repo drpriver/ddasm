@@ -1,5 +1,5 @@
 import core.stdc.stdio: fprintf, stdout, stderr, stdin, fread;
-import allocator: Mallocator, ArenaAllocator;
+import allocator: Mallocator, ArenaAllocator, LoggingAllocator;
 import box: Box;
 import stringbuilder: StringBuilder, P;
 import barray: Barray, Array, make_barray;
@@ -11,7 +11,7 @@ alias str = const(char)[];
 
 int
 compile_to_dasm(const ubyte[] source, Box!(char[], Mallocator)* progtext){
-    ArenaAllocator!Mallocator arena;
+    ArenaAllocator!(Mallocator) arena;
     scope(exit) arena.free_all;
     auto tokens = make_barray!Token(&arena);
     auto tokenizer = Tokenizer!(typeof(tokens))(source, &tokens);
@@ -1520,6 +1520,38 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
                 if(res != 0) return res;
                 regallocator.reset_to(before);
                 sb.writef("  move r% r%\n", *rlocal, temp);
+            }
+            return 0;
+        }
+        if(auto local  = expr.name.lexeme in locals){
+            if(expr.right.type == ExprType.LITERAL){
+                auto lit = cast(Literal*)expr.right;
+                switch(lit.value.type)with(TokenType){
+                    case NIL:
+                    case FALSE:
+                        sb.writef("  local_write % 0\n", P(*local));
+                        break;
+                    case TRUE:
+                        sb.writef("  local_write % 1\n", P(*local));
+                        break;
+                    case STRING:
+                        sb.writef("  local_write % \"%\"\n", P(*local), lit.value.string_);
+                        break;
+                    case NUMBER:
+                        sb.writef("  local_write % %\n", P(*local), cast(size_t)lit.value.number);
+                        break;
+                    default:
+                        error(lit.value, "Unhandled literal type in assign");
+                        return -1;
+                }
+            }
+            else {
+                int before = regallocator.alloced;
+                int temp = regallocator.allocate();
+                int res = expr.right.accept(this, temp);
+                if(res != 0) return res;
+                regallocator.reset_to(before);
+                sb.writef("  local_write % r%\n", P(*local), temp);
             }
             return 0;
         }
