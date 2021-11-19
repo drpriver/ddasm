@@ -25,6 +25,7 @@ compile_to_dasm(const ubyte[] source, Box!(char[], Mallocator)* progtext){
     StringBuilder!Mallocator sb;
     scope writer = new DasmWriter!(typeof(sb), typeof(arena))(&sb, &arena);
     err = writer.do_it(statements[]);
+    writer.cleanup;
     if(err){
         sb.cleanup;
         return err;
@@ -1220,6 +1221,11 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
     Table!(str, int) locals;
     Table!(str, int) reglocals;
     Analysis!A analysis;
+    void cleanup(){
+        locals.cleanup;
+        reglocals.cleanup;
+        analysis.vars.cleanup;
+    }
     bool ERROR_OCCURRED = false;
 
     @disable this();
