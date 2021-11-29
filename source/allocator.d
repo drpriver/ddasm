@@ -9,7 +9,7 @@ extern(C) size_t malloc_good_size(size_t);
 //
 // Mallocator
 //
-struct Mallocator {
+struct MallocAllocator {
     enum state_size = 0;
 
     static
@@ -53,10 +53,27 @@ struct Mallocator {
         }
         return result;
     }
-    typeof(this)*
-    The(){
-        return &TheMallocator;
+    // typeof(this)*
+    // The(){
+        // return &TheMallocator;
+    // }
+}
+
+static if(1){
+alias Mallocator = MallocAllocator;
+void report_leaks(){}
+}
+else{
+    __gshared LinkAllocator!(LoggingAllocator!MallocAllocator) LINKALLOCATOR;
+    void report_leaks(){
+        import core.stdc.stdio: fprintf, stderr;
+        auto link = LINKALLOCATOR.last_allocation;
+        while(link){
+            fprintf(stderr, "Leak: %p (%zu bytes)\n", link.buff.ptr, link.buffsize);
+            link = link.next;
+        }
     }
+    alias Mallocator = GlobalAllocator!(LINKALLOCATOR);
 }
 
 __gshared Mallocator TheMallocator;
@@ -105,8 +122,9 @@ struct LinkAllocator(Allocator){
         size_t real_size = size + LinkAllocation.sizeof;
         void[] result = allocator.alloc(real_size);
         auto link = cast(LinkAllocation*)result.ptr;
-        link.prev = last_allocation;
-        link.next = null;
+        link.next = last_allocation;
+        if(link.next) link.next.prev = link;
+        link.prev = null;
         link.buffsize = size;
         last_allocation = link;
         return link.buff.ptr[0..result.length-LinkAllocation.sizeof];
@@ -117,8 +135,9 @@ struct LinkAllocator(Allocator){
         size_t real_size = size + LinkAllocation.sizeof;
         void[] result = allocator.zalloc(real_size);
         auto link = cast(LinkAllocation*)result.ptr;
-        link.prev = last_allocation;
-        link.next = null;
+        link.next = last_allocation;
+        if(link.next) link.next.prev = link;
+        link.prev = null;
         link.buffsize = size;
         last_allocation = link;
         return link.buff.ptr[0..result.length-LinkAllocation.sizeof];
@@ -135,18 +154,22 @@ struct LinkAllocator(Allocator){
         auto link = (cast(LinkAllocation*)data)-1;
         assert(link.buffsize == orig_size);
         auto prev = link.prev;
+        if(prev) assert(prev.next is link);
         auto next = link.next;
+        if(next) assert(next.prev is link);
         void[] changed = allocator.realloc(link, orig_size + LinkAllocation.sizeof, new_size+LinkAllocation.sizeof);
         void[] result = changed[LinkAllocation.sizeof .. $];
-        if(changed.ptr == data)
+        auto newlink = cast(LinkAllocation*)changed.ptr;
+        newlink.buffsize = new_size;
+        if(newlink.buff.ptr is data)
             return result;
         if(link is last_allocation){
-            last_allocation = cast(LinkAllocation*)changed.ptr;
+            last_allocation = newlink;
         }
         if(prev)
-            prev.next = cast(LinkAllocation*)changed.ptr;
+            prev.next = newlink;
         if(next)
-            next.prev = cast(LinkAllocation*)changed.ptr;
+            next.prev = newlink;
         return result;
     }
 
@@ -161,20 +184,26 @@ struct LinkAllocator(Allocator){
         }
         auto prev = link.prev;
         auto next = link.next;
-        if(prev)
+        if(prev){
+            assert(prev.next == link);
             prev.next = next;
-        if(next)
+        }
+        if(next){
+            assert(next.prev == link);
             next.prev = prev;
+        }
         allocator.free(link, size + LinkAllocation.sizeof);
     }
 
     void
     free_all(){
         auto link = last_allocation;
+        if(link)
+            assert(!link.prev);
         while(link){
-            auto prev = link.prev;
+            auto next = link.next;
             allocator.free(link, link.buffsize + LinkAllocation.sizeof);
-            link = prev;
+            link = next;
         }
         last_allocation = null;
     }

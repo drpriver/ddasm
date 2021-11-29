@@ -1,9 +1,9 @@
-import allocator: Mallocator;
+import allocator: Mallocator, report_leaks;
 import box: Box;
 import core.stdc.stdio: fprintf, stdout, stderr, stdin, fread;
 import stringbuilder: StringBuilder;
 
-import dscript_to_dasm: powerup, compile_to_dasm;
+import dscript_to_dasm: powerup, compile_to_dasm, powerdown;
 extern(C)
 int main(int argc, char** argv){
     import zstring: ZString;
@@ -124,6 +124,10 @@ int main(int argc, char** argv){
     Box!(char[], Mallocator) progtext;
     int err = compile_to_dasm(bscript.data, &progtext);
     if(err) return err;
+    powerdown;
     fprintf(stdout, "%.*s\n", cast(int)progtext.data.length, progtext.data.ptr);
+    bscript.dealloc;
+    progtext.dealloc;
+    report_leaks;
     return 0;
 }

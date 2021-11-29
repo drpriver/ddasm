@@ -1,10 +1,10 @@
 import core.stdc.stdio: fprintf, stdout, stderr, stdin, fread;
-import allocator: Mallocator, ArenaAllocator, LoggingAllocator;
+import allocator: Mallocator, ArenaAllocator, LoggingAllocator, LinkAllocator;
 import box: Box;
 import stringbuilder: StringBuilder, P;
 import barray: Barray, Array, make_barray;
 import parse_numbers: parse_unsigned_human;
-import btable: Table;
+import btable: BTable, Table;
 import bettercobject: BCObject;
 static import core.time;
 alias str = const(char)[];
@@ -240,12 +240,12 @@ bool isAlphaNumeric()(ubyte c){
     return isAlpha(c) || isDigit(c);
 }
 
-__gshared Table!(str, TokenType) KEYWORDS;
+__gshared BTable!(str, TokenType, Mallocator) KEYWORDS;
 
+__gshared KEYWORDSPOWERED = false;
 void powerup(){
-    __gshared powered = false;
-    if(powered) return;
-    powered = true;
+    if(KEYWORDSPOWERED) return;
+    KEYWORDSPOWERED = true;
     with(TokenType){
         immutable string[18] keys = [
             "and",
@@ -292,6 +292,11 @@ void powerup(){
             KEYWORDS[keys[i]] = values[i];
         }
     }
+}
+void powerdown(){
+    if(!KEYWORDSPOWERED) return;
+    KEYWORDSPOWERED = false;
+    KEYWORDS.cleanup;
 }
 
 // Expressions
