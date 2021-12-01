@@ -8,11 +8,11 @@ lstripped(const(char)[] str){
                 continue;
             default:
                 break;
-            }
-        break;
         }
-    return str;
+        break;
     }
+    return str;
+}
 
 @safe @nogc pure nothrow
 const(char)[]
@@ -23,11 +23,11 @@ rstripped(const(char)[] str){
                 continue;
             default:
                 break;
-            }
-        break;
         }
-    return str;
+        break;
     }
+    return str;
+}
 
 @safe @nogc pure nothrow
 const(char)[]

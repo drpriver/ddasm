@@ -103,7 +103,8 @@ ARGDEST(T)(T* dest){
         return ArgParseDestination(ArgType.STRING, SimpleDest(dest));
     else
         static assert(0, "Illegal type for ARGDEST " ~ T.stringof);
-    }
+}
+
 ArgParseDestination
 ARGDEST(T)(scope int delegate(T*) dg){
     ArgParseDestination result = void;
@@ -129,7 +130,8 @@ ARGDEST(T)(scope int delegate(T*) dg){
         static assert(0, "Illegal type for ARGDEST " ~ T.stringof);
     result.user_append_proc = cast(int delegate(void*))dg;
     return result;
-    }
+}
+
 ArgParseDestination
 ArgBitFlagDest(T)(T* dest, ulong flag) if(is(T:ulong)){
     ArgParseDestination result = void;
@@ -137,22 +139,24 @@ ArgBitFlagDest(T)(T* dest, ulong flag) if(is(T:ulong)){
     result.dest.pointer = dest;
     result.dest.bitflag = flag;
     return result;
-    }
+}
 ArgParseDestination
 ArgEnumDest(void* dest, const ArgParseEnumType* enu){
     return ArgParseDestination(ArgType.ENUM, SimpleDest(dest, enu));
-    }
+}
 
 enum ArgToParseFlags: ulong {
     ARG_TO_PARSE_NONE = 0,
     SHOW_DEFAULT = 1 << 0,
     HIDDEN = 1 << 1,
 }
+
 struct NumRequired {
     int min = 0;
     int max = 1;
     enum UNLIMITED = -1;
 }
+
 struct ArgToParse {
     const(char)[] name;
     const(char)[] altname1;
@@ -164,6 +168,7 @@ struct ArgToParse {
     int num_parsed;
     bool visited;
 }
+
 struct ArgParser {
     const(char)[] name;
     const(char)[] description;
@@ -253,51 +258,51 @@ print_argparse_help(const ArgParser* p, int columns){
                 auto to_print = " [%.*s | %.*s]".length - 8 + arg.name.length + arg.altname1.length;
                 hs.update(cast(int)to_print);
                 printf(" [%.*s | %.*s]", cast(int)arg.name.length, arg.name.ptr, cast(int)arg.altname1.length, arg.altname1.ptr);
-                }
+            }
             else{
                 auto to_print = " [%.*s]".length - 4 + arg.name.length;
                 hs.update(cast(int)to_print);
                 printf(" [%.*s]", cast(int)arg.name.length, arg.name.ptr);
-                }
             }
+        }
         else {
             if(arg.altname1.length){
                 auto tn = ArgTypeNames[arg.dest.type];
                 auto to_print = " [%.*s | %.*s <%.*s>%s]".length - "%.*s%.*s%.*s%s".length + arg.name.length + arg.altname1.length + tn.length + (arg.num.max != 1?" ...".length: 0);
                 hs.update(cast(int)to_print);
                 printf(" [%.*s | %.*s <%.*s>%s]", cast(int)arg.name.length, arg.name.ptr, cast(int)arg.altname1.length, arg.altname1.ptr, cast(int)tn.length, tn.ptr, arg.num.max != 1?" ...".ptr:"".ptr);
-                }
+            }
             else{
                 auto tn = ArgTypeNames[arg.dest.type];
                 auto to_print = " [%.*s <%.*s>%s]".length - 10 + arg.name.length + tn.length + (arg.num.max != 1?" ...".length:0);
                 hs.update(cast(int)to_print);
                 printf(" [%.*s <%.*s>%s]", cast(int)arg.name.length, arg.name.ptr, cast(int)tn.length, tn.ptr, arg.num.max != 1?" ...".ptr:"".ptr);
-                }
             }
         }
+    }
     puts("\n");
     if(p.early_out.length){
         puts("Early Out Arguments:\n"
            ~ "--------------------");
-        }
+    }
     foreach(ref early; p.early_out){
         if(early.altname1.length){
             printf("%.*s, %.*s:", cast(int)early.name.length, early.name.ptr, cast(int)early.altname1.length, early.altname1.ptr);
-            }
+        }
         else{
             printf("%.*s:", cast(int)early.name.length, early.name.ptr);
-            }
+        }
         print_wrapped_help(early.help, columns);
         putchar('\n');
-        }
+    }
     if(p.positional.length){
         puts("Positional Arguments:\n"
            ~ "---------------------");
         foreach(ref arg; p.positional){
             print_arg_help(&arg, columns);
             putchar('\n');
-            }
         }
+    }
     // It's possible for all keyword arguments to be hidden,
     // so only print the header until we hit a non-hidden argument.
     bool printed_keyword_header = false;
@@ -386,7 +391,7 @@ print_arg_help(const ArgToParse* arg, int columns){
     printf("%.*s", cast(int)name.length, name.ptr);
     if(arg.altname1.length){
         printf(", %.*s", cast(int)arg.altname1.length, arg.altname1.ptr);
-        }
+    }
     printf(": %.*s", cast(int)typename.length, typename.ptr);
     if(arg.num.min != 0 || !(arg.flags & ArgToParseFlags.SHOW_DEFAULT)){
         print_wrapped_help(help, columns);
@@ -500,7 +505,7 @@ parse_args(ArgParser* parser, char*[]args, ArgParseFlags flags){
     if(parser.positional.length){
         pos_arg = &parser.positional[0];
         past_the_end = pos_arg + parser.positional.length;
-        }
+    }
     ArgToParse* kwarg = null;
     foreach(arg; args){
         if(!arg && (flags & SKIP_NULL_STRINGS))
@@ -782,7 +787,7 @@ print_argparse_error(const ArgParser* parser, ArgParseError error){
 with(ArgParseError) with (ArgType){
     if(auto arg_to_parse = parser.failed_arg_to_parse){
         fprintf(stderr, "Error when parsing argument for '%.*s': ", cast(int)arg_to_parse.name.length, arg_to_parse.name.ptr);
-        }
+    }
     final switch(error){
         case NO_ERROR:
             break;
@@ -822,10 +827,10 @@ with(ArgParseError) with (ArgType){
                             return;
                         default:
                             break;
-                        }
-                        fprintf(stderr, "Unable to parse an unknown type from '%.*s'\n",  cast(int)arg.length, arg.ptr);
-                        return;
                     }
+                    fprintf(stderr, "Unable to parse an unknown type from '%.*s'\n",  cast(int)arg.length, arg.ptr);
+                    return;
+                }
                 else {
                     switch(arg_to_parse.dest.type){
                         case INTEGER64:
@@ -859,18 +864,18 @@ with(ArgParseError) with (ArgType){
                             fprintf(stderr, "Unable to parse a %.*s from unkown argument.\n", cast(int)arg_to_parse.dest.ut.type_name.length, arg_to_parse.dest.ut.type_name.ptr);
                             return;
                         default: break;
-                        }
+                    }
                     fprintf(stderr, "Unable to parse an unknown type from unknown argument'\n");
                     return;
-                    }
                 }
+            }
             else if(auto arg = parser.failed_arg){
                 fprintf(stderr, "Unable to parse an unknown type from '%.*s'\n", cast(int)arg.length, arg.ptr);
                 return;
-                }
+            }
             else {
                 fprintf(stderr, "Unable to parse an unknown type from an unknown argument. This is a bug.\n");
-                }
+            }
             return;
         case UNKNOWN_KWARG:
             if(auto arg = parser.failed_arg)
@@ -886,16 +891,16 @@ with(ArgParseError) with (ArgType){
             if(!parser.failed_arg_to_parse){
                 fprintf(stderr, "More arguments given than needed. First excess argument: '%.*s'.\n", cast(int)parser.failed_arg.length, parser.failed_arg.ptr);
                 return;
-                }
+            }
             auto arg_to_parse = parser.failed_arg_to_parse;
 
             if(!parser.failed_arg){
                 fprintf(stderr, "Excess arguments. No more than %d arguments needed. Unknown first excess argument (this is a bug)\n", arg_to_parse.num.max);
                 return;
-                }
+            }
             auto arg = parser.failed_arg;
             fprintf(stderr, "Excess arguments. No more than %d arguments needed. First excess argument: '%.*s'\n", arg_to_parse.num.max, cast(int)arg.length, arg.ptr);
-            }return;
+        }return;
         case INSUFFICIENT_ARGS:{
             if(!parser.failed_arg_to_parse){
                 fprintf(stderr, "Insufficent arguments for unknown option. This is a bug.\n");
@@ -903,7 +908,7 @@ with(ArgParseError) with (ArgType){
                 }
             auto arg_to_parse = parser.failed_arg_to_parse;
             fprintf(stderr, "Insufficient arguments. %d argument%s required.\n", arg_to_parse.num.min, arg_to_parse.num.min==1?" is".ptr:"s are".ptr);
-            }return;
+        }return;
         case VISITED_NO_ARG_GIVEN:{
             auto arg_to_parse = parser.failed_arg_to_parse;
             if(!arg_to_parse){
@@ -911,13 +916,13 @@ with(ArgParseError) with (ArgType){
                 return;
                 }
             fprintf(stderr, "No arguments given.\n");
-            }return;
+        }return;
         case INTERNAL_ERROR:{
             fprintf(stderr, "An internal error occurred. This is a bug.\n");
             return;
-            }
         }
-        fprintf(stderr, "Unknown error when parsing arguments.\n");
-        return;
+    }
+    fprintf(stderr, "Unknown error when parsing arguments.\n");
+    return;
 }
 }
