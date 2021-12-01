@@ -4,14 +4,15 @@ import zstring;
 import get_input;
 import term_util: get_cols, stdin_is_interactive;
 import file_util;
-import core.stdc.string: strlen, strerror, memcpy;
-import core.stdc.stdio: fprintf, stdout, stderr, fread, stdin;
 import allocator;
 import barray;
 import parse_numbers: parse_hex_inner, parse_unsigned_human;
 import btable;
 import box: Box;
 import str_util: endswith;
+
+import core.stdc.string: strlen, strerror, memcpy;
+import core.stdc.stdio: fprintf, stdout, stderr, fread, stdin;
 
 static import dscript_to_dasm;
 
