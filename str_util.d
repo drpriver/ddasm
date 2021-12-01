@@ -1,6 +1,8 @@
 import core.stdc.string: memchr;
+
+@safe @nogc pure nothrow
 const(char)[]
-lstripped_view(const(char)[] str){
+lstripped(const(char)[] str){
     for(;str.length;str = str[1..$]){
         switch(str[0]){
             case ' ': case '\t': case '\r': case '\n': case '\f': case '\v':
@@ -13,8 +15,9 @@ lstripped_view(const(char)[] str){
     return str;
     }
 
+@safe @nogc pure nothrow
 const(char)[]
-rstripped_view(const(char)[] str){
+rstripped(const(char)[] str){
     for(;str.length;str = str[0..$-1]){
         switch(str[$-1]){
             case ' ': case '\t': case '\r': case '\n': case '\f': case '\v':
@@ -27,16 +30,19 @@ rstripped_view(const(char)[] str){
     return str;
     }
 
+@safe @nogc pure nothrow
 const(char)[]
-stripped_view(const(char)[]str){
-    return lstripped_view(rstripped_view(str));
+stripped(const(char)[]str){
+    return str.rstripped.lstripped;
 }
 
+@safe @nogc pure nothrow
 struct Split {
     const(char)[] head;
     const(char)[] tail;
 }
 
+@trusted @nogc pure nothrow
 Split
 split(const(char)[]str, char c){
     auto s = cast(const char*)memchr(str.ptr, c, str.length);
@@ -48,10 +54,40 @@ split(const(char)[]str, char c){
     }
 }
 
+@safe @nogc pure nothrow
 bool
 endswith(const(char)[]str, const(char)[] tail){
     if(tail.length > str.length) return false;
     if(!tail.length) return true;
     auto strtail = str[$-tail.length .. $];
     return strtail == tail;
+}
+
+@safe @nogc pure nothrow
+struct Splitter {
+    const(char)[] head;
+    const(char)[] tail;
+    char c;
+
+    auto front(){return head;}
+    auto popFront(){
+        auto s = tail.split(c);
+        head = s.head;
+        tail = s.tail;
+    }
+    auto empty(){
+        return head.length == 0;
+    }
+    auto next(){
+        auto result = front;
+        popFront;
+        return result;
+    }
+}
+
+@safe @nogc pure nothrow
+Splitter
+split_by(const(char)[]str, char c){
+    auto s = str.split(c);
+    return Splitter(s.head, s.tail, c);
 }

@@ -4,6 +4,11 @@ import core.stdc.string: memset;
 struct FileResult(Allocator) {
     Box!(void[], Allocator) value;
     int errored;
+    pragma(inline, true)
+    auto unwrap(){
+        assert(!errored);
+        return value;
+    }
 }
 
 version(Posix){

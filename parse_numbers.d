@@ -8,6 +8,11 @@ enum ParseNumberError: ubyte {
 struct IntegerResult(T) {
     T value;
     ParseNumberError errored;
+    pragma(inline, true)
+    T unwrap(){
+        assert(!errored);
+        return value;
+    }
 }
 
 auto Err(T)(ParseNumberError error){
