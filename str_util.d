@@ -1,4 +1,3 @@
-import core.stdc.string: memchr;
 
 @safe @nogc pure nothrow
 const(char)[]
@@ -45,6 +44,7 @@ struct Split {
 @trusted @nogc pure nothrow
 Split
 split(const(char)[]str, char c){
+    import core.stdc.string: memchr;
     auto s = cast(const char*)memchr(str.ptr, c, str.length);
     if(!s){
         return Split(str, null);
