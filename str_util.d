@@ -56,11 +56,48 @@ split(const(char)[]str, char c){
 
 @safe @nogc pure nothrow
 bool
-endswith(const(char)[]str, const(char)[] tail){
-    if(tail.length > str.length) return false;
-    if(!tail.length) return true;
-    auto strtail = str[$-tail.length .. $];
-    return strtail == tail;
+endswith(const(char)[]str, const(char)[] needle){
+    if(needle.length > str.length) return false;
+    if(!needle.length) return true;
+    auto strtail = str[$-needle.length .. $];
+    return strtail == needle;
+}
+
+@safe @nogc pure nothrow
+bool
+startswith(const(char)[]str, const(char)[] needle){
+    if(needle.length > str.length) return false;
+    if(!needle.length) return true;
+    return str[0..needle.length] == needle;
+}
+
+@safe @nogc pure nothrow
+struct Splitter {
+    const(char)[] head;
+    const(char)[] tail;
+    char c;
+
+    auto front(){return head;}
+    auto popFront(){
+        auto s = tail.split(c);
+        head = s.head;
+        tail = s.tail;
+    }
+    auto empty(){
+        return head.length == 0;
+    }
+    auto next(){
+        auto result = front;
+        popFront;
+        return result;
+    }
+}
+
+@safe @nogc pure nothrow
+Splitter
+split_by(const(char)[]str, char c){
+    auto s = str.split(c);
+    return Splitter(s.head, s.tail, c);
 }
 
 @safe @nogc pure nothrow
