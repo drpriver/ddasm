@@ -100,31 +100,3 @@ split_by(const(char)[]str, char c){
     return Splitter(s.head, s.tail, c);
 }
 
-@safe @nogc pure nothrow
-struct Splitter {
-    const(char)[] head;
-    const(char)[] tail;
-    char c;
-
-    auto front(){return head;}
-    auto popFront(){
-        auto s = tail.split(c);
-        head = s.head;
-        tail = s.tail;
-    }
-    auto empty(){
-        return head.length == 0;
-    }
-    auto next(){
-        auto result = front;
-        popFront;
-        return result;
-    }
-}
-
-@safe @nogc pure nothrow
-Splitter
-split_by(const(char)[]str, char c){
-    auto s = str.split(c);
-    return Splitter(s.head, s.tail, c);
-}
