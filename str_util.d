@@ -56,11 +56,19 @@ split(const(char)[]str, char c){
 
 @safe @nogc pure nothrow
 bool
-endswith(const(char)[]str, const(char)[] tail){
-    if(tail.length > str.length) return false;
-    if(!tail.length) return true;
-    auto strtail = str[$-tail.length .. $];
-    return strtail == tail;
+endswith(const(char)[]str, const(char)[] needle){
+    if(needle.length > str.length) return false;
+    if(!needle.length) return true;
+    auto strtail = str[$-needle.length .. $];
+    return strtail == needle;
+}
+
+@safe @nogc pure nothrow
+bool
+startswith(const(char)[]str, const(char)[] needle){
+    if(needle.length > str.length) return false;
+    if(!needle.length) return true;
+    return str[0..needle.length] == needle;
 }
 
 @safe @nogc pure nothrow

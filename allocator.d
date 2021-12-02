@@ -28,11 +28,7 @@ struct MallocAllocator {
     static
     void[]
     realloc(void*data, size_t orig_size, size_t new_size){
-        // fprintf(stderr, "%d:realloc, sizeof(%p) = %zu\n", __LINE__, data, malloc_size(data));
-        // fprintf(stderr, "%d:realloc %p, %zu, %zu\n", __LINE__, data, orig_size, new_size);
         void* result = .realloc(cast(void*)data, new_size);
-        // fprintf(stderr, "%d:realloc %p\n", __LINE__, result);
-        // fprintf(stderr, "%d:realloc sizeof(%p): %zu\n", __LINE__, result, malloc_size(result));
         return result[0..new_size];
     }
 
@@ -53,10 +49,6 @@ struct MallocAllocator {
         }
         return result;
     }
-    // typeof(this)*
-    // The(){
-        // return &TheMallocator;
-    // }
 }
 
 static if(1){
@@ -68,8 +60,10 @@ else{
     void report_leaks(){
         import core.stdc.stdio: fprintf, stderr;
         auto link = LINKALLOCATOR.last_allocation;
+        if(!link)
+            fprintf(stderr, "report_leaks: No Leaks\n");
         while(link){
-            fprintf(stderr, "Leak: %p (%zu bytes)\n", link.buff.ptr, link.buffsize);
+            fprintf(stderr, "report_leaks: Leak: %p (%zu bytes)\n", link.buff.ptr, link.buffsize);
             link = link.next;
         }
     }

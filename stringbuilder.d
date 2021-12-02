@@ -39,6 +39,9 @@ struct StringBuilder(Allocator){
         cursor = 0;
         capacity = 0;
     }
+    /// Appends a 0 beyond the end of the string,
+    /// for when you need to work with C apis.
+    /// The 0 is not counted as part of the length.
     void
     nul_terminate(){
         _check_remaining_size(1);
@@ -50,7 +53,7 @@ struct StringBuilder(Allocator){
     }
 
     ZString
-    detach(){
+    zdetach(){
         nul_terminate;
         auto result = ZString(cursor, data);
         data = null;
@@ -58,8 +61,9 @@ struct StringBuilder(Allocator){
         cursor = 0;
         return result;
     }
+
     Box!(char[], Allocator)
-    take(){
+    detach(){
         typeof(return) result;
         static if(Allocator.state_size)
             result.allocator = allocator;
@@ -70,10 +74,16 @@ struct StringBuilder(Allocator){
         cursor = 0;
         return result;
     }
+
     const(char)[]
     borrow(){
-        nul_terminate;
         return data[0..cursor];
+    }
+
+    ZString
+    zborrow(){
+        nul_terminate;
+        return ZString(cursor, data);
     }
 
     void
@@ -166,12 +176,12 @@ struct StringBuilder(Allocator){
         if(value == int.min){
             write("-2147483648");
             return;
-            }
+        }
         char[10] buff = void;
         if(value < 0){
             write('-');
             value = -value;
-            }
+        }
         char* p = uint32_to_str_buffer(buff.ptr, value);
         ptrdiff_t size = (buff.ptr+10) - p;
         _check_remaining_size(size);
@@ -350,7 +360,15 @@ struct StringBuilder(Allocator){
             sb.allocator = a;
             foreach(a; args)
                 sb.write(a);
-            return sb.take;
+            return sb.detach;
+        }
+        static
+        Box!(char[], Allocator)
+        mwritef(R...)(Allocator* a, R args){
+            StringBuilder sb;
+            sb.allocator = a;
+            sb.writef(args);
+            return sb.detach;
         }
     }
     else {
@@ -360,9 +378,26 @@ struct StringBuilder(Allocator){
             StringBuilder sb;
             foreach(a; args)
                 sb.write(a);
-            return sb.take;
+            return sb.detach;
+        }
+
+        static
+        Box!(char[], Allocator)
+        mwritef(R...)(R args){
+            StringBuilder sb;
+            sb.writef(args);
+            return sb.detach;
         }
     }
+}
+
+Box!(char[], Allocator)
+mwritef(Allocator, R...)(R args)if(!Allocator.state_size){
+    return StringBuilder!(Allocator).mwritef(args);
+}
+Box!(char[], Allocator)
+mwritef(Allocator, R...)(Allocator* a, R args)if(Allocator.state_size){
+    return StringBuilder!(Allocator).mwritef(a, args);
 }
 
 struct Quoted(T){
