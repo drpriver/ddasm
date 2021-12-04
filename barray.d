@@ -15,6 +15,17 @@ struct Barray(T, Allocator){
         ensure_total(needed);
     }
 
+    T pop(){
+        assert(count);
+        return bdata.data[--count];
+    }
+
+    T pop(size_t index){
+        T result = bdata.data[index];
+        remove(index);
+        return result;
+    }
+
     void
     ensure_total(size_t needed){
         if(bdata.data.length >= needed)
@@ -124,6 +135,17 @@ struct Barray(T, Allocator){
     }
     void opOpAssign(string op)(in T value){
         push(value);
+    }
+
+    void
+    swap(ref typeof(this) other){
+        auto c = count;
+        auto b = bdata;
+        bdata = other.bdata;
+        other.bdata = b;
+        count = other.count;
+        other.count = c;
+
     }
 }
 
