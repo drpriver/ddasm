@@ -1,4 +1,4 @@
-
+import std.typecons: Tuple;
 @safe @nogc pure nothrow
 const(char)[]
 lstripped(const(char)[] str){
@@ -35,11 +35,7 @@ stripped(const(char)[]str){
     return str.rstripped.lstripped;
 }
 
-@safe @nogc pure nothrow
-struct Split {
-    const(char)[] head;
-    const(char)[] tail;
-}
+alias Split = Tuple!(const(char)[], "head", const(char)[], "tail");
 
 @trusted @nogc pure nothrow
 Split
