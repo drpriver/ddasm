@@ -52,6 +52,22 @@ with(ParseNumberError){
 }
 }
 
+IntegerResult!T
+parse(T)(const(char)[] s){
+    static if(is(T == ulong)){
+        return parse_uint64(s);
+    }
+    static if(is(T == long)){
+        // FIXME: I don't check all error cases.
+        auto pe = parse_uint64(s);
+        if(pe.errored) return typeof(return)(0, pe.errored);
+        if(pe.value > long.max){
+            return typeof(return)(0, ParseNumberError.OVERFLOWED_VALUE);
+        }
+        return typeof(return)(pe.value, ParseNumberError.NO_ERROR);
+    }
+}
+
 IntegerResult!ulong
 parse_hex_inner(const char[] s){ with(ParseNumberError){
     if(s.length > 16)

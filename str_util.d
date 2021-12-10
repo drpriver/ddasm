@@ -49,6 +49,18 @@ split(const(char)[]str, char c){
         return Split(str[0..(s-str.ptr)], str[(s-str.ptr)+1..$]);
     }
 }
+@trusted @nogc pure nothrow
+Split
+stripped_split(const(char)[]str, char c){
+    import core.stdc.string: memchr;
+    auto s = cast(const char*)memchr(str.ptr, c, str.length);
+    if(!s){
+        return Split(str.stripped, null);
+    }
+    else {
+        return Split(str[0..(s-str.ptr)].stripped, str[(s-str.ptr)+1..$].stripped);
+    }
+}
 
 pure nothrow @nogc
 extern(C) const(void)* memmem(const void*, size_t, const void*, size_t);
@@ -62,6 +74,18 @@ split(const(char)[]str, const(char)[] c){
     }
     else {
         return Split(str[0..(s-str.ptr)], str[(s-str.ptr)+c.length..$]);
+    }
+}
+
+@trusted @nogc pure nothrow
+Split
+stripped_split(const(char)[]str, const(char)[] c){
+    auto s = cast(const char*)memmem(str.ptr, str.length, c.ptr, c.length);
+    if(!s){
+        return Split(str, null);
+    }
+    else {
+        return Split(str[0..(s-str.ptr)].stripped, str[(s-str.ptr)+c.length..$].stripped);
     }
 }
 
