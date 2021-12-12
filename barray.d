@@ -81,10 +81,23 @@ struct Barray(T, Allocator){
         count--;
     }
     void
-    extend(T[] values){
+    extend(scope T[] values){
         ensure_additional(values.length);
         memcpy(bdata.data.ptr+count, values.ptr, values.length*T.sizeof);
         count += values.length;
+    }
+    void
+    extend(R)(scope R range){
+        static if(__traits(hasMember, range, "length")){
+            ensure_additional(range.length);
+        }
+        else static if(__traits(hasMember, range, "count")){
+            ensure_additional(range.count);
+        }
+        else {
+        }
+        foreach(ref it; range)
+            push(it);
     }
     void
     cleanup(){
@@ -117,7 +130,7 @@ struct Barray(T, Allocator){
     static if(!Allocator.state_size){
         static
         typeof(this)
-        from(T[] values){
+        from(scope T[] values){
             typeof(this) result;
             result.extend(values);
             return result;
@@ -126,7 +139,7 @@ struct Barray(T, Allocator){
     else {
         static
         typeof(this)
-        from(Allocator* allocator, T[] values){
+        from(Allocator* allocator, scope T[] values){
             typeof(this) result;
             result.bdata.allocator = allocator;
             result.extend(values);
@@ -145,7 +158,13 @@ struct Barray(T, Allocator){
         other.bdata = b;
         count = other.count;
         other.count = c;
-
+    }
+    // O(N)
+    bool
+    contains(in T item){
+        foreach(it; this)
+            if(it == item) return true;
+        return false;
     }
 }
 
@@ -158,5 +177,12 @@ make_barray(T, A)(A* allocator){
 
 struct Array(T){
     Barray!(T, Mallocator) array;
+    static
+    typeof(this)
+    from(scope T[] values){
+        typeof(this) result;
+        result.extend(values);
+        return result;
+    }
     alias array this;
 }
