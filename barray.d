@@ -130,7 +130,7 @@ struct Barray(T, Allocator){
     static if(!Allocator.state_size){
         static
         typeof(this)
-        from(scope T[] values){
+        from(scope const(T)[] values){
             typeof(this) result;
             result.extend(values);
             return result;
@@ -139,7 +139,7 @@ struct Barray(T, Allocator){
     else {
         static
         typeof(this)
-        from(Allocator* allocator, scope T[] values){
+        from(Allocator* allocator, scope const(T)[] values){
             typeof(this) result;
             result.bdata.allocator = allocator;
             result.extend(values);
@@ -179,7 +179,7 @@ struct Array(T){
     Barray!(T, Mallocator) array;
     static
     typeof(this)
-    from(scope T[] values){
+    from(scope const(T)[] values){
         typeof(this) result;
         result.extend(values);
         return result;
