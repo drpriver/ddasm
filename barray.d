@@ -186,3 +186,44 @@ struct Array(T){
     }
     alias array this;
 }
+
+struct Deque(T){
+    Box!(T[], Mallocator) bdata;
+    size_t front;
+    size_t back;
+    size_t count(){
+        return back - front;
+    }
+    T pop(){
+        assert(back != front);
+        T result = bdata.data[--back];
+        return result;
+    }
+    T pop_front(){
+        assert(back != front);
+        T result = bdata.data[front++];
+        return result;
+    }
+    void push(T val){
+        if(back >= bdata.data.length){
+            size_t new_capacity = bdata.data.length?bdata.data.length*2:8;
+            bdata.good_resize(new_capacity);
+        }
+        bdata.data[back++] = val;
+    }
+    void push_front(T val){
+        if(!front && !back){
+            push(val);
+            return;
+        }
+        if(!front){
+            size_t new_capacity = bdata.data.length?bdata.data.length*2:8;
+            bdata.good_resize(new_capacity);
+            size_t n_move = back;
+            memmove(bdata.data.ptr+new_capacity/2, bdata.data.ptr+n_move, n_move*T.sizeof);
+            front = new_capacity/2;
+            back += new_capacity/2;
+        }
+        bdata.data[--front] = val;
+    }
+}

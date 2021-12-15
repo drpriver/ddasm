@@ -55,7 +55,21 @@ static if(1){
 alias Mallocator = MallocAllocator;
 void report_leaks(){}
 }
-else{
+else static if(1){
+    __gshared LinkAllocator!(MallocAllocator) LINKALLOCATOR;
+    void report_leaks(){
+        import core.stdc.stdio: fprintf, stderr;
+        auto link = LINKALLOCATOR.last_allocation;
+        if(!link)
+            fprintf(stderr, "report_leaks: No Leaks\n");
+        while(link){
+            fprintf(stderr, "report_leaks: Leak: %p (%zu bytes)\n", link.buff.ptr, link.buffsize);
+            link = link.next;
+        }
+    }
+    alias Mallocator = GlobalAllocator!(LINKALLOCATOR);
+}
+else {
     __gshared LinkAllocator!(LoggingAllocator!MallocAllocator) LINKALLOCATOR;
     void report_leaks(){
         import core.stdc.stdio: fprintf, stderr;
