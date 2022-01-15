@@ -470,6 +470,7 @@ struct Machine {
     bool badend;
     bool debugging;
     LineHistory!VAllocator debugger_history;
+    bool[RegisterNames.max+1] watches;
     int
     run(RunFlags flags = RunFlags.NONE)(LinkedProgram* prog, size_t stack_size, const char* debug_history_file = null){
         if(!prog.start || !prog.start.instructions_)
@@ -770,6 +771,20 @@ struct Machine {
             int
             begin(Instruction inst){
                 print_context((cast(uintptr_t*)registers[RIP])-1);
+                foreach(i, w; watches){
+                    if(w){
+                        if(i > 9){
+                            foreach(ri; registerinfos){
+                                if(ri.register == i){
+                                    fprintf(stderr, "%s = %#zx\n", ri.name.ptr, registers[i]);
+                                    break;
+                                }
+                            }
+                        }
+                        else
+                            fprintf(stderr, "r%zu = %#zx\n", i, registers[i]);
+                    }
+                }
                 char[1024] buff = void;
                 for(;;){
                     auto len = get_input_line(&debugger_history, "> ", buff[]);
@@ -779,6 +794,20 @@ struct Machine {
                     }
                     if(!len){
                         return BEGIN_OK;
+                    }
+                    if(len > 2 && buff[0..2] == "w "){
+                        foreach(ri; registerinfos){
+                            if(buff[2 .. len] == ri.name){
+                                watches[ri.register] = true;
+                                break;
+                            }
+                        }
+                        foreach(i, w; watches){
+                            if(w){
+                                fprintf(stderr, "r%zu = %#zx\n", i, registers[i]);
+                            }
+                        }
+                        continue;
                     }
                     switch(buff[0..len]){
                         case "next": case "n":
@@ -803,8 +832,23 @@ struct Machine {
                             debugger_history.add_line(buff[0..len]);
                             backtrace;
                             continue;
+                        case "h": case "help":
+                            fprintf(stderr, "%s", ("Commands:\n"
+                            ~"  next, n         execute next instruction\n"
+                            ~"  continue, c     execute until next breakpoint\n"
+                            ~"  quit, q         halt execution\n"
+                            ~"  list, l         print disassembly of entire function\n"
+                            ~"  dump, d         print contents of registers\n"
+                            ~"  backtrace, bt   print stacktrace\n"
+                            ~"  where           alias of backtrace\n"
+                            ~"  help, h         print out this info\n"
+                            ~"  w               add a watch for a register\n"
+                            ).ptr);
+                            continue;
 
-                        default: continue;
+                        default:
+                            fprintf(stderr, "Unknown command: '%.*s'\n", cast(int)len, buff.ptr);
+                            continue;
                     }
                 }
             }
