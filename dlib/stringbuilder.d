@@ -52,6 +52,8 @@ struct StringBuilder(Allocator){
     ZString
     detach(){
         nul_terminate;
+        void[] ddata = allocator.realloc(data, capacity, cursor+1);
+        data = cast(char*)ddata.ptr;
         auto result = ZString(cursor, data);
         data = null;
         capacity = 0;
@@ -166,12 +168,12 @@ struct StringBuilder(Allocator){
         if(value == int.min){
             write("-2147483648");
             return;
-            }
+        }
         char[10] buff = void;
         if(value < 0){
             write('-');
             value = -value;
-            }
+        }
         char* p = uint32_to_str_buffer(buff.ptr, value);
         ptrdiff_t size = (buff.ptr+10) - p;
         _check_remaining_size(size);
@@ -275,7 +277,7 @@ struct StringBuilder(Allocator){
         while(b[i] == 0){
             i--;
         }
-        for(int z = 0;z <= i; z++){
+        for(int z = i;z >= 0; z--){
             write(hextable[b[z]]);
         }
     }
