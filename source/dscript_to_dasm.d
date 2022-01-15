@@ -1,11 +1,11 @@
 import core.stdc.stdio: fprintf, stdout, stderr, stdin, fread;
-import allocator: Mallocator, ArenaAllocator, LoggingAllocator, LinkAllocator;
-import box: Box;
-import stringbuilder: StringBuilder, P;
-import barray: Barray, Array, make_barray;
-import parse_numbers: parse_unsigned_human;
-import btable: BTable, Table;
-import bettercobject: BCObject;
+import dlib.allocator: Mallocator, ArenaAllocator, LoggingAllocator, LinkAllocator;
+import dlib.box: Box;
+import dlib.stringbuilder: StringBuilder, P;
+import dlib.barray: Barray, Array, make_barray;
+import dlib.parse_numbers: parse_unsigned_human;
+import dlib.btable: BTable, Table;
+import dlib.bettercobject: BCObject;
 static import core.time;
 alias str = const(char)[];
 

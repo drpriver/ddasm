@@ -1,13 +1,13 @@
-import allocator;
+import dlib.allocator;
 import core.stdc.stdio: fputs, fflush, stdout, snprintf;
 import core.stdc.string: memcpy, memmove, memset, memchr;
 version(Posix){
     import core.stdc.signal: raise;
     import core.sys.posix.signal: SIGTSTP;
 }
-import term_util: get_cols;
-import file_util: read_file, write_file;
-import stringbuilder;
+import dlib.term_util: get_cols;
+import dlib.file_util: read_file, write_file;
+import dlib.stringbuilder;
 
 struct LineHistory(Allocator=Mallocator, size_t LINE_HISTORY_MAX=100){
     static if(Allocator.state_size)

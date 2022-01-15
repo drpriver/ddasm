@@ -1,15 +1,15 @@
-import stringbuilder: StringBuilder, Q, H, E;
-import argparse;
-import zstring;
-import get_input;
-import term_util: get_cols, stdin_is_interactive;
-import file_util;
-import allocator;
-import barray;
-import parse_numbers: parse_hex_inner, parse_unsigned_human;
-import btable;
-import box: Box;
-import str_util: endswith;
+import dlib.stringbuilder: StringBuilder, Q, H, E;
+import dlib.argparse;
+import dlib.zstring;
+import dlib.get_input;
+import dlib.term_util: get_cols, stdin_is_interactive;
+import dlib.file_util;
+import dlib.allocator;
+import dlib.barray;
+import dlib.parse_numbers: parse_hex_inner, parse_unsigned_human;
+import dlib.btable;
+import dlib.box: Box;
+import dlib.str_util: endswith;
 
 import core.stdc.string: strlen, strerror, memcpy;
 import core.stdc.stdio: fprintf, stdout, stderr, fread, stdin;

@@ -1,6 +1,6 @@
-import allocator: Mallocator, report_leaks;
-import box: Box;
-import stringbuilder: StringBuilder;
+import dlib.allocator: Mallocator, report_leaks;
+import dlib.box: Box;
+import dlib.stringbuilder: StringBuilder;
 
 import dscript_to_dasm: powerup, compile_to_dasm, powerdown;
 import core.stdc.stdio: fprintf, stdout, stderr, stdin, fread;
@@ -8,17 +8,17 @@ import core.stdc.stdio: fprintf, stdout, stderr, stdin, fread;
 extern(C)
 int main(int argc, char** argv){
     import zstring: ZString;
-    static import argparse;
-    import term_util: stdin_is_interactive, get_cols;
-    import get_input: LineHistory, get_input_line;
-    import file_util: read_file, FileFlags;
+    static import dlib.argparse;
+    import dlib.term_util: stdin_is_interactive, get_cols;
+    import dlib.get_input: LineHistory, get_input_line;
+    import dlib.file_util: read_file, FileFlags;
 
     static import core.stdc.string;
 
     powerup();
     bool force_interactive = false;
     ZString sourcefile;
-    with(argparse)with(ArgParseFlags) with(ArgToParseFlags){
+    with(dlib.argparse)with(ArgParseFlags) with(ArgToParseFlags){
         import core.stdc.stdio: fprintf, stdout, stderr;
         ArgToParse[1] pos_args = [
             {

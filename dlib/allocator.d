@@ -1,4 +1,4 @@
-import zstring;
+import dlib.zstring;
 import core.stdc.stdlib: realloc, free, malloc, calloc;
 import core.stdc.string: memcpy, memset;
 

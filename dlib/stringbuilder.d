@@ -1,10 +1,10 @@
-import box: Box;
-import zstring;
+import dlib.box: Box;
+import dlib.zstring;
 import core.stdc.string: memcpy, memset;
 import core.simd;
 import ldc.simd;
-import fpconv_ctfe: fpconv_dtoa;
-import str_util: split, Split;
+import dlib.fpconv_ctfe: fpconv_dtoa;
+import dlib.str_util: split, Split;
 
 static __gshared immutable hextable = {
     string[] result;
