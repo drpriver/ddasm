@@ -12,7 +12,8 @@ import dlib.box: Box;
 import dlib.str_util: endswith;
 
 import core.stdc.string: strlen, strerror, memcpy;
-import core.stdc.stdio: fprintf, stdout, stderr, fread, stdin;
+import core.stdc.stdio: fprintf, stdout, stderr, fread, stdin, FILE, fwrite, fflush, fopen, fputs, fgets;
+import core.stdc.stdlib: calloc, malloc, free, atoi;
 
 static import dscript_to_dasm;
 
@@ -196,6 +197,7 @@ int main(int argc, char** argv){
         // if(!Fuzzing)fprintf(stderr, "Parsing failed\n");
         return err;
     }
+    expose_builtins;
     LinkedProgram linked_prog;
     linked_prog.source_text = btext;
     {
@@ -236,6 +238,89 @@ struct timespec {
 }
 extern(C) 
 int clock_gettime(int __clock_id, timespec *__tp);
+
+Function*
+expose_function(F)(F fun){
+    Function* f = cast(Function*)Mallocator.alloc(Function.sizeof).ptr;
+    f.type = FunctionType.NATIVE;
+    static if(is(F : uintptr_t function())){
+        f.native_function_r = fun;
+        f.n_ret = 1;
+        f.n_args = 0;
+        return f;
+    }
+    else static if(is(F : uintptr_t function(uintptr_t))){
+        f.native_function_ra = fun;
+        f.n_ret = 1;
+        f.n_args = 1;
+        return f;
+    }
+    else static if(is(F : uintptr_t function(uintptr_t, uintptr_t))){
+        f.native_function_raa = fun;
+        f.n_ret = 1;
+        f.n_args = 2;
+        return f;
+    }
+    else static if(is(F : uintptr_t function(uintptr_t, uintptr_t, uintptr_t))){
+        f.native_function_raaa = fun;
+        f.n_ret = 1;
+        f.n_args = 3;
+        return f;
+    }
+    else static if(is(F : uintptr_t function(uintptr_t, uintptr_t, uintptr_t, uintptr_t))){
+        f.native_function_raaaa = fun;
+        f.n_ret = 1;
+        f.n_args = 4;
+        return f;
+    }
+    else static if(is(F : void function())){
+        f.native_function_ = fun;
+        f.n_ret = 0;
+        f.n_args = 0;
+        return f;
+    }
+    else static if(is(F : void function(uintptr_t))){
+        f.native_function_a = fun;
+        f.n_ret = 0;
+        f.n_args = 1;
+        return f;
+    }
+    else static if(is(F : void function(uintptr_t, uintptr_t))){
+        f.native_function_aa = fun;
+        f.n_ret = 0;
+        f.n_args = 2;
+        return f;
+    }
+    else static if(is(F : void function(uintptr_t, uintptr_t, uintptr_t))){
+        f.native_function_aaa = fun;
+        f.n_ret = 0;
+        f.n_args = 3;
+        return f;
+    }
+    else static if(is(F : void function(uintptr_t, uintptr_t, uintptr_t, uintptr_t))){
+        f.native_function_aaaa = fun;
+        f.n_ret = 0;
+        f.n_args = 4;
+        return f;
+    }
+    else static if(is(F : void function(uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t))){
+        f.native_function_aaaaa = fun;
+        f.n_ret = 0;
+        f.n_args = 5;
+        return f;
+    }
+    else {
+    pragma(msg, F.stringof);
+    pragma(msg, typeof(fun));
+    static assert(0);
+    }
+}
+
+void
+register_function(F)(string name, F fun){
+    (*BUILTINS)[name] = FunctionInfo(name, expose_function(fun));
+}
+
 FunctionTable*
 BUILTINS(){
     __gshared initialized = false;
@@ -244,51 +329,121 @@ BUILTINS(){
     if(!initialized){
         initialized = true;
         table.allocator = &va;
-        __gshared Function Printf1 = {
-            native_function_aa: (uintptr_t fmt, uintptr_t arg){
-
-                if(devnull) return;
-                if(!Fuzzing)fprintf(stdout, cast(char*)fmt, arg);
-                },
-            type: FunctionType.NATIVE,
-            n_args: 2,
-            n_ret: 0,
-        };
-        __gshared Function Printf2 = {
-            native_function_aaa: (uintptr_t fmt, uintptr_t arg, uintptr_t arg2){
-                if(devnull) return;
-                if(!Fuzzing)fprintf(stdout, cast(char*)fmt, arg, arg2);
-                },
-            type: FunctionType.NATIVE,
-            n_args: 3,
-            n_ret: 0,
-        };
-        __gshared Function Puts = {
-            native_function_a: (uintptr_t arg){
-                if(devnull) return;
-                if(!Fuzzing)fprintf(stdout, "%s\n", cast(char*)arg);
-                },
-            type: FunctionType.NATIVE,
-            n_args: 1,
-            n_ret: 0,
-        };
-        __gshared Function Clock = {
-            native_function_r: (){
-                timespec tv;
-                clock_gettime(6, &tv);
-                auto result =  tv.tv_sec * 1000*1000*1000 + tv.tv_nsec;
-                return result;
-                },
-            type: FunctionType.NATIVE,
-            n_args: 0,
-            n_ret: 1,
-        };
-        table["Printf1"] = FunctionInfo("Printf1", &Printf1);
-        table["Printf2"] = FunctionInfo("Printf2", &Printf2);
-        table["Puts"] = FunctionInfo("Puts", &Puts);
-        table["Clock"] = FunctionInfo("Clock", &Clock);
     }
     return &table;
+}
+
+void
+expose_builtins(){
+    register_function("Printf1",
+        (uintptr_t fmt, uintptr_t arg){
+            if(devnull) return;
+            if(!Fuzzing)fprintf(stdout, cast(char*)fmt, arg);
+        }
+    );
+    register_function("Printf2",
+        (uintptr_t fmt, uintptr_t arg, uintptr_t arg2){
+            if(devnull) return;
+            if(!Fuzzing)fprintf(stdout, cast(char*)fmt, arg, arg2);
+        }
+    );
+    register_function("Printf3",
+        (uintptr_t fmt, uintptr_t arg, uintptr_t arg2, uintptr_t arg3){
+            if(devnull) return;
+            if(!Fuzzing)fprintf(stdout, cast(char*)fmt, arg, arg2, arg3);
+        }
+    );
+    register_function("Printf4",
+        (uintptr_t fmt, uintptr_t arg, uintptr_t arg2, uintptr_t arg3, uintptr_t arg4){
+            if(devnull) return;
+            if(!Fuzzing)fprintf(stdout, cast(char*)fmt, arg, arg2, arg3, arg4);
+        }
+    );
+    register_function("Puts",
+        (uintptr_t arg){
+        if(devnull) return;
+        if(!Fuzzing)fprintf(stdout, "%s\n", cast(char*)arg);
+        }
+    );
+    register_function("Clock",
+        (){
+            timespec tv;
+            clock_gettime(6, &tv);
+            uintptr_t result =  tv.tv_sec * 1000*1000*1000 + tv.tv_nsec;
+            return result;
+        }
+    );
+    register_function("Fread",
+        (uintptr_t ptr, uintptr_t size, uintptr_t nitems, uintptr_t stream){
+            return cast(uintptr_t)fread(cast(void*)ptr, size, nitems, cast(FILE*)stream);
+        }
+    );
+    register_function("Fwrite",
+        (uintptr_t ptr, uintptr_t size, uintptr_t nitems, uintptr_t stream){
+            return cast(uintptr_t)fwrite(cast(void*)ptr, size, nitems, cast(FILE*)stream);
+        }
+    );
+    register_function("Fputs",
+        (uintptr_t ptr, uintptr_t stream){
+            return cast(uintptr_t)fputs(cast(const char*)ptr, cast(FILE*)stream);
+        }
+    );
+    register_function("Fgets",
+        (uintptr_t ptr, uintptr_t size, uintptr_t stream){
+            return cast(uintptr_t)fgets(cast(char*)ptr, cast(int)size, cast(FILE*)stream);
+        }
+    );
+    register_function("Fflush",
+        (uintptr_t stream){
+            return cast(uintptr_t)fflush(cast(FILE*)stream);
+        }
+    );
+    register_function("GetStdIn",
+        (){
+            // return cast(uintptr_t)fopen("hello.txt", "r");
+            return cast(uintptr_t)stdin;
+        }
+    );
+    register_function("GetStdOut",
+        (){
+            return cast(uintptr_t)stdout;
+        }
+    );
+    register_function("Malloc",
+        (uintptr_t size){
+            return cast(uintptr_t)malloc(size);
+        }
+    );
+    register_function("Free",
+        (uintptr_t ptr){
+            free(cast(void*)ptr);
+        }
+    );
+    register_function("Memcpy",
+        (uintptr_t dst, uintptr_t src, uintptr_t len){
+            return cast(uintptr_t)memcpy(cast(void*)dst, cast(void*)src, len);
+        }
+    );
+    register_function("GetLine",
+        (uintptr_t buff, uintptr_t buflen){
+            __gshared LineHistory!() history;
+            char* buff_ = cast(char*)buff;
+            ptrdiff_t len = get_input_line(&history, "dasm> ", buff_[0..buflen]);
+            if(len >= 0 && len < buflen)
+                buff_[len] = 0;
+            else
+                buff_[buflen-1] = 0;
+            return cast(uintptr_t)len;
+        }
+    );
+    register_function("Atoi",
+        (uintptr_t p){
+            return cast(uintptr_t)atoi(cast(char*)p);
+        }
+    );
+    register_function("Calloc", (uintptr_t nitems, uintptr_t size){
+        return cast(uintptr_t)calloc(nitems, size);
+    });
 }
 
 enum RunFlags: uint {
