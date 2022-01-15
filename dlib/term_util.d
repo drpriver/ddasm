@@ -7,7 +7,7 @@ int
 get_cols(){
     winsize w;
     int err = ioctl(STDOUT_FILENO, TIOCGWINSZ, &w);
-    if(err != -1){
+    if(err != -1 && w.ws_col){
         return w.ws_col;
     }
     char* cols_s = getenv("COLUMNS");
@@ -31,6 +31,7 @@ int get_cols(){
     BOOL success = GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi);
     if(!success) return 80;
     int columns = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+    if(!columns || columns < 0) return 80;
     return columns;
 }
 bool

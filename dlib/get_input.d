@@ -248,6 +248,7 @@ get_line_internal_loop(LineHistory)(LineHistory* history, char[]buff, const(char
             continue;
         }
         switch(c){
+            case '\n':
             case ENTER:
                 write_data("\n");
                 return ls.length;
@@ -454,6 +455,7 @@ redisplay(LineState* ls){
     size_t len = ls.length;
     size_t pos = ls.curr_pos;
     size_t cols = ls.cols;
+    assert(cols);
     // Scroll the text right until the current cursor position
     // fits on screen.
     while((plen+pos) >= cols) {
