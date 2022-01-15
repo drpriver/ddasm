@@ -15,7 +15,6 @@ import core.stdc.string: strlen, strerror, memcpy;
 import core.stdc.stdio: fprintf, stdout, stderr, fread, stdin, FILE, fwrite, fflush, fopen, fputs, fgets;
 import core.stdc.stdlib: calloc, malloc, free, atoi;
 
-static import dscript_to_dasm;
 
 alias uintptr_t = size_t;
 
@@ -79,7 +78,7 @@ int main(int argc, char** argv){
             ARGDEST(&disassemble),
         },
         {
-            "--debug", "-g", 
+            "--debug", "-g",
             "Executes in debug mode",
             ARGDEST(&debugger),
         },
@@ -129,6 +128,7 @@ int main(int argc, char** argv){
     }
     }
     auto va = VAllocator.from!(Mallocator);
+    // fprintf(stdout, "va.vtable.name: %.*s\n", cast(int)va.vtable.name.length, va.vtable.name.ptr);
     Box!(const(char)[], VAllocator) btext;
     if(sourcefile.length){
         auto fe = read_file!VAllocator(sourcefile.ptr, &va);
@@ -182,7 +182,8 @@ int main(int argc, char** argv){
         btext = btext.from(&va, sb.detach()[]);
     }
     if(highlevel || sourcefile[].endswith(".ds")){
-        dscript_to_dasm.powerup();
+        static import dscript_to_dasm;
+        dscript_to_dasm.powerup;
         Box!(char[], Mallocator) dasmtext;
         auto data = btext.data;
         auto d = (cast(const(ubyte)*)data.ptr)[0 .. data.length];
@@ -190,11 +191,12 @@ int main(int argc, char** argv){
         if(err) return err;
         btext.dealloc();
         btext = btext.from(btext.allocator, dasmtext.data);
+        dscript_to_dasm.powerdown;
     }
     UnlinkedProgram prog;
     int err = parse_asm_string(&va, btext.data, &prog);
     if(err){
-        // if(!Fuzzing)fprintf(stderr, "Parsing failed\n");
+        if(!Fuzzing)fprintf(stderr, "Parsing failed\n");
         return err;
     }
     expose_builtins;
@@ -207,7 +209,7 @@ int main(int argc, char** argv){
         err = link_asm(&va, &temp_va, BUILTINS, &prog, &linked_prog);
     }
     if(err){
-        // if(!Fuzzing)fprintf(stderr, "Linking failed\n");
+        if(!Fuzzing)fprintf(stderr, "Linking failed\n");
         return err;
     }
     if(!linked_prog.start){
@@ -236,7 +238,7 @@ struct timespec {
 	long tv_sec;
 	long tv_nsec;
 }
-extern(C) 
+extern(C)
 int clock_gettime(int __clock_id, timespec *__tp);
 
 Function*
@@ -533,6 +535,9 @@ struct Machine {
                 case 3:
                     registers[ROUT1] = func.native_function_raaa(registers[RARG1], registers[RARG2], registers[RARG3]);
                     return 0;
+                case 4:
+                    registers[ROUT1] = func.native_function_raaaa(registers[RARG1], registers[RARG2], registers[RARG3], registers[RARG4]);
+                    return 0;
                 default:
                     return 1;
             }
@@ -540,16 +545,22 @@ struct Machine {
         else {
             switch(func.n_args){
                 case 0:
-                    func.native_function_r();
+                    func.native_function_();
                     return 0;
                 case 1:
-                    func.native_function_ra(registers[RARG1]);
+                    func.native_function_a(registers[RARG1]);
                     return 0;
                 case 2:
-                    func.native_function_raa(registers[RARG1], registers[RARG2]);
+                    func.native_function_aa(registers[RARG1], registers[RARG2]);
                     return 0;
                 case 3:
-                    func.native_function_raaa(registers[RARG1], registers[RARG2], registers[RARG3]);
+                    func.native_function_aaa(registers[RARG1], registers[RARG2], registers[RARG3]);
+                    return 0;
+                case 4:
+                    func.native_function_aaaa(registers[RARG1], registers[RARG2], registers[RARG3], registers[RARG4]);
+                    return 0;
+                case 5:
+                    func.native_function_aaaaa(registers[RARG1], registers[RARG2], registers[RARG3], registers[RARG4], registers[RARG5]);
                     return 0;
                 default:
                     return 1;
@@ -750,7 +761,7 @@ struct Machine {
                     return 1;
                 case FALSE:
                     return 0;
-                default: 
+                default:
                     return -1;
             }
         }
@@ -1688,12 +1699,12 @@ struct ParseContext{
                         prog.variables.push(var);
                     }
                     else {
-                        err_print(tok, "Only function or variable declarations are legal at global scope, not ", Q(tok.text));
+                        err_print(tok, "1. Only function or variable declarations are legal at global scope, not ", Q(tok.text));
                         return PARSE_ERROR;
                     }
                 }
                 else {
-                    err_print(tok, "Only function or variable declarations are legal at global scope, not ", Q(tok.text));
+                    err_print(tok, "2. Only function or variable declarations are legal at global scope, not ", Q(tok.text));
                     return PARSE_ERROR;
                 }
             }
@@ -2212,7 +2223,7 @@ struct RegisterInfo {
     string name;
 }
 
-immutable RegisterInfo[28] registerinfos = [
+immutable RegisterInfo[30] registerinfos = [
     RegisterInfo(RegisterNames.R0,      "R0",       "r0"),
     RegisterInfo(RegisterNames.R1,      "R1",       "r1"),
     RegisterInfo(RegisterNames.R2,      "R2",       "r2"),
@@ -2223,16 +2234,11 @@ immutable RegisterInfo[28] registerinfos = [
     RegisterInfo(RegisterNames.R7,      "R7",       "r7"),
     RegisterInfo(RegisterNames.R8,      "R8",       "r8"),
     RegisterInfo(RegisterNames.R9,      "R9",       "r9"),
-    RegisterInfo(RegisterNames.R10,     "R10",      "r10"),
-    RegisterInfo(RegisterNames.R11,     "R11",      "r11"),
-    RegisterInfo(RegisterNames.R12,     "R12",      "r12"),
-    RegisterInfo(RegisterNames.R13,     "R13",      "r13"),
-    RegisterInfo(RegisterNames.R14,     "R14",      "r14"),
-    RegisterInfo(RegisterNames.R15,     "R15",      "r15"),
     RegisterInfo(RegisterNames.RARG1,   "RARG1",    "rarg1"),
     RegisterInfo(RegisterNames.RARG2,   "RARG2",    "rarg2"),
     RegisterInfo(RegisterNames.RARG3,   "RARG3",    "rarg3"),
     RegisterInfo(RegisterNames.RARG4,   "RARG4",    "rarg4"),
+    RegisterInfo(RegisterNames.RARG5,   "RARG5",    "rarg5"),
     RegisterInfo(RegisterNames.ROUT1,   "ROUT1",    "rout1"),
     RegisterInfo(RegisterNames.ROUT2,   "ROUT2",    "rout2"),
     RegisterInfo(RegisterNames.RJUNK,   "RJUNK",    "rjunk"),
@@ -2241,6 +2247,13 @@ immutable RegisterInfo[28] registerinfos = [
     RegisterInfo(RegisterNames.RIP,     "RIP",      "rip"),
     RegisterInfo(RegisterNames.RFLAGS,  "RFLAGS",   "rflags"),
     RegisterInfo(RegisterNames.RERROR,  "RERROR",   "rerror"),
+    RegisterInfo(RegisterNames.R10,     "R10",      "r10"),
+    RegisterInfo(RegisterNames.R11,     "R11",      "r11"),
+    RegisterInfo(RegisterNames.R12,     "R12",      "r12"),
+    RegisterInfo(RegisterNames.R13,     "R13",      "r13"),
+    RegisterInfo(RegisterNames.R14,     "R14",      "r14"),
+    RegisterInfo(RegisterNames.R15,     "R15",      "r15"),
+    RegisterInfo(RegisterNames.R16,     "R16",      "r16"),
 ];
 
 enum Instruction: uintptr_t {
@@ -2313,21 +2326,22 @@ enum Instruction: uintptr_t {
 }
 enum RegisterNames:uintptr_t {
     R0      = 0,  R1  =  1, R2  = 2,  R3 = 3, R4 = 4, R5 = 5, R6 = 6, R7 = 7, R8 = 8, R9 = 9,
-    R10     = 10, R11 = 11, R12 = 12, R13= 13, // Arguments
-    R14     = 14, R15 = 15, // Return
+    R10     = 10, R11 = 11, R12 = 12, R13 = 13, R14 = 14, // Arguments
+    R15     = 15, R16 = 16, // Return
     RARG1   = R10,
     RARG2   = R11,
     RARG3   = R12,
     RARG4   = R13,
-    RARGMAX = R13+1,
-    ROUT1   = R14,
-    ROUT2   = R15,
-    RJUNK = 16,
-    RSP = 17,
-    RBP = 18,
-    RIP = 19,
-    RFLAGS = 20,
-    RERROR = 21,
+    RARG5   = R14,
+    RARGMAX = R14+1,
+    ROUT1   = R15,
+    ROUT2   = R16,
+    RJUNK = 17,
+    RSP = 18,
+    RBP = 19,
+    RIP = 20,
+    RFLAGS = 21,
+    RERROR = 22,
 }
 enum CmpMode: uintptr_t {
    EQ = 0,
@@ -2384,10 +2398,13 @@ struct Function {
         void function(uintptr_t) native_function_a;
         void function(uintptr_t, uintptr_t) native_function_aa;
         void function(uintptr_t, uintptr_t, uintptr_t) native_function_aaa;
+        void function(uintptr_t, uintptr_t, uintptr_t, uintptr_t) native_function_aaaa;
+        void function(uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t) native_function_aaaaa;
         uintptr_t function() native_function_r;
         uintptr_t function(uintptr_t) native_function_ra;
         uintptr_t function(uintptr_t, uintptr_t) native_function_raa;
         uintptr_t function(uintptr_t, uintptr_t, uintptr_t) native_function_raaa;
+        uintptr_t function(uintptr_t, uintptr_t, uintptr_t, uintptr_t) native_function_raaaa;
     }
     FunctionType type;
     ubyte n_args;
@@ -2446,78 +2463,75 @@ struct LinkedProgram {
 
 int
 disassemble_one_instruction(SB)(LinkedProgram* prog, SB* sb, uintptr_t* ip){
+    uintptr_t inst = *ip;
+    if(inst > Instruction.max){
+        sb.write("UNK");
+        sb.hex("0x", inst);
+        return 1;
+    }
     with(Instruction) with(ArgumentKind){
-        uintptr_t inst = *ip;
-        if(inst <= Instruction.max){
-            auto ii = &INSTRUCTION_INFOS[inst];
-            sb.write(ii.asm_name);
-            if(ii.args.length){
-                foreach(i, kind; ii.args){
-                    sb.write(' ');
-                    auto value = ip[i+1];
-                    switch(kind){
-                        default:{
-                            auto func = cast(Function*)value;
-                            foreach(v; prog.functions.values){
-                                if(v.func == func){
-                                    sb.write("function ");
-                                    sb.write(v.name);
-                                    goto handled;
-                                }
-                            }
-                            foreach(str; prog.strings){
-                                if(str.ptr == cast(const char*)value)
-                                    goto case STRING;
-                            }
-                        }
-                        // default:
-                            sb.hex("0x", value);
-                            handled:
-                            continue;
-                        case STRING:{
-                            foreach(str; prog.strings){
-                                if(str.ptr == cast(const char*)value){
-                                    sb.write(Q(E(str[]), '"'));
-                                    break;
-                                }
-                            }
-                            continue;
-                        }
-                        case REGISTER:{
-                            bool written = false;
-                            foreach(ri; registerinfos){
-                                if(ri.register == value){
-                                    sb.write(ri.name);
-                                    written = true;
-                                    break;
-                                }
-                            }
-                            if(!written){
-                                sb.write("REGISTER");
-                                sb.hex("0x", value);
-                            }
-                            continue;
-                        }
-                        case CMPMODE:{
-                            if(value < CmpModes.length){
-                                sb.write(CmpModes[value].name);
-                            }
-                            else {
-                                sb.write("CMPMODE");
-                                sb.hex("0x", value);
-                            }
-                            continue;
+        auto ii = &INSTRUCTION_INFOS[inst];
+        sb.write(ii.asm_name);
+        if(!ii.args.length) return 1;
+        foreach(i, kind; ii.args){
+            sb.write(' ');
+            auto value = ip[i+1];
+            switch(kind){
+                default:{
+                    auto func = cast(Function*)value;
+                    foreach(v; prog.functions.values){
+                        if(v.func == func){
+                            sb.write("function ");
+                            sb.write(v.name);
+                            goto handled;
                         }
                     }
+                    foreach(str; prog.strings){
+                        if(str.ptr == cast(const char*)value)
+                            goto case STRING;
+                    }
+                }
+                // default:
+                    sb.hex("0x", value);
+                    handled:
+                    continue;
+                case STRING:{
+                    foreach(str; prog.strings){
+                        if(str.ptr == cast(const char*)value){
+                            sb.write(Q(E(str[]), '"'));
+                            break;
+                        }
+                    }
+                    continue;
+                }
+                case REGISTER:{
+                    bool written = false;
+                    foreach(ri; registerinfos){
+                        if(ri.register == value){
+                            sb.write(ri.name);
+                            written = true;
+                            break;
+                        }
+                    }
+                    if(!written){
+                        sb.write("REGISTER");
+                        sb.hex("0x", value);
+                    }
+                    continue;
+                }
+                case CMPMODE:{
+                    if(value < CmpModes.length){
+                        sb.write(CmpModes[value].name);
+                    }
+                    else {
+                        sb.write("CMPMODE");
+                        sb.hex("0x", value);
+                    }
+                    continue;
                 }
             }
-            return 1 + cast(int)ii.args.length;
         }
-        else {
-            sb.write("UNK");
-            sb.hex("0x", inst);
-            return 1;
-        }
+        return 1 + cast(int)ii.args.length;
     }
 }
 
@@ -2568,8 +2582,9 @@ struct LinkContext {
     AsmError
     allocate_functions(){
         size_t total_size = 0;
+        enum CODE_PAD = 4;
         foreach(ref func; unlinked.functions[]){
-            auto size = calculate_function_size(&func) + 4;
+            auto size = calculate_function_size(&func) + CODE_PAD;
             total_size += size;
         }
         prog.bytecode.resize(total_size);
@@ -2577,7 +2592,7 @@ struct LinkContext {
         prog.function_store.resize(unlinked.functions.count);
         foreach(i, ref func; unlinked.functions[]){
             auto size = calculate_function_size(&func);
-            code_off += 2;
+            code_off += CODE_PAD/2;
             if(func.name in prog.functions){
                 err_print(prog.find_token(func.first_char), "Duplicate function: ", Q(func.name));
                 return AsmError.LINK_ERROR;
@@ -2590,13 +2605,13 @@ struct LinkContext {
             info.func.length = cast(uint)size;
             if(func.name == "start")
                 prog.start = info.func;
-            code_off += 2 + size;
+            code_off += CODE_PAD - CODE_PAD/2 + size;
         }
         return AsmError.NO_ERROR;
     }
 
     //
-    // Conver the un-escaped raw text into a ZString.
+    // Convert the un-escaped raw text into a ZString.
     // Records the ZString in the string table.
     ZString
     make_string(const char[] text){
@@ -2610,14 +2625,14 @@ struct LinkContext {
                 if(i < text.length - 1){
                     char next = text[i+1];
                     switch(next){
-                        case 'n': sb.write('\n'); i++; continue;
-                        case 't': sb.write('\t'); i++; continue;
+                        case 'n':  sb.write('\n'); i++; continue;
+                        case 't':  sb.write('\t'); i++; continue;
                         case '\\': sb.write('\\'); i++; continue;
-                        case 'r': sb.write('\r'); i++; continue;
-                        case 'e': sb.write('\033'); i++; continue;
-                        case '0': sb.write('\0'); i++; continue;
-                        case 'b': sb.write('\b'); i++; continue;
-                        case 'x': case 'X':
+                        case 'r':  sb.write('\r'); i++; continue;
+                        case 'e':  sb.write('\033'); i++; continue;
+                        case '0':  sb.write('\0'); i++; continue;
+                        case 'b':  sb.write('\b'); i++; continue;
+                        case 'x':  case 'X':
                             if(i < text.length - 3){
                                 auto v = parse_hex_inner(text[i+2 .. i+4]);
                                 if(v.errored)
@@ -2945,3 +2960,8 @@ link_asm(VAllocator* allocator, VAllocator* temp_allocator, FunctionTable* built
     *prog = ctx.prog;
     return AsmError.NO_ERROR;
 }
+
+struct Expose {
+}
+
+

@@ -2,7 +2,7 @@ import dlib.allocator: Mallocator, report_leaks;
 import dlib.box: Box;
 import dlib.stringbuilder: StringBuilder;
 
-import dscript_to_dasm: powerup, compile_to_dasm, powerdown;
+static import dscript_to_dasm;
 import core.stdc.stdio: fprintf, stdout, stderr, stdin, fread;
 
 extern(C)
@@ -15,7 +15,7 @@ int main(int argc, char** argv){
 
     static import core.stdc.string;
 
-    powerup();
+    dscript_to_dasm.powerup;
     bool force_interactive = false;
     ZString sourcefile;
     with(dlib.argparse)with(ArgParseFlags) with(ArgToParseFlags){
@@ -124,9 +124,9 @@ int main(int argc, char** argv){
     }
     // fprintf(stderr, "%.*s\n", cast(int)bscript.data.length, bscript.data.ptr);
     Box!(char[], Mallocator) progtext;
-    int err = compile_to_dasm(bscript.data, &progtext);
+    int err = dscript_to_dasm.compile_to_dasm(bscript.data, &progtext);
     if(err) return err;
-    powerdown;
+    dscript_to_dasm.powerdown;
     fprintf(stdout, "%.*s\n", cast(int)progtext.data.length, progtext.data.ptr);
     bscript.dealloc;
     progtext.dealloc;
