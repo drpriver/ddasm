@@ -1667,6 +1667,8 @@ struct ParseContext{
                     tok = tokenizer.current_token_and_advance;
                 }
                 tok = tokenizer.skip_comment(tok);
+                if(tok.type == NEWLINE)
+                    continue;
                 if(tok.type == EOF)
                     break;
                 if(tok.type == IDENTIFIER){
