@@ -686,6 +686,7 @@ struct VAllocator {
         void[] function(void*, void*, size_t, size_t) realloc_proc;
         void function(void*, const(void)*, size_t) free_proc;
         void function(void*) free_all_proc;
+        string name;
     }
     immutable(AllocatorVTable)* vtable;
     enum state_size = typeof(this).sizeof;
@@ -724,6 +725,7 @@ struct VAllocator {
             realloc_proc:(void*p, void* r, size_t o, size_t n){return (cast(A*)p).realloc(r, o, n);},
             free_proc:(void*p, const(void)*f, size_t s){return (cast(A*)p).free(f, s);},
             free_all_proc: free_all_proc,
+            name: Allocator.stringof,
         };
         return VAllocator(a, &vt);
     }
@@ -742,6 +744,7 @@ struct VAllocator {
             realloc_proc:(void*p, void* r, size_t o, size_t n){return A.realloc(r, o, n);},
             free_proc:(void*p, const(void)*f, size_t s){return A.free(f, s);},
             free_all_proc: free_all_proc,
+            name: Allocator.stringof,
         };
         return VAllocator(null, &vt);
     }
