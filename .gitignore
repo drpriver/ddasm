@@ -16,3 +16,4 @@ dsdasm
 *.lst
 *.history
 Bin
+Deps

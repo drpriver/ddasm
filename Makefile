@@ -15,8 +15,8 @@ include $(DEPFILES)
 # Telling the linker to strip it out saves a lot!
 LDSTRIP=-L-dead_strip
 
-Bin/%: source/%.d | Bin Deps
-	ldc2 -i $< -I source -betterC -g -fvisibility=hidden $(OPT) $(LDSTRIP) -of $@ -makedeps=Deps/$*.deps
+Bin/%: %.d | Bin Deps
+	ldc2 -i $< -betterC -g -fvisibility=hidden $(OPT) $(LDSTRIP) -of $@ -makedeps=Deps/$*.deps
 
 .PHONY: ddasm
 ddasm: Bin/ddasm
