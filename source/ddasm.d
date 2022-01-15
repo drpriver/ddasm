@@ -878,11 +878,12 @@ struct Machine {
         for(;;){
             auto inst = *cast(Instruction*)registers[RIP];
             registers[RIP] += uintptr_t.sizeof;
-            final switch(inst){
+            switch(inst){
                 case HALT:
                     if(auto b = begin(HALT)) return b;
                     halted = true;
                     return 0;
+                default:
                 case ABORT:
                     if(auto b = begin(ABORT)) return b;
                     backtrace;
