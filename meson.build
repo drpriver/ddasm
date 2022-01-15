@@ -9,5 +9,5 @@ project('ddasm', 'd')
 # On the plus side, it generates correct ninja files.
 
 add_global_arguments('-betterC', '-i', language : 'd')
-executable('dsdasm', 'source/dsdasm.d', include_directories:['source'])
+executable('ds2dasm', 'source/ds2dasm.d', include_directories:['source'])
 executable('ddasm', 'source/ddasm.d', include_directories:['source'])

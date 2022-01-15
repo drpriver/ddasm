@@ -11,20 +11,21 @@ Deps: ; $(MKDIR) $@
 DEPFILES:=$(wildcard Deps/*.deps)
 include $(DEPFILES)
 
-Bin/ddasm: source/ddasm.d | Bin Deps
-	ldc2 -i source/ddasm.d -I source -betterC -g  -fvisibility=hidden $(OPT) -L-dead_strip -of $@ -makedeps=Deps/ddasm.deps
+# Apparently a collosal amount of dead code is generated.
+# Telling the linker to strip it out saves a lot!
+LDSTRIP=-L-dead_strip
 
-Bin/dsdasm: source/dsdasm.d | Bin Deps
-	ldc2 -i source/dsdasm.d -I source -betterC -g  $(OPT) -L-dead_strip -of $@ -makedeps=Deps/dsdasm.deps
-
-.PHONY: dsdasm
-ddasm: Bin/ddasm
+Bin/%: source/%.d | Bin Deps
+	ldc2 -i $< -I source -betterC -g -fvisibility=hidden $(OPT) $(LDSTRIP) -of $@ -makedeps=Deps/$*.deps
 
 .PHONY: ddasm
-dsdasm: Bin/dsdasm
+ddasm: Bin/ddasm
+
+.PHONY: ds2dasm
+ds2dasm: Bin/ds2dasm
 
 .PHONY: all
-all: dsdasm ddasm
+all: ds2dasm ddasm
 
 .PHONY: clean
 clean:
