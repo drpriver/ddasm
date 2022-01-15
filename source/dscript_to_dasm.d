@@ -37,7 +37,7 @@ compile_to_dasm(const ubyte[] source, Box!(char[], Mallocator)* progtext){
 enum TokenType: ubyte{
     // Single character tokens
     LEFT_PAREN = '(', RIGHT_PAREN =')', LEFT_BRACE='{', RIGHT_BRACE = '}',
-    COMMA = ',', DOT = '.', MINUS ='-', PLUS = '+', SEMICOLON = ';', SLASH = '/', STAR = '*',
+    COMMA = ',', DOT = '.', MINUS ='-', PLUS = '+', SEMICOLON = ';', SLASH = '/', STAR = '*', MOD = '%',
 
     // One or two character tokens
     BANG = '!', BANG_EQUAL = BANG + 127, EQUAL = '=', EQUAL_EQUAL = EQUAL+127,
@@ -47,8 +47,8 @@ enum TokenType: ubyte{
     IDENTIFIER = 127, STRING = 128, NUMBER = 129,
 
     // Keywords
-    AND, CLASS, ELSE, FALSE, FUN, FOR, IF, NIL, OR, PRINT, RETURN, SUPER, THIS, TRUE, VAR,
-    WHILE, GOTO, LABEL,
+    AND, ELSE, FALSE, FUN, FOR, IF, NIL, OR, RETURN, TRUE, LET,
+    WHILE, GOTO, LABEL, BREAK, CONTINUE,
 
     EOF = 0,
 }
@@ -118,6 +118,7 @@ struct Tokenizer(B) {
             case '+':
             case ';':
             case '*':
+            case '%':
                 addToken(cast(TokenType)c);
                 break;
             case '!':
@@ -159,7 +160,7 @@ struct Tokenizer(B) {
     }}
 
     void do_identifier(){
-        while(peek.isAlphaNumeric) current++;
+        while(peek.isIdentChar) current++;
         auto text = cast(const(char)[])source[start .. current];
         if(auto type = text in KEYWORDS)
             addToken(*type);
@@ -239,6 +240,9 @@ bool isDigit()(ubyte c){
 bool isAlphaNumeric()(ubyte c){
     return isAlpha(c) || isDigit(c);
 }
+bool isIdentChar()(ubyte c){
+    return isAlpha(c) || isDigit(c) || c == '_';
+}
 
 __gshared BTable!(str, TokenType, Mallocator) KEYWORDS;
 
@@ -247,29 +251,26 @@ void powerup(){
     if(KEYWORDSPOWERED) return;
     KEYWORDSPOWERED = true;
     with(TokenType){
-        immutable string[18] keys = [
+        immutable string[16] keys = [
             "and",
-            "class",
             "else",
             "false",
             "for",
-            "fun",
+            "function",
             "if",
             "nil",
             "or",
-            "print",
             "return",
-            "super",
-            "this",
             "true",
             "let",
             "while",
             "goto",
             "label",
+            "break",
+            "continue",
         ];
-        immutable TokenType[18] values = [
+        immutable TokenType[16] values = [
             AND,
-            CLASS,
             ELSE,
             FALSE,
             FOR,
@@ -277,15 +278,14 @@ void powerup(){
             IF,
             NIL,
             OR,
-            PRINT,
             RETURN,
-            SUPER,
-            THIS,
             TRUE,
-            VAR,
+            LET,
             WHILE,
             GOTO,
             LABEL,
+            BREAK,
+            CONTINUE,
         ];
         static assert(keys.length == values.length);
         for(size_t i = 0; i < keys.length; i++){
@@ -344,7 +344,7 @@ struct Expr{
         case UNARY    : return visitor.visit(cast(Unary*)&this);
         case VARIABLE : return visitor.visit(cast(VarExpr*)&this);
         case LOGICAL  : return visitor.visit(cast(Logical*)&this);
-        case CALL  : return visitor.visit(cast(Call*)&this);
+        case CALL     : return visitor.visit(cast(Call*)&this);
         }
     }
     R accept(R)(RegVisitor!R visitor, int target){
@@ -372,6 +372,11 @@ struct Assign {
         result.name = o;
         result.right = r;
         return &result.exp;
+    }
+    static
+    Assign
+    make(Token o, Expr* r){
+        return Assign(Expr(ExprType.ASSIGN), o, r);
     }
 }
 
@@ -487,9 +492,8 @@ struct VarExpr {
 
 // Statements
 enum StatementType {
-    PRINT,
     EXPRESSION,
-    VAR,
+    LET,
     BLOCK,
     IF,
     WHILE,
@@ -500,9 +504,8 @@ enum StatementType {
 }
 
 interface StatementVisitor(R){
-    R visit(Print* stmt);
     R visit(ExpressionStmt* stmt);
-    R visit(VarStmt* stmt);
+    R visit(LetStmt* stmt);
     R visit(Block* stmt);
     R visit(IfStmt* stmt);
     R visit(WhileStatement* stmt);
@@ -517,15 +520,14 @@ struct Statement {
     R accept(R)(StatementVisitor!R visitor){
         final switch(type)with(StatementType){
         case BLOCK      : return visitor.visit(cast(Block*)&this);
-        case PRINT      : return visitor.visit(cast(Print*)&this);
         case EXPRESSION : return visitor.visit(cast(ExpressionStmt*)&this);
-        case VAR        : return visitor.visit(cast(VarStmt*)&this);
+        case LET        : return visitor.visit(cast(LetStmt*)&this);
         case IF         : return visitor.visit(cast(IfStmt*)&this);
         case WHILE      : return visitor.visit(cast(WhileStatement*)&this);
         case FUNCTION   : return visitor.visit(cast(FuncStatement*)&this);
         case RETURN     : return visitor.visit(cast(ReturnStatement*)&this);
-        case GOTO     : return visitor.visit(cast(GotoStatement*)&this);
-        case LABEL     : return visitor.visit(cast(LabelStatement*)&this);
+        case GOTO       : return visitor.visit(cast(GotoStatement*)&this);
+        case LABEL      : return visitor.visit(cast(LabelStatement*)&this);
         }
     }
 }
@@ -601,20 +603,6 @@ struct IfStmt {
     }
 }
 
-struct Print {
-    Statement stmt;
-    Expr* expr;
-
-    static
-    Statement*
-    make(A)(A* allocator, Expr* e){
-        auto data = allocator.alloc(typeof(this).sizeof);
-        auto p = cast(typeof(this)*)data.ptr;
-        p.stmt.type = StatementType.PRINT;
-        p.expr = e;
-        return &p.stmt;
-    }
-}
 
 struct Block {
     Statement stmt;
@@ -646,7 +634,7 @@ struct ExpressionStmt {
     }
 }
 
-struct VarStmt {
+struct LetStmt {
     Statement stmt;
     Token name;
     Expr* initializer;
@@ -656,7 +644,7 @@ struct VarStmt {
     make(A)(A* allocator, Token t, Expr* i){
         auto data = allocator.alloc(typeof(this).sizeof);
         auto p = cast(typeof(this)*)data.ptr;
-        p.stmt.type = StatementType.VAR;
+        p.stmt.type = StatementType.LET;
         p.name = t;
         p.initializer = i;
         return &p.stmt;
@@ -722,7 +710,7 @@ struct Parser(A) {
 
     Statement* declaration(){
         if(match(TokenType.FUN)) return function_!"function"();
-        if(match(TokenType.VAR)) return varDeclaration();
+        if(match(TokenType.LET)) return varDeclaration();
         return statement();
     }
 
@@ -763,14 +751,13 @@ struct Parser(A) {
             if(!initializer) return null;
         }
         consume(TokenType.SEMICOLON, "Expect ';' after var decl");
-        return VarStmt.make(allocator, name, initializer);
+        return LetStmt.make(allocator, name, initializer);
 
     }
     Statement* statement(){
         if(match(TokenType.RETURN)) return returnStatement();
         if(match(TokenType.FOR)) return forStatement();
         if(match(TokenType.IF)) return ifStatement();
-        if(match(TokenType.PRINT)) return printStatement();
         if(match(TokenType.WHILE)) return whileStatement();
         if(match(TokenType.LEFT_BRACE)) return block();
         if(match(TokenType.LABEL)) return label();
@@ -812,7 +799,7 @@ struct Parser(A) {
         Statement* initializer;
         if(match(TokenType.SEMICOLON))
             initializer = null;
-        else if(match(TokenType.VAR)){
+        else if(match(TokenType.LET)){
             initializer = varDeclaration();
             if(initializer is null) return null;
         }else {
@@ -900,11 +887,6 @@ struct Parser(A) {
         return Block.make(allocator, stmts[]);
     }
 
-    Statement* printStatement(){
-        auto value = expression();
-        consume(TokenType.SEMICOLON, "Expected ';' after value");
-        return Print.make(allocator, value);
-    }
 
     Statement* expressionStatement(){
         auto value = expression();
@@ -997,7 +979,7 @@ struct Parser(A) {
     }}
     Expr* factor(){with(TokenType){
         Expr* expr = unary();
-        while(match(STAR, SLASH)){
+        while(match(STAR, SLASH, MOD)){
             Token operator = previous;
             Expr* right = unary();
             expr = Binary.make(allocator, expr, operator, right);
@@ -1179,13 +1161,10 @@ class DasmAnalyzer(A): BCObject, Visitor!void, StatementVisitor!void {
         expr.left.accept(this);
         expr.right.accept(this);
     }
-    void visit(Print* stmt){
-        stmt.expr.accept(this);
-    }
     void visit(ExpressionStmt* stmt){
         stmt.expr.accept(this);
     }
-    void visit(VarStmt* stmt){
+    void visit(LetStmt* stmt){
         stmt.initializer.accept(this);
         analysis.vars ~= stmt.name.lexeme;
     }
@@ -1319,7 +1298,10 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
                         sb.writef("  mul r% r% %\n", target, lhs, rhs);
                         break;
                     case SLASH:
-                        sb.writef("  mul r% rjunk r% %\n", target, lhs, rhs);
+                        sb.writef("  div r% rjunk r% %\n", target, lhs, rhs);
+                        break;
+                    case MOD:
+                        sb.writef("  div rjunk r% r% %\n", target, lhs, rhs);
                         break;
                     case BANG_EQUAL:
                         sb.writef("  scmp r% %\n", lhs, rhs);
@@ -1369,7 +1351,10 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
                         sb.writef("  mul r% r% %\n", target, lhs, rhs);
                         break;
                     case SLASH:
-                        sb.writef("  mul r% rjunk r% %\n", target, lhs, rhs);
+                        sb.writef("  div r% rjunk r% %\n", target, lhs, rhs);
+                        break;
+                    case MOD:
+                        sb.writef("  div rjunk r% r% %\n", target, lhs, rhs);
                         break;
                     default:
                         error(expr.operator, "Unhandled binary op");
@@ -1395,7 +1380,10 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
                     sb.writef("  mul r% r% r%\n", target, lhs, rhs);
                     break;
                 case SLASH:
-                    sb.writef("  mul r% rjunk r% r%\n", target, lhs, rhs);
+                    sb.writef("  div r% rjunk r% r%\n", target, lhs, rhs);
+                    break;
+                case MOD:
+                    sb.writef("  div rjunk r% r% r%\n", target, lhs, rhs);
                     break;
                 case BANG_EQUAL:
                     sb.writef("  scmp r% r%\n", lhs, rhs);
@@ -1437,16 +1425,29 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
     }
     int visit(Literal* expr, int target){
         if(target == TARGET_IS_NOTHING) return 0;
-        double n;
         if(expr.value.type == TokenType.NUMBER){
             sb.writef("  move r% %\n", target, cast(size_t)expr.value.number);
+            return 0;
+        }
+        if(expr.value.type == TokenType.NIL){
+            sb.writef("  move r% 0\n", target);
+            return 0;
+        }
+        if(expr.value.type == TokenType.TRUE){
+            sb.writef("  move r% 1\n", target);
+            return 0;
+        }
+        if(expr.value.type == TokenType.FALSE){
+            sb.writef("  move r% 0\n", target);
             return 0;
         }
         if(expr.value.type == TokenType.STRING){
             sb.writef("  move r% \"%\"\n", target, expr.value.string_);
             return 0;
         }
-
+        fprintf(stderr, "expr.value.type: %d\n", cast(int)expr.value.type);
+        fprintf(stderr, "Label: %d\n", cast(int)TokenType.LABEL);
+        fprintf(stderr, "%d\n", __LINE__);
         return -1;
     }
     int visit(Unary* expr, int target){
@@ -1676,10 +1677,6 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
         error(expr.operator, "Unhandled logical operator");
         return -1;
     }
-    int visit(Print* stmt){
-        error(0, "Print not supported");
-        return -1;
-    }
     int visit(ExpressionStmt* stmt){
         if(!funcdepth){
             error(0, "Expression outside of function");
@@ -1690,7 +1687,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
         regallocator.reset_to(before);
         return result;
     }
-    int visit(VarStmt* stmt){
+    int visit(LetStmt* stmt){
         if(!funcdepth) {
             // global variable;
             if(stmt.initializer.type != ExprType.LITERAL){
@@ -1717,6 +1714,13 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
                     return -1;
             }
         }
+        // initializer is guaranteed to be the NIl Expr or a real expr.
+        // if(!stmt.initializer) return 0;
+        // Turn the initializer into an assignment statement.
+        Assign assign = Assign.make(stmt.name, stmt.initializer);
+        int res = (&assign.exp).accept(this, 0);
+        return res;
+        static if(0){
         if(auto rlocal = stmt.name.lexeme in reglocals){
             int res = stmt.initializer.accept(this, *rlocal);
             if(res != 0) return res;
@@ -1733,6 +1737,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
         }
         error(stmt.name, "Unhandled var stmt");
         return -1;
+        }
     }
     int visit(Block* stmt){
         if(!funcdepth) {
@@ -1786,7 +1791,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
                     jmpmode = "ge";
                     break;
                 case BANG_EQUAL:
-                    jmpmode = "le";
+                    jmpmode = "eq";
                     break;
                 default:
                     assert(0);
@@ -1962,7 +1967,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
                     jmpmode = "ge";
                     break;
                 case BANG_EQUAL:
-                    jmpmode = "le";
+                    jmpmode = "eq";
                     break;
                 default:
                     assert(0);
@@ -1978,7 +1983,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
             int res = stmt.condition.accept(this, cond);
             if(res != 0) return res;
             sb.writef("  cmp r% 0\n", cond);
-            sb.writef("  jump ne label L%\n", after);
+            sb.writef("  jump eq label L%\n", after);
         }
         int res = stmt.statement.accept(this);
         if(res != 0) return res;
