@@ -1,0 +1,39 @@
+function fact 1
+    cmp rarg1 1
+    jump gt label recur
+    move rout1 1
+    ret
+    label recur
+    push rarg1
+    sub rarg1 rarg1 1
+    call function fact
+    pop rout2
+    mul rout1 rout1 rout2
+    ret
+end
+
+
+
+function factorial 2
+    label entry
+    cmp rarg1 1
+    jump gt label recur
+    move rout1 rarg2
+    ret
+    label recur
+    mul rarg2 rarg2 rarg1
+    sub rarg1 rarg1 1
+    move rip label entry
+    abort
+end
+
+function start 0
+    cmp rarg1 0
+    cmov eq rarg1 10
+    move rarg2 1
+    call function factorial
+    move rarg1 "%d\n"
+    move rarg2 rout1
+    call function Printf2
+    halt
+end

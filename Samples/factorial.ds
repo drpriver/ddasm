@@ -1,0 +1,14 @@
+function start(arg){
+    if(arg == 0)
+        arg = 10;
+    let result = factorial(arg);
+    Printf2("%d\n", result);
+}
+
+function factorial(n){
+    let result = 1;
+    for(; n > 1; n = n - 1){
+        result = n * result;
+    }
+    return result;
+}

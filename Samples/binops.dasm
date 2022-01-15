@@ -1,0 +1,42 @@
+function start 0
+    move rarg1 "0x%.2llx\n"
+
+    move r0 0xff
+    and rarg2 r0 0x0f
+    call function Printf2
+
+    or rarg2 rarg2 0xf0
+    call function Printf2
+
+    logical_and rarg2 rarg2 0xf0
+    call function Printf2
+
+    move rarg2 0
+    move r0 1
+    logical_or rarg2 rarg2 r0
+    call function Printf2
+
+    move rarg2 0
+    logical_or rarg2 rarg2 rarg2
+    call function Printf2
+
+    move rarg2 -500
+    mul rarg2 rarg2 rarg2
+    call function Printf2
+
+    move rarg2 -1
+    shl rarg2 rarg2 16
+    shr rarg2 rarg2 56
+    call function Printf2
+
+    move rarg2 0b1010
+    move rarg3 0b0011
+    xor rarg2 rarg2 rarg3
+    move r3 function Puts
+
+    xor r4 r3 function Printf2
+    xor r0 r4 function Printf2
+    call r0
+
+    halt
+end

@@ -1,0 +1,5 @@
+function start 0
+    move rarg1 "Hello, World!"
+    call function Puts
+    halt
+end

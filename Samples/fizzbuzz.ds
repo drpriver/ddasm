@@ -1,0 +1,69 @@
+function start(){
+    Printf1("N (for fizzbuzz");
+    let stdout = GetStdOut();
+    Fflush(stdout);
+    let buff = Malloc(80);
+    GetLine(buff, 80);
+
+    let n = Atoi(buff);
+    // validate the input a bit
+    if(n <= 1){
+        Puts("Too Small!");
+        return;
+    }
+    if(n >= 100000){
+        Puts("Too big!");
+        return;
+    }
+    n = n + 1;
+    Puts("Iterative");
+    fizzbuzz(n);
+    Puts("Recursive");
+    recursive_fizzbuzz(0, n);
+}
+
+function fizzbuzz(n){
+    let x = 0;
+    for(x = 1; x < n; x = x + 1){
+        let mod3 = x % 3;
+        let mod5 = x % 5;
+        let printed = false;
+        if(!mod3){
+            Printf2("%s", "\e[91mfizz");
+            printed = true;
+        }
+        if(!mod5){
+            Printf2("%s", "\e[92mbuzz");
+            printed = true;
+        }
+        if(!printed){
+            Printf2("\e[94m%u", x);
+        }
+        Printf1(" ");
+    }
+    Puts("\e[39m");
+}
+
+function recursive_fizzbuzz(x, end){
+    if(x == end) {
+        Puts("\e[39m");
+        return;
+    }
+    x = x + 1;
+    let printed = false;
+    let mod3 = x % 3;
+    let mod5 = x % 5;
+    if(!mod3){
+        Printf2("%s", "\e[91mfizz");
+        printed = true;
+    }
+    if(!mod5){
+        Printf2("%s", "\e[92mbuzz");
+        printed = true;
+    }
+    if(!printed){
+        Printf2("\e[94m%u", x);
+    }
+    Printf1(" ");
+    return recursive_fizzbuzz(x, end);
+}

@@ -1,0 +1,24 @@
+function start 0
+    call function GetStdIn
+    move r0 rout1
+    call function GetStdOut
+    move r1 rout1
+    move rarg1 "Enter something: "
+    move rarg2 r1
+    call function Fputs
+    move rbp rsp
+    move r2 rsp
+    add rsp rsp 80
+    move rarg1 r2
+    move rarg2 80
+    move rarg3 r0
+    call function Fgets
+    move rarg1 "You entered: "
+    move rarg2 r1
+    call function Fputs
+    move rarg1 r2
+    call function Fputs
+    move rarg1 "\n"
+    call function Fputs
+    halt
+end

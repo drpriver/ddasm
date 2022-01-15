@@ -1,0 +1,24 @@
+function start
+    push rbp
+    move rbp rsp
+    add rsp rsp 0p8
+    local_write 0p1 10
+    call function lmao
+    local_read rarg1 0p2
+    local_read rarg2 0p3
+    tail_call function say
+end
+
+function lmao
+    local_read rarg2 0p1
+    local_write 0p2 "Hello %zd!\n"
+    local_read rarg1 0p2
+    local_write 0p3 20
+    tail_call function say
+end
+
+function say
+    bt
+    call function Printf1
+    ret
+end

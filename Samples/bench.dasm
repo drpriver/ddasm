@@ -1,0 +1,102 @@
+function start 0
+    move r0 10000
+    label loop
+    sub r0 r0 1
+    cmp r0 0
+    jump ne 1
+    halt
+    push r0
+    move rarg1 10000
+    call function fizzother
+    pop r0
+    move rip label loop
+    halt
+end
+
+function fizzbuzz 1
+        add     r7 rarg1 1
+        move    r0 1
+
+    label begin_loop
+    # In this loop, we use r3 to track whether we have printed
+    # a word or not.
+        move    r3 0
+        div     rjunk r1 r0 3
+        cmp     r1 0
+        move    rarg1 ""
+        cmov eq rarg1 "\e[91mfizz"
+        cmov eq r3 1
+        # call function Printf1
+
+        div     rjunk r1 r0 5
+        cmp     r1 0
+        move    rarg1 ""
+        cmov eq rarg1 "\e[92mbuzz"
+        cmov eq r3 1
+        # call function Printf1
+        cmp     r3 1
+        jump eq 3
+
+        move    rarg1 "\e[94m%u"
+        move    rarg2 r0
+        # call function Printf2
+
+        move    rarg1 " "
+        # call function Printf1
+
+        add     r0 r0 1
+        cmp     r0 r7
+        jump ne label begin_loop
+
+        move rarg1 "\e[39m" # reset
+        # call function Puts
+
+        ret
+end
+
+function fizzother 1
+    # So we will have 3 counters and check if they are at fizz
+    # buzz time or not.
+        move r0 1
+        move r1 1
+        move r2 1
+        add r3 rarg1 1
+        move r4 0
+
+    label loop
+        cmp r1 3
+        jump ne label buzz
+        move r1 0
+        move rarg1 "fizz"
+        call function Printf1
+        move r4 1
+
+    label buzz
+        cmp r2 5
+        jump ne label numeric
+        move r2 0
+        move rarg1 "buzz"
+        call function Printf1
+        move r4 1
+
+    label numeric
+        cmp r4 1
+        jump eq label continue
+        move rarg1 "%llu"
+        move rarg2 r0
+        call function Printf2
+
+
+    label continue
+        move rarg1 "\n"
+        call function Printf1
+
+        add r0 r0 1
+        add r1 r1 1
+        add r2 r2 1
+        move r4 0
+        cmp r0 r3
+        jump ne label loop
+
+        ret
+end

@@ -1,0 +1,119 @@
+function start 0
+    move rarg1 "N (for fizzbuzz): "
+    call function Printf1
+
+    move rbp rsp
+    move r0 rsp
+    add rsp rsp 80
+    move rarg1 r0
+    move rarg2 80
+    call function GetLine
+
+    move rarg1 r0
+    call function Atoi
+
+# validate the input a bit
+    move r1 rout1
+    cmp r1 1
+    jump ge label notsmall
+    move rarg1 "Too Small!"
+    call function Puts
+    halt
+
+    label notsmall
+    cmp r1 100000
+    jump le label notbig
+    move rarg1 "Too big!"
+    call function Puts
+    halt
+
+    label notbig
+    move rarg1 r1
+    add rarg1 rarg1 1
+    move rarg2 1
+    call function fizzbuzz
+    halt
+end
+
+function fizzbuzz 1
+        move     r7 rarg1
+        move    r0 1
+
+    label begin_loop
+    # In this loop, we use r3 to track whether we have printed
+    # a word or not.
+        move    r3 0
+        div     rjunk r1 r0 3
+        cmp     r1 0
+        move    rarg1 ""
+        cmov eq rarg1 "\e[91mfizz"
+        cmov eq r3 1
+        call function Printf1
+
+        div     rjunk r1 r0 5
+        cmp     r1 0
+        move    rarg1 ""
+        cmov eq rarg1 "\e[92mbuzz"
+        cmov eq r3 1
+        call function Printf1
+        cmp     r3 1
+        jump eq 3
+
+        move    rarg1 "\e[94m%u"
+        move    rarg2 r0
+        call function Printf2
+
+        move    rarg1 " "
+        call function Printf1
+
+        add     r0 r0 1
+        cmp     r0 r7
+        jump ne label begin_loop
+
+        move rarg1 "\e[39m" # reset
+        call function Puts
+        ret
+end
+
+function recursive_fizzbuzz 1
+    bt
+    cmp rarg1 rarg2
+    jump eq label end
+    push rarg1
+    push rarg2
+    move r0 rarg2
+
+    move    r3 0
+    div     rjunk r1 r0 3
+    cmp     r1 0
+    move    rarg1 ""
+    cmov eq rarg1 "\e[91mfizz"
+    cmov eq r3 1
+    call function Printf1
+
+    div     rjunk r1 r0 5
+    cmp     r1 0
+    move    rarg1 ""
+    cmov eq rarg1 "\e[92mbuzz"
+    cmov eq r3 1
+    call function Printf1
+    cmp     r3 1
+    jump eq 3
+
+    move    rarg1 "\e[94m%u"
+    move    rarg2 r0
+    call function Printf2
+
+    move    rarg1 " "
+    call function Printf1
+    pop rarg2
+    pop rarg1
+    add rarg2 rarg2 1
+    tail_call function recursive_fizzbuzz
+
+    label end
+    move rarg1 "\e[39m" # reset
+    call function Puts
+    bt
+    ret
+end

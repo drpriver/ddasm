@@ -1,0 +1,40 @@
+function cat 0
+    move r0 rarg1
+    move r1 rarg2
+    move rbp rsp
+
+    # alloca(32768)
+    move r2 rsp
+    add rsp rsp 32768
+
+    move rarg2 1
+    move rarg1 r2
+    label loop
+        move rarg3 32768
+        move rarg4 r0
+        call function Fread
+        move r3 rout1
+
+        move rarg3 r3
+        move rarg4 r1
+        call function Fwrite
+
+        cmp r3 32768
+        jump ne label done
+        move rip label loop
+    label done
+    move rarg1 r1
+    call function Fflush
+    move rsp rbp
+    ret
+end
+
+function start 0
+    call function GetStdIn
+    move r0 rout1
+    call function GetStdOut
+    move rarg1 r0
+    move rarg2 rout1
+    call function cat
+    halt
+end

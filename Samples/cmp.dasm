@@ -1,0 +1,13 @@
+function start 0
+    move r0 -1
+    move r1 1
+    scmp r0 r1
+    move rarg1 "scmp: 1 < -1"
+    cmov lt rarg1 "scmp: -1 < 1"
+    call function Puts
+    cmp r0 r1
+    move rarg1 "cmp: 1 < -1"
+    cmov lt rarg1 "cmp:  -1 < 1"
+    call function Puts
+    halt
+end

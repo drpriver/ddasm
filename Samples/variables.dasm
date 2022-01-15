@@ -1,0 +1,101 @@
+#
+# Variables are statically allocated regions of memory which you can read and
+# write to. Be careful, doing
+#
+#   move r0 var foo
+#
+# does not move the value stored in foo, it moves the address of foo.
+# Use read r0 var foo instead.
+
+# Writing has a similar issue if the variable is storing the pointer. You'll
+# first need to read the address into a register and then do the write.
+#
+#   read r0 var foo
+#   write r0 2
+#
+var foo 3
+var hello "Hello\0World\0Yes!!\0Again\0Aloha\0last time "
+var yes function func2
+var bar var yes
+var arr [function test [function test]]
+
+function test 0
+    move rarg1 "test"
+    call function Puts
+    ret
+end
+
+function foobar 0
+    read rarg2 var foo
+    move rarg1 ""
+    move rarg1 "foo: %lld\n"
+    call function Printf2
+    # add 1 to foo every time we call this function to show it works
+    add rarg2 rarg2 1
+    move r0 var foo
+    write r0 rarg2
+    read rarg1 var hello
+    call function Puts
+    add rarg1 rarg1 6
+    move r0 var hello
+    write r0 rarg1
+    ret
+end
+
+function func2 0
+    move rarg1 var foo
+    cmov eq rarg1 var hello
+    move rarg2 var hello
+    cmp rarg1 rarg2
+    move rarg1 "eq"
+    cmov ne rarg1 "ne"
+    call function Puts
+    move r0 var yes
+    write r0 function foobar
+    ret
+end
+var local 0
+function weird 0
+    move r0 var local
+    write r0 label whoa
+    move rarg1 "weird"
+    call function Puts
+    ret
+    move rarg1 "oh"
+    call function Puts
+    label whoa
+    move rarg1 "whoa"
+    call function Puts
+    ret
+end
+
+
+function start 0
+    call function foobar
+    call function foobar
+    call function foobar
+    call function foobar
+    call function func2
+    cmp r0 r0
+    call function func2
+    read r0 var yes
+    call r0
+    read r0 var bar
+    read r0 r0
+    call r0
+    call function weird
+    push label after
+    read rip var local # rip = *&local
+    label after
+    move rarg1 "Hello"
+    call function Puts
+    read r0 var arr
+    read r0 r0
+    call r0
+    read r0 var arr
+    add r0 r0 PTRSIZE
+    read r0 r0
+    read r0 r0
+    call r0
+    halt
+end
