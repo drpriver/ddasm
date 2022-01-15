@@ -133,7 +133,7 @@ parse_psize(const char[] s){ with(ParseNumberError){
     return result;
 }}
 IntegerResult!ulong
-parse_strnum(const char[] s){ with(ParseNumberError){
+parse_strnum(const(char)[] s){ with(ParseNumberError){
     import core.stdc.stdio;
     // printf("%s:%d: s = '%.*s;\n", __FUNCTION__.ptr, __LINE__, cast(int)s.length, s.ptr);
     if(s.length < 3)
@@ -146,7 +146,8 @@ parse_strnum(const char[] s){ with(ParseNumberError){
         return IntegerResult!ulong(0LU, OVERFLOWED_VALUE);
     }
     ulong result = 0;
-    for(size_t i = 2; i < s.length; i++){
+    s = s[2..$];
+    for(size_t i = 0; i < s.length; i++){
         result |= (cast(ulong)s[i]) << i*8;
     }
     return IntegerResult!ulong(result, NO_ERROR);
