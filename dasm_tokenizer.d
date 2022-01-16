@@ -23,6 +23,7 @@ struct Tokenizer {
         advance();
         return result;
     }
+
     static
     Tokenizer
     from(const(char)[] text){ with(TokenType){
