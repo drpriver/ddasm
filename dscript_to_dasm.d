@@ -9,7 +9,7 @@ import dlib.bettercobject: BCObject;
 
 static import core.time;
 
-import dvm_defs;
+import dvm_regs;
 
 alias str = const(char)[];
 
