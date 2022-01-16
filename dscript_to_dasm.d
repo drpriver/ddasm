@@ -1886,7 +1886,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
         if(stmt.value !is &NilExpr_.exp){
             int before = regallocator.alloced;
             int temp = regallocator.allocate();
-            int rout = 14;
+            int rout = 15;
             int res = stmt.value.accept(this, temp);
             regallocator.reset_to(before);
             sb.writef("  move r% r%\n", rout, temp);
