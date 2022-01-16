@@ -3,7 +3,7 @@
 Dasm (`.dasm`) is a made up assembly language that runs on a made up virtual machine.
 The vm is a register-machine and is intentionally unsafe, with no
 separation of code and data. Code is mutable and you can memcpy functions
-onto your stack and execute them if you want. The instruction pointer is 
+onto your stack and execute them if you want. The instruction pointer is
 a writable register, you can `move rip [an array of bytes here]` to start
 executing arbitrary data, etc. The only safety feature is that a shadow
 stack is used for return addresses so you can't do ROP (Not that that matters
@@ -14,7 +14,7 @@ Dasm only works with machine-word sized values.
 
 Dasm has trivial native interop. An adaptor function has to be written that casts
 from `uintptr_t` to the actual type. You currently can't call native functions
-with floating point arguments. 
+with floating point arguments.
 
 The Dasm vm has a debugger built in. You can step instructions and read
 registers etc. It has a disassembler, etc. It doesn't try to catch faults in
@@ -81,7 +81,7 @@ end
 Davescript (`.ds`) is a barely implemented scripting language that can be executed
 on the dasm vm.
 Currently, this is implemented by compiling a `.ds` script to `.dasm` as text,
-and then compiling that into the bytecode instructions that run on the actual 
+and then compiling that into the bytecode instructions that run on the actual
 vm. This is silly and it should just compile directly to bytecode, but oh well.
 
 The compiler is pretty buggy at the moment, it's not hard to get it to generate
@@ -238,3 +238,21 @@ Dasm currently has way more features than davescript.
 * ddasm should be split into a vm, an assembler, a linker and a default
   runtime.
 * I don't know if it works on Windows.
+* I don't use exceptions (in fact I only use -betterC) and so the code
+  is totally exception-unsafe.
+
+## Building
+
+* The Makefile is with ldc2 on macOS. The only mac-specific thing it does is
+  pass `-dead_strip` to the linker, so you can do `make LDSTRIP=` and it
+  should build on linux without that probably. Might need to add libm to
+  the link line.
+* The Makefile doesn't work for Windows. It wouldn't be hard to make it work,
+  but I haven't done it.
+* There is also a meson build file. It works, but meson passes weird linker flags
+  and the documentation is non-existant.
+* You can also just build it by doing `ldc2 ddasm.d -i` and that'll just work.
+  Throw in `-betterC` too.
+* This only builds with ldc as it uses an ldc simd intrinsic to accelerate
+  escaping characters in strings. It could be made to work without that
+  by wrapping that in a `version(){}` block
