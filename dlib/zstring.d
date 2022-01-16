@@ -14,6 +14,10 @@ struct ZString {
     opEquals(const(char)[] other){
         return ptr[0 .. length] == other;
     }
+    bool
+    opEquals(in ZString other){
+        return ptr[0 .. length] == other.ptr[0 .. other.length];
+    }
 
     const(char)[]
     opIndex(){ return ptr[0 .. length]; }

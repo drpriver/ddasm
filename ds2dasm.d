@@ -105,7 +105,7 @@ int main(int argc, char** argv){
             }
             sb.write('\n');
         }
-        bscript = sb.take.as!(const(ubyte)[]);
+        bscript = sb.detach.as!(const(ubyte)[]);
     }
     else {
         StringBuilder!Mallocator sb;
@@ -120,7 +120,7 @@ int main(int argc, char** argv){
         }
         if(!sb.cursor)
             sb.write(' ');
-        bscript = sb.take.as!(const(ubyte)[]);
+        bscript = sb.detach.as!(const(ubyte)[]);
     }
     // fprintf(stderr, "%.*s\n", cast(int)bscript.data.length, bscript.data.ptr);
     Box!(char[], Mallocator) progtext;

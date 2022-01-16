@@ -1,6 +1,6 @@
-import box: Box;
+import dlib.box: Box;
 import core.stdc.string: memset;
-import allocator: Mallocator;
+import dlib.allocator: Mallocator;
 
 struct FileResult(Allocator) {
     Box!(void[], Allocator) value;

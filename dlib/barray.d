@@ -159,12 +159,17 @@ struct Barray(T, Allocator){
         count = other.count;
         other.count = c;
     }
-    // O(N)
-    bool
-    contains(in T item){
-        foreach(it; this)
-            if(it == item) return true;
-        return false;
+    // idk why `it == item` fails in betterC
+    version(D_BetterC){
+    }
+    else{
+        // O(N)
+        bool
+        contains(in T item){
+            foreach(it; this)
+                if(it == item) return true;
+            return false;
+        }
     }
 }
 

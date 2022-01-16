@@ -163,7 +163,7 @@ int main(int argc, char** argv){
             }
             sb.write('\n');
         }
-        btext = btext.from(&va, sb.detach()[]);
+        btext = sb.detach.as!(const(char)[]);
     }
     else {
         StringBuilder!VAllocator sb;
@@ -179,7 +179,7 @@ int main(int argc, char** argv){
         }
         if(!sb.cursor)
             sb.write(' ');
-        btext = btext.from(&va, sb.detach()[]);
+        btext = sb.detach.as!(const(char)[]);
     }
     if(highlevel || sourcefile[].endswith(".ds")){
         static import dscript_to_dasm;
@@ -1655,7 +1655,7 @@ struct ParseContext{
         sb.FORMAT(tok.line, ':', tok.column, ": ParseError: ");
         foreach(a; args)
             sb.write(a);
-        errmess = sb.detach;
+        errmess = sb.zdetach;
     }
     int
     parse_asm(){
@@ -2596,7 +2596,7 @@ struct LinkContext {
         sb.FORMAT(tok.line, ':', tok.column, ": LinkError: ");
         foreach(a; args)
             sb.write(a);
-        errmess = sb.take;
+        errmess = sb.detach;
     }
 
     AsmError
@@ -2698,7 +2698,7 @@ struct LinkContext {
             }
             sb.write(c);
         }
-        ZString result = sb.detach;
+        ZString result = sb.zdetach;
         prog.strings.push(result);
         return result;
     }
@@ -2743,7 +2743,7 @@ struct LinkContext {
             }
             sb.write(c);
         }
-        ZString result = sb.detach;
+        ZString result = sb.zdetach;
         prog.strings.push(result);
         return result;
     }

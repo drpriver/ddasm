@@ -167,6 +167,27 @@ struct Box(T, Allocator, bool inline_allocator=false){
             // Box!CastTo
             // as(CastTo)(){
             // }
+            Box!(CastTo, Allocator)
+            as(CastTo)(){
+                // `is` is so fucking weird
+                static if(is(CastTo == C[], C)){
+                // casting slices is broken in betterC
+                // (causes weird linker errors in unrelated code, with dmd 2.098).
+                static if(isVoid){
+                    auto size = data.length*U.sizeof;
+                }
+                else {
+                    auto size = data.length;
+                }
+                assert(size % C.sizeof == 0);
+                auto newlength = size / C.sizeof;
+                auto slice = (cast(C*)data.ptr)[0 .. newlength];
+                return Box!(CastTo, Allocator).from(allocator, slice);
+                }
+                else {
+                    static assert(0, "TODO: slice to single object");
+                }
+            }
         }
         else{
             alias allocator = Allocator;
