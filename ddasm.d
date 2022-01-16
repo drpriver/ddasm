@@ -21,6 +21,8 @@ import dvm_regs;
 import dvm_args;
 import dvm_instructions;
 import dvm_linked;
+import dasm_token;
+import dvm_unlinked;
 
 
 __gshared devnull = false;
@@ -33,7 +35,7 @@ version(Fuzz){
         const char* d = cast(const char*)Data;
         const char[] data = d[0 .. Size];
 
-        UnlinkedProgram prog;
+        UnlinkedModule prog;
         auto va = VAllocator.from!(GlobalAllocator!recorder);
         int err = parse_asm_string(&va, data, &prog);
         va.free_all;
@@ -198,7 +200,7 @@ int main(int argc, char** argv){
         btext = btext.from(btext.allocator, dasmtext.data);
         dscript_to_dasm.powerdown;
     }
-    UnlinkedProgram prog;
+    UnlinkedModule prog;
     int err = parse_asm_string(&va, btext.data, &prog);
     if(err){
         if(!Fuzzing)fprintf(stderr, "Parsing failed\n");
@@ -1420,7 +1422,7 @@ struct Machine {
 
 
 int
-parse_asm_string(VAllocator* allocator, const(char)[] text, UnlinkedProgram* prog){
+parse_asm_string(VAllocator* allocator, const(char)[] text, UnlinkedModule* prog){
     ParseContext ctx;
     ctx.allocator = allocator;
     ctx.tokenizer = Tokenizer.from(text);
@@ -1443,58 +1445,6 @@ parse_asm_string(VAllocator* allocator, const(char)[] text, UnlinkedProgram* pro
     return 0;
 }
 
-enum TokenType: ubyte {
-    BANG = '!',
-    AT = '@',
-    POUND = '#',
-    DOLLAR = '$',
-    PERCENT = '%',
-    CARROT = '^',
-    AMPERSAN = '&',
-    ASTERISK = '*',
-    LEFTPAREN = '(',
-    RIGHTPAREN = ')',
-    DASH = '-',
-    EQUALS = '=',
-    PLUS = '+',
-    LEFTSQUAREBRACKET = '[',
-    RIGHTSQUAREBRACKET = ']',
-    LEFTCURLYBRACKET = '{',
-    RIGHTCURLYBRACKET = '}',
-    BACKSLASH = '\\',
-    PIPE = '|',
-    SLASH = '/',
-    COMMA = ',',
-    LESSTHAN = '<',
-    GREATERTHAN = '>',
-    DOT = '.',
-    QUESTION = '?',
-    SEMICOLON = ';',
-    COLON = ':',
-    APOSTROPHE = '\'',
-    QUOTATION = '"',
-    BACKTICK = '`',
-    TILDE = '~',
-    SPACE = ' ',
-    NEWLINE = '\n',
-    CARRIAGERETURN = '\r',
-    TAB = '\t',
-    UNPRINTABLE = 0,
-    NUMBER,
-    IDENTIFIER,
-    EOF,
-}
-
-struct Token {
-    TokenType type;
-    ubyte length;
-    ushort column;
-    uint line;
-    const(char)* _text;
-    const(char)[] text() {
-        return _text[0..length];
-    }
-}
 
 Token
 skip_comment(ref Tokenizer tokenizer, Token tok){
@@ -1650,7 +1600,7 @@ enum AsmError: int {
 struct ParseContext{
     Tokenizer tokenizer;
     VAllocator* allocator;
-    UnlinkedProgram prog;
+    UnlinkedModule prog;
     ZString errmess;
     void
     err_print(A...)(Token tok, A args){
@@ -2057,40 +2007,6 @@ struct ParseContext{
     }
 }
 
-struct UnlinkedProgram{
-    Barray!(AbstractFunction, VAllocator) functions;
-    Barray!(AbstractVariable, VAllocator) variables;
-    Barray!(AbstractArray,    VAllocator) arrays;
-}
-
-struct AbstractFunction {
-    const(char)* first_char;
-    const(char)[] name;
-    int n_args;
-    Barray!(AbstractInstruction, VAllocator) instructions;
-    bool finished;
-}
-
-struct AbstractInstruction {
-    const(char)* first_char;
-    const(char)[] label;
-    Instruction instruction;
-    enum MAX_ARGS = 5;
-    Argument[MAX_ARGS] args;
-    int n_args;
-}
-
-struct AbstractVariable {
-    const(char)[] name;
-    Argument value;
-    Token tok;
-}
-
-struct AbstractArray {
-    uintptr_t id;
-    Barray!(Argument, VAllocator) array;
-}
-
 Table!(string, uintptr_t)*
 ConstantsTable(){
     static __gshared bool initialized;
@@ -2115,7 +2031,7 @@ struct LinkContext {
     VAllocator* allocator;
     VAllocator* temp_allocator;
     FunctionTable* builtins;
-    UnlinkedProgram* unlinked;
+    UnlinkedModule* unlinked;
     LinkedModule prog;
     Box!(char[], Mallocator) errmess;
 
@@ -2504,7 +2420,7 @@ calculate_function_size(AbstractFunction* func){
 }
 
 AsmError
-link_asm(VAllocator* allocator, VAllocator* temp_allocator, FunctionTable* builtins, UnlinkedProgram* unlinked, LinkedModule* prog){
+link_asm(VAllocator* allocator, VAllocator* temp_allocator, FunctionTable* builtins, UnlinkedModule* unlinked, LinkedModule* prog){
     LinkContext ctx;
     ctx.allocator = allocator;
     ctx.temp_allocator = temp_allocator;
@@ -2530,6 +2446,7 @@ link_asm(VAllocator* allocator, VAllocator* temp_allocator, FunctionTable* built
     *prog = ctx.prog;
     return AsmError.NO_ERROR;
 }
+
 Token
 find_token(ref LinkedModule mod, const(char)* first_char){
     with(mod){
