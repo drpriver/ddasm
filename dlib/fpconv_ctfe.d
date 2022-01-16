@@ -1,4 +1,3 @@
-
 /** Port of grisu2 implementation by night-shift
    https://github.com/night-shift/fpconv
    Converted to (CTFEable) D by Stefan Koch */

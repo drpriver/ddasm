@@ -1,3 +1,6 @@
+/*
+ * Copyright © 2021-2022, David Priver
+ */
 import std.typecons: Tuple;
 @safe @nogc pure nothrow
 const(char)[]

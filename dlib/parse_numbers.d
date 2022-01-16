@@ -1,3 +1,6 @@
+/*
+ * Copyright © 2021-2022, David Priver
+ */
 enum ParseNumberError: ubyte {
     NO_ERROR = 0,
     UNEXPECTED_END = 1,

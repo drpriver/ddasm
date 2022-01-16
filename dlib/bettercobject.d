@@ -1,3 +1,6 @@
+/*
+ * Copyright © 2021-2022, David Priver
+ */
 /// A subclass of Object that implements methods needed for
 /// classes to work in betterC.
 

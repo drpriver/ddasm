@@ -1,3 +1,6 @@
+/*
+ * Copyright © 2021-2022, David Priver
+ */
 import allocator: Mallocator;
 import box: Box;
 import core.stdc.string: memset, memcpy;

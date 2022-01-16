@@ -1,3 +1,6 @@
+/*
+ * Copyright © 2021-2022, David Priver
+ */
 import dvm_defs;
 import dvm_regs : RegisterNames;
 

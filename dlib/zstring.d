@@ -1,3 +1,6 @@
+/*
+ * Copyright © 2021-2022, David Priver
+ */
 // A view of a string that is guaranteed to be nul-terminated.
 
 struct ZString {

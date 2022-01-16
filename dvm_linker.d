@@ -1,3 +1,6 @@
+/*
+ * Copyright © 2021-2022, David Priver
+ */
 import core.stdc.stdio: fprintf, stderr;
 
 import dlib.zstring;

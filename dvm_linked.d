@@ -1,3 +1,6 @@
+/*
+ * Copyright © 2021-2022, David Priver
+ */
 import dlib.allocator;
 import dlib.box;
 import dlib.zstring;

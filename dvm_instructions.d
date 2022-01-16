@@ -1,3 +1,6 @@
+/*
+ * Copyright © 2021-2022, David Priver
+ */
 import dlib.allocator: Mallocator;
 import dlib.btable: BTable;
 import dlib.barray: Barray;

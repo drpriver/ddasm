@@ -1,3 +1,6 @@
+/*
+ * Copyright © 2021-2022, David Priver
+ */
 import core.stdc.string: strlen, strerror, memcpy;
 import core.stdc.stdio: fprintf, stdout, stderr, fread, stdin, FILE, fwrite, fflush, fopen, fputs, fgets;
 import core.stdc.stdlib: calloc, malloc, free, atoi;

@@ -1,3 +1,6 @@
+/*
+ * Copyright © 2021-2022, David Priver
+ */
 import core.stdc.stdio: fprintf, stdout, stderr, stdin, fread;
 import dlib.allocator: Mallocator, ArenaAllocator, LoggingAllocator, LinkAllocator;
 import dlib.box: Box;

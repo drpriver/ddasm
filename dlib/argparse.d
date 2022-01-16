@@ -1,3 +1,6 @@
+/*
+ * Copyright © 2021-2022, David Priver
+ */
 import core.stdc.stdio: printf, puts, fputs, stdout, fprintf, stderr, putchar;
 import core.stdc.string: strlen;
 import core.stdc.stdlib: strtof, strtod;

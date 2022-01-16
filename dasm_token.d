@@ -1,3 +1,6 @@
+/*
+ * Copyright © 2021-2022, David Priver
+ */
 enum TokenType: ubyte {
     BANG = '!',
     AT = '@',
