@@ -196,3 +196,13 @@ InstructionTable(){
     return result;
 }
 
+size_t
+instruction_size(Instruction instruction){
+    if(instruction > Instruction.max){
+        // TODO: log?
+        return 1;
+    }
+    auto info = &INSTRUCTION_INFOS[instruction];
+    return info.args.length+1;
+}
+

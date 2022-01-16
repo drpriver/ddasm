@@ -20,6 +20,7 @@ import dvm_defs;
 import dvm_regs;
 import dvm_args;
 import dvm_instructions;
+import dvm_linked;
 
 
 __gshared devnull = false;
@@ -204,7 +205,7 @@ int main(int argc, char** argv){
         return err;
     }
     expose_builtins;
-    LinkedProgram linked_prog;
+    LinkedModule linked_prog;
     linked_prog.source_text = btext;
     {
         ArenaAllocator!(Mallocator) arena;
@@ -466,7 +467,7 @@ struct Machine {
     VAllocator allocator;
     Box!(void[], VAllocator) stack;
     uintptr_t[RegisterNames.max+1] registers;
-    LinkedProgram* current_program;
+    LinkedModule* current_program;
     uintptr_t[256] call_stack;
     uintptr_t call_depth;
     bool halted;
@@ -476,7 +477,7 @@ struct Machine {
     LineHistory!VAllocator debugger_history;
     bool[RegisterNames.max+1] watches;
     int
-    run(RunFlags flags = RunFlags.NONE)(LinkedProgram* prog, size_t stack_size, const char* debug_history_file = null){
+    run(RunFlags flags = RunFlags.NONE)(LinkedModule* prog, size_t stack_size, const char* debug_history_file = null){
         if(!prog.start || !prog.start.instructions_)
             return 1;
         halted = false;
@@ -2110,174 +2111,12 @@ ConstantsTable(){
     return &constants_table;
 }
 
-
-alias IntegerArray = Barray!(uintptr_t, VAllocator);
-alias FunctionTable = BTable!(const(char)[], FunctionInfo, VAllocator);
-
-struct Variable {
-    const(char)[] name;
-    uintptr_t value;
-}
-
-struct FunctionInfo {
-    const(char)[] name;
-    Function* func;
-}
-
-enum FunctionType: ubyte {
-    INTERPRETED = 0,
-    NATIVE = 1,
-    // first arg is the interpreter
-    // NATIVE_TAKES_INTERPRETER = 2,
-}
-struct Function {
-    union {
-        uintptr_t* instructions_;
-        void function() native_function_;
-        void function(uintptr_t) native_function_a;
-        void function(uintptr_t, uintptr_t) native_function_aa;
-        void function(uintptr_t, uintptr_t, uintptr_t) native_function_aaa;
-        void function(uintptr_t, uintptr_t, uintptr_t, uintptr_t) native_function_aaaa;
-        void function(uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t) native_function_aaaaa;
-        uintptr_t function() native_function_r;
-        uintptr_t function(uintptr_t) native_function_ra;
-        uintptr_t function(uintptr_t, uintptr_t) native_function_raa;
-        uintptr_t function(uintptr_t, uintptr_t, uintptr_t) native_function_raaa;
-        uintptr_t function(uintptr_t, uintptr_t, uintptr_t, uintptr_t) native_function_raaaa;
-    }
-    FunctionType type;
-    ubyte n_args;
-    ubyte n_ret;
-    ubyte pad;
-    // if D had bitfields I could use the padding byte.
-    uint length;
-
-    uintptr_t[] instructions(){
-        return instructions_[0..length];
-    }
-}
-static assert(Function.sizeof == 16);
-
-struct LinkedProgram {
-    Box!(const(char)[], VAllocator) source_text;
-    Box!(uintptr_t[], VAllocator) bytecode;
-    Barray!(ZString, VAllocator) strings;
-    Barray!(IntegerArray, VAllocator) arrays;
-    FunctionTable functions;
-    Box!(Function[], VAllocator) function_store;
-    // storage for the variables
-    Box!(uintptr_t[], VAllocator) variables;
-    // table to look variables up by name
-    BTable!(const(char)[], uintptr_t*, VAllocator) variable_table;
-    Function* start;
-
-    FunctionInfo
-    addr_to_function(uintptr_t* ip){
-        foreach(fi; functions.values){
-            auto func = fi.func;
-            uintptr_t* begin = func.instructions_;
-            uintptr_t* end = func.instructions_ + func.length;
-            if(ip >= begin && ip < end)
-                return fi;
-        }
-        return FunctionInfo();
-    }
-
-    Token
-    find_token(const(char)* first_char){
-        const(char)[] text = source_text.data;
-        assert(source_text.data.ptr);
-        auto tokenizer = Tokenizer.from(text);
-        Token tok = tokenizer.current_token_and_advance;
-        while(tok._text != first_char){
-            tok = tokenizer.current_token_and_advance;
-            if(tok.type == TokenType.EOF){
-                if(!Fuzzing)fprintf(stderr, "Unable to find: %p: %s\n", first_char, first_char);
-                return tok;
-            }
-        }
-        return tok;
-    }
-}
-
-int
-disassemble_one_instruction(SB)(LinkedProgram* prog, SB* sb, uintptr_t* ip){
-    uintptr_t inst = *ip;
-    if(inst > Instruction.max){
-        sb.write("UNK");
-        sb.hex("0x", inst);
-        return 1;
-    }
-    with(Instruction) with(ArgumentKind){
-        auto ii = &INSTRUCTION_INFOS[inst];
-        sb.write(ii.asm_name);
-        if(!ii.args.length) return 1;
-        foreach(i, kind; ii.args){
-            sb.write(' ');
-            auto value = ip[i+1];
-            switch(kind){
-                default:{
-                    auto func = cast(Function*)value;
-                    foreach(v; prog.functions.values){
-                        if(v.func == func){
-                            sb.write("function ");
-                            sb.write(v.name);
-                            goto handled;
-                        }
-                    }
-                    foreach(str; prog.strings){
-                        if(str.ptr == cast(const char*)value)
-                            goto case STRING;
-                    }
-                }
-                // default:
-                    sb.hex("0x", value);
-                    handled:
-                    continue;
-                case STRING:{
-                    foreach(str; prog.strings){
-                        if(str.ptr == cast(const char*)value){
-                            sb.write(Q(E(str[]), '"'));
-                            break;
-                        }
-                    }
-                    continue;
-                }
-                case REGISTER:{
-                    bool written = false;
-                    if(auto ri = get_register_info(value)){
-                        sb.write(ri.name);
-                        written = true;
-                        break;
-                    }
-                    if(!written){
-                        sb.write("REGISTER");
-                        sb.hex("0x", value);
-                    }
-                    continue;
-                }
-                case CMPMODE:{
-                    if(value < CmpModes.length){
-                        sb.write(CmpModes[value].name);
-                    }
-                    else {
-                        sb.write("CMPMODE");
-                        sb.hex("0x", value);
-                    }
-                    continue;
-                }
-            }
-        }
-        return 1 + cast(int)ii.args.length;
-    }
-}
-
 struct LinkContext {
     VAllocator* allocator;
     VAllocator* temp_allocator;
     FunctionTable* builtins;
     UnlinkedProgram* unlinked;
-    LinkedProgram prog;
+    LinkedModule prog;
     Box!(char[], Mallocator) errmess;
 
     void
@@ -2664,18 +2503,8 @@ calculate_function_size(AbstractFunction* func){
     return size;
 }
 
-size_t
-instruction_size(Instruction instruction){
-    if(instruction > Instruction.max){
-        // TODO: log?
-        return 1;
-    }
-    auto info = &INSTRUCTION_INFOS[instruction];
-    return info.args.length+1;
-}
-
 AsmError
-link_asm(VAllocator* allocator, VAllocator* temp_allocator, FunctionTable* builtins, UnlinkedProgram* unlinked, LinkedProgram* prog){
+link_asm(VAllocator* allocator, VAllocator* temp_allocator, FunctionTable* builtins, UnlinkedProgram* unlinked, LinkedModule* prog){
     LinkContext ctx;
     ctx.allocator = allocator;
     ctx.temp_allocator = temp_allocator;
@@ -2701,8 +2530,93 @@ link_asm(VAllocator* allocator, VAllocator* temp_allocator, FunctionTable* built
     *prog = ctx.prog;
     return AsmError.NO_ERROR;
 }
-
-struct Expose {
+Token
+find_token(ref LinkedModule mod, const(char)* first_char){
+    with(mod){
+        const(char)[] text = source_text.data;
+        assert(source_text.data.ptr);
+        auto tokenizer = Tokenizer.from(text);
+        Token tok = tokenizer.current_token_and_advance;
+        while(tok._text != first_char){
+            tok = tokenizer.current_token_and_advance;
+            if(tok.type == TokenType.EOF){
+                if(!Fuzzing)fprintf(stderr, "Unable to find: %p: %s\n", first_char, first_char);
+                return tok;
+            }
+        }
+        return tok;
+    }
 }
 
+int
+disassemble_one_instruction(SB)(LinkedModule* prog, SB* sb, uintptr_t* ip){
+    uintptr_t inst = *ip;
+    if(inst > Instruction.max){
+        sb.write("UNK");
+        sb.hex("0x", inst);
+        return 1;
+    }
+    with(Instruction) with(ArgumentKind){
+        auto ii = &INSTRUCTION_INFOS[inst];
+        sb.write(ii.asm_name);
+        if(!ii.args.length) return 1;
+        foreach(i, kind; ii.args){
+            sb.write(' ');
+            auto value = ip[i+1];
+            switch(kind){
+                default:{
+                    auto func = cast(Function*)value;
+                    foreach(v; prog.functions.values){
+                        if(v.func == func){
+                            sb.write("function ");
+                            sb.write(v.name);
+                            goto handled;
+                        }
+                    }
+                    foreach(str; prog.strings){
+                        if(str.ptr == cast(const char*)value)
+                            goto case STRING;
+                    }
+                }
+                // default:
+                    sb.hex("0x", value);
+                    handled:
+                    continue;
+                case STRING:{
+                    foreach(str; prog.strings){
+                        if(str.ptr == cast(const char*)value){
+                            sb.write(Q(E(str[]), '"'));
+                            break;
+                        }
+                    }
+                    continue;
+                }
+                case REGISTER:{
+                    bool written = false;
+                    if(auto ri = get_register_info(value)){
+                        sb.write(ri.name);
+                        written = true;
+                        break;
+                    }
+                    if(!written){
+                        sb.write("REGISTER");
+                        sb.hex("0x", value);
+                    }
+                    continue;
+                }
+                case CMPMODE:{
+                    if(value < CmpModes.length){
+                        sb.write(CmpModes[value].name);
+                    }
+                    else {
+                        sb.write("CMPMODE");
+                        sb.hex("0x", value);
+                    }
+                    continue;
+                }
+            }
+        }
+        return 1 + cast(int)ii.args.length;
+    }
+}
 
