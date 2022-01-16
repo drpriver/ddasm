@@ -19,7 +19,7 @@ import core.stdc.stdlib: calloc, malloc, free, atoi;
 import dvm_defs;
 
 
-bool devnull = false;
+__gshared devnull = false;
 
 version(Fuzz){
     enum Fuzzing = true;
