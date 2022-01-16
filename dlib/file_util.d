@@ -1,5 +1,6 @@
 import box: Box;
 import core.stdc.string: memset;
+import allocator: Mallocator;
 
 struct FileResult(Allocator) {
     Box!(void[], Allocator) value;
@@ -30,6 +31,11 @@ enum FileFlags: ulong {
     ZERO_PAD_TO_32 = 1 << 2,
     // These are only considered on writing.
     NEWLINE_TERMINATE = 1 << 3,
+}
+
+FileResult!Mallocator
+read_file(const char* filepath, FileFlags flags = FileFlags.NONE){
+    return read_file!Mallocator(filepath, flags);
 }
 
 FileResult!Allocator

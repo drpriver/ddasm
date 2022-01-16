@@ -15,6 +15,17 @@ struct Barray(T, Allocator){
         ensure_total(needed);
     }
 
+    T pop(){
+        assert(count);
+        return bdata.data[--count];
+    }
+
+    T pop(size_t index){
+        T result = bdata.data[index];
+        remove(index);
+        return result;
+    }
+
     void
     ensure_total(size_t needed){
         if(bdata.data.length >= needed)
@@ -70,10 +81,23 @@ struct Barray(T, Allocator){
         count--;
     }
     void
-    extend(T[] values){
+    extend(scope T[] values){
         ensure_additional(values.length);
         memcpy(bdata.data.ptr+count, values.ptr, values.length*T.sizeof);
         count += values.length;
+    }
+    void
+    extend(R)(scope R range){
+        static if(__traits(hasMember, range, "length")){
+            ensure_additional(range.length);
+        }
+        else static if(__traits(hasMember, range, "count")){
+            ensure_additional(range.count);
+        }
+        else {
+        }
+        foreach(ref it; range)
+            push(it);
     }
     void
     cleanup(){
@@ -106,7 +130,7 @@ struct Barray(T, Allocator){
     static if(!Allocator.state_size){
         static
         typeof(this)
-        from(T[] values){
+        from(scope const(T)[] values){
             typeof(this) result;
             result.extend(values);
             return result;
@@ -115,7 +139,7 @@ struct Barray(T, Allocator){
     else {
         static
         typeof(this)
-        from(Allocator* allocator, T[] values){
+        from(Allocator* allocator, scope const(T)[] values){
             typeof(this) result;
             result.bdata.allocator = allocator;
             result.extend(values);
@@ -124,6 +148,23 @@ struct Barray(T, Allocator){
     }
     void opOpAssign(string op)(in T value){
         push(value);
+    }
+
+    void
+    swap(ref typeof(this) other){
+        auto c = count;
+        auto b = bdata;
+        bdata = other.bdata;
+        other.bdata = b;
+        count = other.count;
+        other.count = c;
+    }
+    // O(N)
+    bool
+    contains(in T item){
+        foreach(it; this)
+            if(it == item) return true;
+        return false;
     }
 }
 
@@ -136,5 +177,53 @@ make_barray(T, A)(A* allocator){
 
 struct Array(T){
     Barray!(T, Mallocator) array;
+    static
+    typeof(this)
+    from(scope const(T)[] values){
+        typeof(this) result;
+        result.extend(values);
+        return result;
+    }
     alias array this;
+}
+
+struct Deque(T){
+    Box!(T[], Mallocator) bdata;
+    size_t front;
+    size_t back;
+    size_t count(){
+        return back - front;
+    }
+    T pop(){
+        assert(back != front);
+        T result = bdata.data[--back];
+        return result;
+    }
+    T pop_front(){
+        assert(back != front);
+        T result = bdata.data[front++];
+        return result;
+    }
+    void push(T val){
+        if(back >= bdata.data.length){
+            size_t new_capacity = bdata.data.length?bdata.data.length*2:8;
+            bdata.good_resize(new_capacity);
+        }
+        bdata.data[back++] = val;
+    }
+    void push_front(T val){
+        if(!front && !back){
+            push(val);
+            return;
+        }
+        if(!front){
+            size_t new_capacity = bdata.data.length?bdata.data.length*2:8;
+            bdata.good_resize(new_capacity);
+            size_t n_move = back;
+            memmove(bdata.data.ptr+new_capacity/2, bdata.data.ptr+n_move, n_move*T.sizeof);
+            front = new_capacity/2;
+            back += new_capacity/2;
+        }
+        bdata.data[--front] = val;
+    }
 }

@@ -9,6 +9,8 @@ import dlib.term_util: get_cols;
 import dlib.file_util: read_file, write_file;
 import dlib.stringbuilder;
 
+// BUG: doesn't handle multibyte characters
+
 struct LineHistory(Allocator=Mallocator, size_t LINE_HISTORY_MAX=100){
     static if(Allocator.state_size)
         Allocator* allocator;
@@ -18,7 +20,6 @@ struct LineHistory(Allocator=Mallocator, size_t LINE_HISTORY_MAX=100){
     int cursor;
     char[][LINE_HISTORY_MAX] history;
 
-    // these aren't needed for dndc
     // must be a C string.
     int
     dump(const char* filename){
@@ -40,8 +41,6 @@ struct LineHistory(Allocator=Mallocator, size_t LINE_HISTORY_MAX=100){
         auto bdata = r.value;
         scope(exit) bdata.dealloc;
         auto data = bdata.data;
-        StringBuilder!Mallocator sb;
-        scope(exit) sb.cleanup;
         void* p = data.ptr;
         void* end = data.ptr + data.length;
         void* zed = null;
@@ -59,6 +58,11 @@ struct LineHistory(Allocator=Mallocator, size_t LINE_HISTORY_MAX=100){
         if(!count) return;
         auto last = &history[--count];
         allocator.free(last.ptr, last.length);
+    }
+    const(char)[]
+    last_line(){
+        if(!count) return null;
+        return history[count-1];
     }
 
     void
@@ -211,17 +215,17 @@ get_line_internal_loop(LineHistory)(LineHistory* history, char[]buff, const(char
     memset(buff.ptr, 0, buff.length);
     redisplay(&ls);
     enum {
-        CTRL_A = 1,         // Ctrl-allocator
+        CTRL_A = 1,         // Ctrl-a
         CTRL_B = 2,         // Ctrl-b
         CTRL_C = 3,         // Ctrl-c
         CTRL_D = 4,         // Ctrl-d
         CTRL_E = 5,         // Ctrl-e
         CTRL_F = 6,         // Ctrl-f
         CTRL_H = 8,         // Ctrl-h
-        TAB = 9,            // Tab
+        TAB    = 9,         // Tab
         CTRL_K = 11,        // Ctrl-k
         CTRL_L = 12,        // Ctrl-l
-        ENTER = 13,         // Enter
+        ENTER  = 13,        // Enter
         CTRL_N = 14,        // Ctrl-n
         CTRL_O = 15,        // Ctrl-o
         CTRL_P = 16,        // Ctrl-p
@@ -230,7 +234,7 @@ get_line_internal_loop(LineHistory)(LineHistory* history, char[]buff, const(char
         CTRL_V = 22,        // Ctrl-v
         CTRL_W = 23,        // Ctrl-w
         CTRL_Z = 26,        // Ctrl-z
-        ESC = 27,           // Escape
+        ESC    = 27,        // Escape
         BACKSPACE =  127    // Backspace
     }
     for(;;){
@@ -264,11 +268,11 @@ get_line_internal_loop(LineHistory)(LineHistory* history, char[]buff, const(char
                 if(ls.length > 0){
                     delete_right(&ls);
                     redisplay(&ls);
-                    }
+                }
                 else {
                     write_data("^D\r\n");
                     return -1;
-                    }
+                }
                 break;
             case CTRL_T:
                 if(ls.curr_pos > 0 && ls.curr_pos < ls.length){
@@ -410,10 +414,10 @@ get_line_internal_loop(LineHistory)(LineHistory* history, char[]buff, const(char
                 size_t old_pos = ls.curr_pos;
                 size_t diff;
                 size_t pos = ls.curr_pos;
-                // Backup until we hit allocator nonspace.
+                // Backup until we hit a nonspace.
                 while(pos > 0 && buff[pos-1] == ' ')
                     pos--;
-                // Backup until we hit allocator space.
+                // Backup until we hit a space.
                 while(pos > 0 && buff[pos-1] != ' ')
                     pos--;
                 diff = old_pos - pos;
@@ -604,6 +608,7 @@ change_history(LineHistory)(LineHistory* history, LineState* ls, int magnitude){
     ls.length = length;
     ls.curr_pos = length;
 }
+
 void
 insert_char_into_line(LineState* ls, char c){
     if(ls.length >= ls.buff.length)
