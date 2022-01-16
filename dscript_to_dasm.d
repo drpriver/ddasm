@@ -6,7 +6,11 @@ import dlib.barray: Barray, Array, make_barray;
 import dlib.parse_numbers: parse_unsigned_human;
 import dlib.btable: BTable, Table;
 import dlib.bettercobject: BCObject;
+
 static import core.time;
+
+import dvm_defs;
+
 alias str = const(char)[];
 
 int
@@ -1469,7 +1473,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
         return 0;
     }
     int visit(Call* expr, int target){
-        enum rarg1 = 10;
+        int rarg1 = RegisterNames.RARG1;
         for(int i = 0; i < expr.args.length; i++){
             auto arg = expr.args[i];
             int before = regallocator.alloced;
@@ -1514,7 +1518,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
         return 0;
     }
     int do_tail_call(Call* expr){
-        enum rarg1 = 10;
+        int rarg1 = RegisterNames.RARG1;
         for(int i = 0; i < expr.args.length; i++){
             auto arg = expr.args[i];
             int before = regallocator.alloced;
@@ -1886,7 +1890,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
         if(stmt.value !is &NilExpr_.exp){
             int before = regallocator.alloced;
             int temp = regallocator.allocate();
-            int rout = 15;
+            int rout = RegisterNames.ROUT1;
             int res = stmt.value.accept(this, temp);
             regallocator.reset_to(before);
             sb.writef("  move r% r%\n", rout, temp);
