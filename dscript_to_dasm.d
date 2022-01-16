@@ -30,7 +30,7 @@ compile_to_dasm(const ubyte[] source, Box!(char[], Mallocator)* progtext){
         sb.cleanup;
         return err;
     }
-    *progtext = sb.take;
+    *progtext = sb.detach;
     return 0;
 }
 
