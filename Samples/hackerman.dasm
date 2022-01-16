@@ -1,0 +1,23 @@
+function death
+  abort
+  move rarg1 "Life after Death"
+  call function Puts
+  ret
+end
+
+function hackerman
+  # functions are a pointer to a function object,
+  # whose first member is a pointer to the instructions.
+  read r0 function death
+  # Add a word to that and store in rip, bypassing the
+  # abort
+  add rip r0 0p1
+  # die if we get here, to show we don't return to
+  # this function
+  abort
+end
+
+function start
+  call function hackerman
+  halt
+end
