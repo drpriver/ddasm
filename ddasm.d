@@ -13,12 +13,12 @@ import dlib.box: Box;
 import dlib.str_util: endswith;
 
 
-import dvm_defs;
-import dvm_linked;
-import dvm_unlinked;
-import dvm_machine;
-import dasm_parser;
-import dvm_linker;
+import dvm_defs: Fuzzing, uintptr_t;
+import dvm_linked: LinkedModule, Function, FunctionType, FunctionTable, FunctionInfo;
+import dvm_unlinked: UnlinkedModule;
+import dvm_machine: Machine, RunFlags;
+import dasm_parser: parse_asm_string;
+import dvm_linker: link_asm;
 
 
 __gshared devnull = false;
