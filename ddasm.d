@@ -9,7 +9,7 @@ import dlib.barray;
 import dlib.parse_numbers: parse_hex_inner, parse_unsigned_human;
 import dlib.btable;
 import dlib.box: Box;
-import dlib.str_util: endswith;
+import dlib.str_util: endswith, split, stripped;
 
 import core.stdc.string: strlen, strerror, memcpy;
 import core.stdc.stdio: fprintf, stdout, stderr, fread, stdin, FILE, fwrite, fflush, fopen, fputs, fgets;
@@ -586,12 +586,8 @@ struct Machine {
     void
     dump(){
         foreach(i, reg; registers){
-            foreach(ri; registerinfos){
-                if(ri.register == i){
-                    if(!Fuzzing)fprintf(stderr, "[%s] = %#zx\n", ri.NAME.ptr, reg);
-                    break;
-                }
-            }
+            auto ri = get_register_info(i);
+            if(!Fuzzing)fprintf(stderr, "[%s] = %#zx\n", ri.NAME.ptr, reg);
         }
         for(size_t i = 0; i < 4; i++){
             if(!Fuzzing)fprintf(stderr, "ip[%zu] = %#zx\n", i, (cast(uintptr_t*)registers[RegisterNames.RIP])[i]);
@@ -772,18 +768,9 @@ struct Machine {
             begin(Instruction inst){
                 print_context((cast(uintptr_t*)registers[RIP])-1);
                 foreach(i, w; watches){
-                    if(w){
-                        if(i > 9){
-                            foreach(ri; registerinfos){
-                                if(ri.register == i){
-                                    fprintf(stderr, "%s = %#zx\n", ri.name.ptr, registers[i]);
-                                    break;
-                                }
-                            }
-                        }
-                        else
-                            fprintf(stderr, "r%zu = %#zx\n", i, registers[i]);
-                    }
+                    if(!w) continue;
+                    auto ri = get_register_info(i);
+                    fprintf(stderr, "%s = %#zx\n", ri.name.ptr, registers[i]);
                 }
                 char[1024] buff = void;
                 for(;;){
@@ -795,59 +782,70 @@ struct Machine {
                     if(!len){
                         return BEGIN_OK;
                     }
-                    if(len > 2 && buff[0..2] == "w "){
-                        foreach(ri; registerinfos){
-                            if(buff[2 .. len] == ri.name){
-                                watches[ri.register] = true;
-                                break;
-                            }
-                        }
-                        foreach(i, w; watches){
-                            if(w){
-                                fprintf(stderr, "r%zu = %#zx\n", i, registers[i]);
-                            }
-                        }
-                        continue;
+                    auto buf = buff[0 ..len].stripped;
+                    if(!buf.length){
+                        return BEGIN_OK;
                     }
-                    switch(buff[0..len]){
+                    auto s = buf.split(' ');
+                    auto cmd = s.head;
+                    auto arg = s.tail?s.tail.stripped:null;
+                    if(arg.length){
+                        switch(cmd){
+                            case "w": case "watch":{
+                                auto ri = get_register_info(arg);
+                                if(!ri) continue;
+                                watches[ri.register] = true;
+                            }continue;
+                            case "uw": case "unwatch":{
+                                auto ri = get_register_info(arg);
+                                if(!ri) continue;
+                                watches[ri.register] = false;
+                            }continue;
+                            default:
+                                fprintf(stderr, "Unknown command: '%.*s'\n", cast(int)len, buff.ptr);
+                                continue;
+                        }
+                    }
+                    switch(buf){
                         case "next": case "n":
-                            debugger_history.add_line(buff[0..len]);
+                            debugger_history.add_line(buf);
                             return BEGIN_OK;
                         case "c": case "continue":
-                            debugger_history.add_line(buff[0..len]);
+                            debugger_history.add_line(buf);
                             return BEGIN_CONTINUE;
                         case "q": case "quit":
-                            debugger_history.add_line(buff[0..len]);
+                            debugger_history.add_line(buf);
                             halted = true;
                             return BEGIN_END;
                         case "l": case "list":
-                            debugger_history.add_line(buff[0..len]);
+                            debugger_history.add_line(buf);
                             print_current_function((cast(uintptr_t*)registers[RIP])-1);
                             continue;
                         case "d": case "dump":
-                            debugger_history.add_line(buff[0..len]);
+                            debugger_history.add_line(buf);
                             dump;
                             continue;
                         case "bt": case "backtrace": case "where":
-                            debugger_history.add_line(buff[0..len]);
+                            debugger_history.add_line(buf);
                             backtrace;
                             continue;
                         case "h": case "help":
                             fprintf(stderr, "%s", ("Commands:\n"
-                            ~"  next, n         execute next instruction\n"
-                            ~"  continue, c     execute until next breakpoint\n"
-                            ~"  quit, q         halt execution\n"
-                            ~"  list, l         print disassembly of entire function\n"
-                            ~"  dump, d         print contents of registers\n"
-                            ~"  backtrace, bt   print stacktrace\n"
-                            ~"  where           alias of backtrace\n"
-                            ~"  help, h         print out this info\n"
-                            ~"  w               add a watch for a register\n"
+                            ~"  next, n           execute next instruction\n"
+                            ~"  continue, c       execute until next breakpoint\n"
+                            ~"  quit, q           halt execution\n"
+                            ~"  list, l           print disassembly of entire function\n"
+                            ~"  dump, d           print contents of registers\n"
+                            ~"  backtrace, bt     print stacktrace\n"
+                            ~"  where             alias of backtrace\n"
+                            ~"  help, h           print out this info\n"
+                            ~"  watch, w reg      add a watch for a register\n"
+                            ~"  unwatch, uw reg   remove a watch for a register\n"
                             ).ptr);
                             continue;
 
                         default:
-                            fprintf(stderr, "Unknown command: '%.*s'\n", cast(int)len, buff.ptr);
+                            fprintf(stderr, "Unknown command: '%.*s'\n", cast(int)buf.length, buf.ptr);
                             continue;
                     }
                 }
@@ -2007,12 +2005,10 @@ struct ParseContext{
                         result.kind = CMPMODE;
                         return result;
                     }
-                foreach(ri; registerinfos){
-                    if(ri.name == text){
-                        result.reg = ri.register;
-                        result.kind = REGISTER;
-                        return result;
-                    }
+                if(auto ri = get_register_info(text)){
+                    result.reg = ri.register;
+                    result.kind = REGISTER;
+                    return result;
                 }
                 void parse_namespaced(string label, ArgumentKind kind){
                     tok = tokenizer.current_token_and_advance;
@@ -2303,6 +2299,25 @@ immutable RegisterInfo[30] registerinfos = [
     RegisterInfo(RegisterNames.R16,     "R16",      "r16"),
 ];
 
+immutable(RegisterInfo)*
+get_register_info(uintptr_t value){
+    foreach(ref ri; registerinfos){
+        if(ri.register == value)
+            return &ri;
+    }
+    return null;
+}
+
+immutable(RegisterInfo)*
+get_register_info(const(char)[] name){
+    foreach(ref ri; registerinfos){
+        if(ri.name == name)
+            return &ri;
+    }
+    return null;
+}
+
+
 enum Instruction: uintptr_t {
     ABORT,
     NOP,
@@ -2553,12 +2568,10 @@ disassemble_one_instruction(SB)(LinkedProgram* prog, SB* sb, uintptr_t* ip){
                 }
                 case REGISTER:{
                     bool written = false;
-                    foreach(ri; registerinfos){
-                        if(ri.register == value){
-                            sb.write(ri.name);
-                            written = true;
-                            break;
-                        }
+                    if(auto ri = get_register_info(value)){
+                        sb.write(ri.name);
+                        written = true;
+                        break;
                     }
                     if(!written){
                         sb.write("REGISTER");
