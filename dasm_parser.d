@@ -39,12 +39,6 @@ parse_asm_string(VAllocator* allocator, const(char)[] text, UnlinkedModule* prog
     return 0;
 }
 
-enum AsmError: int {
-    NO_ERROR = 0,
-    PARSE_ERROR,
-    LINK_ERROR,
-}
-
 struct ParseContext{
     Tokenizer tokenizer;
     VAllocator* allocator;

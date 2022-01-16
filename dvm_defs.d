@@ -7,3 +7,9 @@ version(Fuzz){
 else {
     enum Fuzzing = false;
 }
+
+enum AsmError: int {
+    NO_ERROR = 0,
+    PARSE_ERROR,
+    LINK_ERROR,
+}

@@ -1,8 +1,9 @@
 import core.stdc.stdio: printf, puts, fputs, stdout, fprintf, stderr, putchar;
 import core.stdc.string: strlen;
 import core.stdc.stdlib: strtof, strtod;
-import parse_numbers;
-import zstring;
+
+import dlib.parse_numbers;
+import dlib.zstring;
 enum ArgParseError: int {
     NO_ERROR = 0,
     CONVERSION_ERROR = 1,
