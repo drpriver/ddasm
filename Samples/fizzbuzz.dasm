@@ -1,12 +1,10 @@
 function start 0
-    move rarg1 "N (for fizzbuzz): "
-    call function Printf1
-
     move rbp rsp
     move r0 rsp
     add rsp rsp 80
     move rarg1 r0
     move rarg2 80
+    move rarg3 "N (for fizzbuzz): "
     call function GetLine
 
     move rarg1 r0

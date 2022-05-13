@@ -88,9 +88,7 @@ struct ParseContext{
                         tok = tokenizer.current_token_and_advance;
                         while(tok.type == SPACE || tok.type == TAB)
                             tok = tokenizer.current_token_and_advance;
-                        auto peek = tokenizer.current_token;
-                        if(peek.type == NUMBER){
-                            tok = tokenizer.current_token_and_advance;
+                        if(tok.type == NUMBER){
                             auto err = parse_unsigned_human(tok.text);
                             if(err.errored){
                                 err_print(tok, "Unable to parse a number from ", Q(tok.text));
@@ -100,6 +98,7 @@ struct ParseContext{
                                 err_print(tok, "number (", tok.text, ") exceeds ", int.max);
                                 return PARSE_ERROR;
                             }
+                            tok = tokenizer.current_token_and_advance;
                             func.n_args = cast(int)err.value;
                         }
                         else {
@@ -454,9 +453,9 @@ struct ParseContext{
 
 Table!(string, uintptr_t)*
 ConstantsTable(){
-    static __gshared bool initialized;
+    __gshared bool initialized;
     alias TableT = Table!(string, uintptr_t);
-    static __gshared TableT constants_table;
+    __gshared TableT constants_table;
     if(!initialized){
         initialized = true;
         foreach(ii; INSTRUCTION_INFOS){
@@ -465,6 +464,8 @@ ConstantsTable(){
         foreach(ri; registerinfos){
             constants_table[ri.NAME] = ri.register;
         }
+        // Probably should remove now that we have pointer-sized
+        // literals, so you can just write 0p1.
         constants_table["PTRSIZE"] = (void*).sizeof;
         constants_table["USIZE"] = (uintptr_t).sizeof;
     }

@@ -435,10 +435,16 @@ expose_builtins(){
         }
     );
     register_function("GetLine",
-        (uintptr_t buff, uintptr_t buflen){
+        (uintptr_t buff, uintptr_t buflen, uintptr_t prompt_){
             __gshared LineHistory!() history;
             char* buff_ = cast(char*)buff;
-            ptrdiff_t len = get_input_line(&history, "dasm> ", buff_[0..buflen]);
+            char* prompt = cast(char*)prompt_;
+            const(char)[] promptbuff;
+            if(!prompt)
+                promptbuff = "dasm> ";
+            else
+                promptbuff = prompt[0..strlen(prompt)];
+            ptrdiff_t len = get_input_line(&history, promptbuff, buff_[0..buflen]);
             if(len >= 0 && len < buflen)
                 buff_[len] = 0;
             else

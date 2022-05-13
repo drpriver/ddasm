@@ -1,10 +1,6 @@
 function start(){
-    Printf1("N (for fizzbuzz");
-    let stdout = GetStdOut();
-    Fflush(stdout);
     let buff = Malloc(80);
-    GetLine(buff, 80);
-
+    GetLine(buff, 80, "N (For fizzbuzz): ");
     let n = Atoi(buff);
     // validate the input a bit
     if(n <= 1){
