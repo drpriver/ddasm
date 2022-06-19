@@ -281,9 +281,9 @@ struct Machine {
             registers[RIP]+= uintptr_t.sizeof;
             return result;
         }
-        ptrdiff_t
+        intptr_t
         get_signed(){
-            ptrdiff_t result = *cast(ptrdiff_t*)registers[RIP];
+            intptr_t result = *cast(intptr_t*)registers[RIP];
             registers[RIP]+= uintptr_t.sizeof;
             return result;
         }
@@ -395,6 +395,9 @@ struct Machine {
                         case "bt": case "backtrace": case "where":
                             debugger_history.add_line(buf);
                             backtrace;
+                            continue;
+                        case "b": case "break": case "breakpoint":
+                            fprintf(stderr, "Sorry, adding breakpoints isn't implemented yet.\n");
                             continue;
                         case "h": case "help":
                             fprintf(stderr, "%s", ("Commands:\n"
@@ -894,8 +897,8 @@ struct Machine {
                 case SCMP_R:{
                     if(auto b = begin(SCMP_R)) return b;
                     registers[RFLAGS] = 0;
-                    auto lhs = cast(ptrdiff_t)read_reg;
-                    auto rhs = cast(ptrdiff_t)read_reg;
+                    auto lhs = cast(intptr_t)read_reg;
+                    auto rhs = cast(intptr_t)read_reg;
                     if(lhs == rhs){
                         registers[RFLAGS] = CmpFlags.ZERO;
                     }
@@ -906,7 +909,7 @@ struct Machine {
                 case SCMP_I:{
                     if(auto b = begin(SCMP_I)) return b;
                     registers[RFLAGS] = 0;
-                    auto lhs = cast(ptrdiff_t)read_reg;
+                    auto lhs = cast(intptr_t)read_reg;
                     auto rhs = get_signed;
                     if(lhs == rhs){
                         registers[RFLAGS] = CmpFlags.ZERO;

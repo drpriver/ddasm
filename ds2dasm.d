@@ -80,10 +80,11 @@ int main(int argc, char** argv){
     if(sourcefile.length){
         auto fe = read_file!Mallocator(sourcefile.ptr);
         if(fe.errored){
-                fprintf(stderr, "Unable to read from '%s': %s\n", sourcefile.ptr, core.stdc.string.strerror(fe.errored));
-            // TODO: get error message from windows
             version(Windows)
                 fprintf(stderr, "Unable to read from '%s'\n", sourcefile.ptr);
+            else
+                fprintf(stderr, "Unable to read from '%s': %s\n", sourcefile.ptr, core.stdc.string.strerror(fe.errored));
+            // TODO: get error message from windows
             return fe.errored;
         }
         bscript = fe.value.as!(const(ubyte)[]);

@@ -1,6 +1,6 @@
 # See https://github.com/ldc-developers/ldc/issues/3864
 export MACOSX_DEPLOYMENT_TARGET:=11
-OPT?=-O0
+OPT?=-O1 -g
 
 # too lazy to make this work for windows
 MKDIR=mkdir -p
@@ -16,7 +16,7 @@ include $(DEPFILES)
 LDSTRIP=-L-dead_strip
 
 Bin/%: %.d | Bin Deps
-	ldc2 -i $< -betterC -g -fvisibility=hidden $(OPT) $(LDSTRIP) -of $@ -makedeps=Deps/$*.deps
+	ldc2 -i $< -betterC -fvisibility=hidden $(OPT) $(LDSTRIP) -of $@ -makedeps=Deps/$*.deps --allinst
 
 .PHONY: ddasm
 ddasm: Bin/ddasm

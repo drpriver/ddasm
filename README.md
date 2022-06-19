@@ -207,11 +207,8 @@ function start 0
 end
 ```
 
-It has regular decimal literals;
-
-It should have binary literals, hex literals,
-pointer-size literals and string number literals, but the lexer
-doesn't handle them correctly yet.
+It has regular decimal literals, binary literals, hex literals, pointer-size
+literals and string number literals.
 
 `start` is the entry point for a davescript. You need to define a
 `start` function. The arguments to start are implementation defined.

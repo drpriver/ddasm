@@ -153,8 +153,9 @@ struct Box(T, Allocator, bool inline_allocator=false){
                 else {
                     void[] d = al.alloc(U.sizeof*N);
                     // https://issues.dlang.org/show_bug.cgi?id=22427
-                    // U[] p = cast(U[])d;
-                    U[] p = (cast(U*)d.ptr)[0..d.length/U.sizeof];
+                    // Because of the above bug, you need to do a --allinst
+                    U[] p = cast(U[])d;
+                    // U[] p = (cast(U*)d.ptr)[0..d.length/U.sizeof];
                 }
                 return Box(p, al);
             }

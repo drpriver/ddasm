@@ -51,7 +51,7 @@ enum TokenType: ubyte{
     GREATER = '>', GREATER_EQUAL = GREATER + 127, LESS = '<', LESS_EQUAL = LESS + 127,
 
     // Literals
-    IDENTIFIER = 127, STRING = 128, NUMBER = 129,
+    IDENTIFIER = 127, STRING = 128, NUMBER = 129, HEX=130, PHEX=131, SNUM=132, BNUM=133,
 
     // Keywords
     AND, ELSE, FALSE, FUN, FOR, IF, NIL, OR, RETURN, TRUE, LET,
@@ -153,7 +153,7 @@ struct Tokenizer(B) {
                 do_string();
                 break;
             case '0': .. case '9':
-                do_number();
+                do_number(c);
                 break;
             case 'a': .. case 'z':
             case 'A': .. case 'Z':
@@ -191,7 +191,39 @@ struct Tokenizer(B) {
         auto value = cast(const char[])source[start+1 .. current-1];
         addToken(TokenType.STRING, value);
     }
-    void do_number(){
+    void do_number(ubyte c){
+        if(c == '0'){
+            // TODO: these don't check how long the resulting literal
+            // is, which means the assembler ends up doing it.
+            if(peek == 'x' || peek == 'X'){
+                current++;
+                while(peek.isHexDigit) current++;
+                auto slice = cast(const(char)[])source[start .. current];
+                addToken(TokenType.HEX, slice);
+                return;
+            }
+            if(peek == 'p' || peek == 'P'){
+                current++;
+                while(peek.isHexDigit) current++;
+                auto slice = cast(const(char)[])source[start .. current];
+                addToken(TokenType.PHEX, slice);
+                return;
+            }
+            if(peek == 'b' || peek == 'B'){
+                current++;
+                while(peek == '0' || peek == '1') current++;
+                auto slice = cast(const(char)[])source[start .. current];
+                addToken(TokenType.BNUM, slice);
+                return;
+            }
+            if(peek == 's' || peek == 'S'){
+                current++;
+                while(peek.isAlphaNumeric) current++;
+                auto slice = cast(const(char)[])source[start .. current];
+                addToken(TokenType.SNUM, slice);
+                return;
+            }
+        }
         while(peek.isDigit) current++;
         if(peek == '.'){
             error(current, "Non-integer numbers are not allowed");
@@ -242,6 +274,12 @@ bool isAlpha()(ubyte c){
 
 bool isDigit()(ubyte c){
     return c >= '0' && c <= '9';
+}
+bool isHexDigit()(ubyte c){
+    c |= 0x20;
+    bool number =  c >= '0' && c <= '9' ;
+    bool af = c >= 'a' && c <= 'f';
+    return number | af;
 }
 
 bool isAlphaNumeric()(ubyte c){
@@ -1038,7 +1076,7 @@ struct Parser(A) {
     }
 
     Expr* primary(){with(TokenType){
-        if(match(FALSE, TRUE, NIL, NUMBER, STRING)) return Literal.make(allocator, previous);
+        if(match(FALSE, TRUE, NIL, NUMBER, STRING, HEX, PHEX, SNUM, BNUM)) return Literal.make(allocator, previous);
         if(match(IDENTIFIER)){
             return VarExpr.make(allocator, previous);
         }
@@ -1591,6 +1629,12 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
                         break;
                     case NUMBER:
                         sb.writef("  move r% %\n", *rlocal, cast(size_t)lit.value.number);
+                        break;
+                    case BNUM:
+                    case SNUM:
+                    case PHEX:
+                    case HEX:
+                        sb.writef("  move r% %\n", *rlocal, lit.value.string_);
                         break;
                     default:
                         error(lit.value, "Unhandled literal type in assign");
