@@ -1,6 +1,7 @@
 /*
  * Copyright © 2021-2022, David Priver
  */
+module dlib.term_util;
 version(Posix){
 import core.sys.posix.sys.ioctl;
 import core.sys.posix.unistd;

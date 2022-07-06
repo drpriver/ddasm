@@ -1,7 +1,8 @@
 /*
  * Copyright © 2021-2022, David Priver
  */
-import dasm_token;
+module dasm.dasm_tokenizer;
+import dasm.dasm_token;
 
 Token
 skip_comment(ref Tokenizer tokenizer, Token tok){

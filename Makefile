@@ -1,5 +1,3 @@
-# See https://github.com/ldc-developers/ldc/issues/3864
-export MACOSX_DEPLOYMENT_TARGET:=11
 OPT?=-O1 -g
 
 # too lazy to make this work for windows

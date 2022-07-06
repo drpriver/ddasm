@@ -1,6 +1,7 @@
 /*
  * Copyright © 2021-2022, David Priver
  */
+module dvm.dvm_machine;
 import core.stdc.stdio: fprintf, stderr;
 import core.stdc.string: memcpy;
 
@@ -10,11 +11,11 @@ import dlib.box;
 import dlib.str_util: split, stripped;
 import dlib.stringbuilder;
 
-import dvm_defs;
-import dvm_linked;
-import dvm_instructions;
-import dvm_regs;
-import dvm_args;
+import dvm.dvm_defs;
+import dvm.dvm_linked;
+import dvm.dvm_instructions;
+import dvm.dvm_regs;
+import dvm.dvm_args;
 enum RunFlags: uint {
     NONE = 0,
     DEBUG = 1 << 0,

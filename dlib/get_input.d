@@ -1,6 +1,7 @@
 /*
  * Copyright © 2021-2022, David Priver
  */
+module dlib.get_input;
 import dlib.allocator;
 import core.stdc.stdio: fputs, fflush, stdout, snprintf;
 import core.stdc.string: memcpy, memmove, memset, memchr;

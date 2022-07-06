@@ -1,6 +1,7 @@
 /*
  * Copyright © 2021-2022, David Priver
  */
+module dlib.str_util;
 import std.typecons: Tuple;
 @safe @nogc pure nothrow
 const(char)[]

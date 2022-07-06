@@ -1,6 +1,7 @@
 /*
  * Copyright © 2021-2022, David Priver
  */
+module dasm.dasm_parser;
 import core.stdc.stdio: fprintf, stderr;
 
 import dlib.allocator;
@@ -9,13 +10,13 @@ import dlib.btable;
 import dlib.stringbuilder;
 import dlib.parse_numbers;
 
-import dvm_defs;
-import dvm_unlinked;
-import dvm_instructions;
-import dvm_args;
-import dvm_regs;
-import dasm_token;
-import dasm_tokenizer;
+import dvm.dvm_defs;
+import dvm.dvm_unlinked;
+import dvm.dvm_instructions;
+import dvm.dvm_args;
+import dvm.dvm_regs;
+import dasm.dasm_token;
+import dasm.dasm_tokenizer;
 
 
 int
@@ -119,7 +120,7 @@ struct ParseContext{
                             return PARSE_ERROR;
                         }
                         AbstractVariable var;
-                        var.tok = tok;
+                        var.first_char = tok.text.ptr;
                         var.name = tok.text;
                         tok = tokenizer.current_token_and_advance;
                         if(tok.type != SPACE){

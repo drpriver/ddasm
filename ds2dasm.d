@@ -10,7 +10,7 @@ import core.stdc.stdio: fprintf, stdout, stderr, stdin, fread;
 
 extern(C)
 int main(int argc, char** argv){
-    import zstring: ZString;
+    import dlib.zstring: ZString;
     static import dlib.argparse;
     import dlib.term_util: stdin_is_interactive, get_cols;
     import dlib.get_input: LineHistory, get_input_line;

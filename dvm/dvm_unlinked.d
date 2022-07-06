@@ -1,14 +1,13 @@
 /*
  * Copyright © 2021-2022, David Priver
  */
+module dvm.dvm_unlinked;
 import dlib.allocator;
 import dlib.barray;
 
-import dvm_defs;
-import dvm_instructions;
-import dvm_args;
-// This is stupid.
-import dasm_token;
+import dvm.dvm_defs;
+import dvm.dvm_instructions;
+import dvm.dvm_args;
 
 struct AbstractInstruction {
     const(char)* first_char;
@@ -30,8 +29,7 @@ struct AbstractFunction {
 struct AbstractVariable {
     const(char)[] name;
     Argument value;
-    // It should be a source location, not a token.
-    Token tok;
+    const(char)* first_char;
 }
 
 struct AbstractArray {

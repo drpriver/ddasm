@@ -1,6 +1,7 @@
 /*
  * Copyright © 2021-2022, David Priver
  */
+module dasm.dasm_token;
 enum TokenType: ubyte {
     BANG = '!',
     AT = '@',

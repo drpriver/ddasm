@@ -1,6 +1,7 @@
 /*
  * Copyright © 2021-2022, David Priver
  */
+module dlib.stringbuilder;
 import dlib.box: Box;
 import dlib.zstring;
 import core.stdc.string: memcpy, memset;

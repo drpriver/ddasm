@@ -1,11 +1,12 @@
 /*
  * Copyright © 2021-2022, David Priver
  */
+module dvm.dvm_instructions;
 import dlib.allocator: Mallocator;
 import dlib.btable: BTable;
 import dlib.barray: Barray;
-import dvm_defs;
-import dvm_args: ArgumentKind;
+import dvm.dvm_defs;
+import dvm.dvm_args: ArgumentKind;
 
 enum Instruction: uintptr_t {
     ABORT,

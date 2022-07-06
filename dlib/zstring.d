@@ -3,6 +3,7 @@
  */
 // A view of a string that is guaranteed to be nul-terminated.
 
+module dlib.zstring;
 struct ZString {
     // this struct puns with const(char)[]
     size_t length; // excludes the nul-terminator;

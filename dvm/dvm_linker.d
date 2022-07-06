@@ -1,6 +1,7 @@
 /*
  * Copyright © 2021-2022, David Priver
  */
+module dvm.dvm_linker;
 import core.stdc.stdio: fprintf, stderr;
 
 import dlib.zstring;
@@ -10,12 +11,11 @@ import dlib.stringbuilder;
 import dlib.parse_numbers: parse_hex_inner;
 import dlib.btable;
 
-import dasm_token;
-import dvm_defs;
-import dvm_linked;
-import dvm_unlinked;
-import dvm_args;
-import dvm_instructions;
+import dvm.dvm_defs;
+import dvm.dvm_linked;
+import dvm.dvm_unlinked;
+import dvm.dvm_args;
+import dvm.dvm_instructions;
 
 struct LinkContext {
     VAllocator* allocator;
@@ -23,12 +23,16 @@ struct LinkContext {
     FunctionTable* builtins;
     UnlinkedModule* unlinked;
     LinkedModule prog;
+    void delegate(const char*, out const(char)[], out int, out int) find_loc;
     Box!(char[], Mallocator) errmess;
 
     void
-    err_print(A...)(Token tok, A args){
+    err_print(A...)(const char* first_char, A args){
         StringBuilder!Mallocator sb;
-        sb.FORMAT(tok.line, ':', tok.column, ": LinkError: ");
+        int line, column;
+        const(char)[] fn;
+        find_loc(first_char, fn, line, column);
+        sb.FORMAT(fn, ':', line, ':', column, ": LinkError: ");
         foreach(a; args)
             sb.write(a);
         errmess = sb.detach;
@@ -53,7 +57,7 @@ struct LinkContext {
             prog.variables.resize(unlinked.variables.count);
         foreach(i, var; unlinked.variables[]){
             if(var.name in prog.variable_table){
-                err_print(var.tok, "Duplicate variable: ", Q(var.tok.text));
+                err_print(var.first_char, "Duplicate variable: ", Q(var.name));
                 return AsmError.LINK_ERROR;
             }
             prog.variable_table[var.name] = &prog.variables.data[i];
@@ -76,7 +80,7 @@ struct LinkContext {
             auto size = calculate_function_size(&func);
             code_off += CODE_PAD/2;
             if(func.name in prog.functions){
-                err_print(prog.find_token(func.first_char), "Duplicate function: ", Q(func.name));
+                err_print(func.first_char, "Duplicate function: ", Q(func.name));
                 return AsmError.LINK_ERROR;
             }
             auto info = prog.functions.set(func.name);
@@ -137,51 +141,6 @@ struct LinkContext {
         prog.strings.push(result);
         return result;
     }
-    ZString
-    make_message(Token tok, const char[] text){
-        StringBuilder!VAllocator sb;
-        sb.allocator = allocator;
-        sb.FORMAT(tok.line, ':', tok.column, ": ");
-        // This is slow and we should use simd to scan for
-        // escape codes.
-        for(size_t i = 0; i < text.length; i++){
-            char c = text[i];
-            if(c == '\\'){
-                if(i < text.length - 1){
-                    char next = text[i+1];
-                    switch(next){
-                        case 'n': sb.write('\n'); i++; continue;
-                        case 't': sb.write('\t'); i++; continue;
-                        case '\\': sb.write('\\'); i++; continue;
-                        case 'r': sb.write('\r'); i++; continue;
-                        case 'e': sb.write('\033'); i++; continue;
-                        case '0': sb.write('\0'); i++; continue;
-                        case 'b': sb.write('\b'); i++; continue;
-                        case 'x': case 'X':
-                            if(i < text.length - 3){
-                                auto v = parse_hex_inner(text[i+2 .. i+4]);
-                                if(v.errored){
-                                    if(!Fuzzing)fprintf(stderr, "parse_hex_inner failed: '%.*s'\n", 2, text.ptr+i+2);
-                                    break;
-                                }
-                                sb.write(cast(char)v.value);
-                                i+=3;
-                                continue;
-                            }
-                            goto default;
-                        default: break;
-                    }
-                }
-                // invalid backslash escape. Could error here.
-                sb.write('\\');
-                continue;
-            }
-            sb.write(c);
-        }
-        ZString result = sb.zdetach;
-        prog.strings.push(result);
-        return result;
-    }
 
     AsmError
     link_arrays(){
@@ -192,7 +151,7 @@ struct LinkContext {
                     default:
                     case LABEL:
                     case UNSET:
-                        err_print(prog.find_token(v.first_char), "BUG");
+                        err_print(v.first_char, "BUG");
                         return AsmError.LINK_ERROR;
                     case STRING:{
                         ZString s = make_string(v.text);
@@ -211,7 +170,7 @@ struct LinkContext {
                         if(auto func = v.function_name in  prog.functions)
                             (*actual)[j] = cast(uintptr_t)func.func;
                         else{
-                            err_print(prog.find_token(v.first_char), "Reference to unknown function: ", Q(v.function_name));
+                            err_print(v.first_char, "Reference to unknown function: ", Q(v.function_name));
                             return AsmError.LINK_ERROR;
                         }
                         break;
@@ -222,13 +181,13 @@ struct LinkContext {
                         if(auto var = v.variable in prog.variable_table)
                             (*actual)[j] = cast(uintptr_t)*var;
                         else {
-                            err_print(prog.find_token(v.first_char), "Reference to unknown variable: ", Q(v.variable));
+                            err_print(v.first_char, "Reference to unknown variable: ", Q(v.variable));
                             return AsmError.LINK_ERROR;
                         }
                         break;
 
                     case CONSTANT:
-                        err_print(prog.find_token(v.first_char), "TODO");
+                        err_print(v.first_char, "TODO");
                         return AsmError.LINK_ERROR;
                 }
             }
@@ -245,7 +204,7 @@ struct LinkContext {
                 default:
                 case LABEL:
                 case UNSET:
-                    err_print(prog.find_token(var.value.first_char), "BUG");
+                    err_print(var.value.first_char, "BUG");
                     return AsmError.LINK_ERROR;
                 case STRING:{
                     ZString s = make_string(var.value.text);
@@ -264,7 +223,7 @@ struct LinkContext {
                     if(auto func = var.value.function_name in  prog.functions)
                         *dest = cast(uintptr_t)func.func;
                     else{
-                        err_print(prog.find_token(var.value.first_char), "Reference to unknown function: ", Q(var.value.function_name));
+                        err_print(var.value.first_char, "Reference to unknown function: ", Q(var.value.function_name));
                         return AsmError.LINK_ERROR;
                     }
                     break;
@@ -275,12 +234,12 @@ struct LinkContext {
                     if(auto variable = var.value.variable in prog.variable_table)
                         (*dest) = cast(uintptr_t)*variable;
                     else {
-                        err_print(prog.find_token(var.value.first_char), "Reference to unknown variable: ", Q(var.value.variable));
+                        err_print(var.value.first_char, "Reference to unknown variable: ", Q(var.value.variable));
                         return AsmError.LINK_ERROR;
                     }
                     break;
                 case CONSTANT:
-                    err_print(prog.find_token(var.value.first_char), "TODO");
+                    err_print(var.value.first_char, "TODO");
                     return AsmError.LINK_ERROR;
             }
         }
@@ -309,7 +268,7 @@ struct LinkContext {
             foreach(inst; afunc.instructions[]){
                 if(inst.label.length){
                     if(inst.label in labels){
-                        err_print(prog.find_token(inst.first_char), "Duplicate label ", Q(inst.label));
+                        err_print(inst.first_char, "Duplicate label ", Q(inst.label));
                         return AsmError.LINK_ERROR;
                     }
                     labels[inst.label] = cast(uintptr_t)ip;
@@ -324,13 +283,10 @@ struct LinkContext {
                 switch(arg.kind)with(ArgumentKind){
                     default:
                     case UNSET:
-                        err_print(prog.find_token(afunc.first_char), "BUG: link_function");
+                        err_print(afunc.first_char, "BUG: link_function");
                         return AsmError.LINK_ERROR;
                     case STRING:{
-                        ZString s = inst.instruction == Instruction.MSG?
-                            make_message(prog.find_token(inst.first_char), arg.text)
-                            :
-                            make_string(arg.text);
+                        ZString s = make_string(arg.text);
                         *(ip++) = cast(uintptr_t)s.ptr;
                     }break;
                     case IMMEDIATE:
@@ -345,7 +301,7 @@ struct LinkContext {
                     case FUNCTION:{
                         auto f = prog.functions.get(arg.function_name);
                         if(!f){
-                            err_print(prog.find_token(arg.first_char), "Reference to unknown function: ", Q(arg.function_name));
+                            err_print(arg.first_char, "Reference to unknown function: ", Q(arg.function_name));
                             return AsmError.LINK_ERROR;
                         }
                         *(ip++) = cast(uintptr_t)f.func;
@@ -355,7 +311,7 @@ struct LinkContext {
                             *(ip++) = *label;
                         }
                         else {
-                            err_print(prog.find_token(arg.first_char), "Reference to unknown label: ", Q(arg.label_name));
+                            err_print(arg.first_char, "Reference to unknown label: ", Q(arg.label_name));
                             return AsmError.LINK_ERROR;
                         }
                     }break;
@@ -367,13 +323,13 @@ struct LinkContext {
                             *(ip++) = cast(uintptr_t)*var;
                         }
                         else {
-                            err_print(prog.find_token(arg.first_char), "Reference to unknown variable: ", Q(arg.variable));
+                            err_print(arg.first_char, "Reference to unknown variable: ", Q(arg.variable));
                             return AsmError.LINK_ERROR;
                         }
                         break;
 
                     case CONSTANT:
-                        err_print(prog.find_token(arg.first_char), "TODO");
+                        err_print(arg.first_char, "TODO");
                         return AsmError.LINK_ERROR;
                 }
             }
@@ -410,7 +366,7 @@ calculate_function_size(AbstractFunction* func){
 }
 
 AsmError
-link_asm(VAllocator* allocator, VAllocator* temp_allocator, FunctionTable* builtins, UnlinkedModule* unlinked, LinkedModule* prog){
+link_module(VAllocator* allocator, VAllocator* temp_allocator, FunctionTable* builtins, UnlinkedModule* unlinked, LinkedModule* prog, scope void delegate(const char*, out const(char)[], out int, out int) find_loc){
     LinkContext ctx;
     ctx.allocator = allocator;
     ctx.temp_allocator = temp_allocator;
@@ -425,6 +381,7 @@ link_asm(VAllocator* allocator, VAllocator* temp_allocator, FunctionTable* built
     ctx.prog.variables.allocator = allocator;
     ctx.prog.variable_table.allocator = allocator;
     ctx.prog.source_text = prog.source_text;
+    ctx.find_loc = find_loc;
     AsmError err = ctx.link();
     if(err){
         auto mess = ctx.errmess.data;
@@ -435,29 +392,4 @@ link_asm(VAllocator* allocator, VAllocator* temp_allocator, FunctionTable* built
     }
     *prog = ctx.prog;
     return AsmError.NO_ERROR;
-}
-
-
-// This is really stupid and unnecessarily entangles us to
-// a module coming from dasm. Unless the dasm tokenizer and
-// davescript tokenizer are shared? That would be kind of 
-// weird though. It's ok for now as it is just for reporting
-// errors.
-Token
-find_token(ref LinkedModule mod, const(char)* first_char){
-    import dasm_tokenizer: Tokenizer;
-    with(mod){
-        const(char)[] text = source_text.data;
-        assert(source_text.data.ptr);
-        auto tokenizer = Tokenizer.from(text);
-        Token tok = tokenizer.current_token_and_advance;
-        while(tok._text != first_char){
-            tok = tokenizer.current_token_and_advance;
-            if(tok.type == TokenType.EOF){
-                if(!Fuzzing)fprintf(stderr, "Unable to find: %p: %s\n", first_char, first_char);
-                return tok;
-            }
-        }
-        return tok;
-    }
 }

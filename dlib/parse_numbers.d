@@ -1,6 +1,7 @@
 /*
  * Copyright © 2021-2022, David Priver
  */
+module dlib.parse_numbers;
 enum ParseNumberError: ubyte {
     NO_ERROR = 0,
     UNEXPECTED_END = 1,

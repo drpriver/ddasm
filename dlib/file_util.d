@@ -1,6 +1,7 @@
 /*
  * Copyright © 2021-2022, David Priver
  */
+module dlib.file_util;
 import dlib.box: Box;
 import core.stdc.string: memset;
 import dlib.allocator: Mallocator;

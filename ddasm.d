@@ -16,12 +16,13 @@ import dlib.box: Box;
 import dlib.str_util: endswith;
 
 
-import dvm_defs: Fuzzing, uintptr_t;
-import dvm_linked: LinkedModule, Function, FunctionType, FunctionTable, FunctionInfo;
-import dvm_unlinked: UnlinkedModule;
-import dvm_machine: Machine, RunFlags;
-import dasm_parser: parse_asm_string;
-import dvm_linker: link_asm;
+import dvm.dvm_defs: Fuzzing, uintptr_t;
+import dvm.dvm_linked: LinkedModule, Function, FunctionType, FunctionTable, FunctionInfo;
+import dvm.dvm_unlinked: UnlinkedModule;
+import dvm.dvm_machine: Machine, RunFlags;
+import dvm.dvm_linker: link_module;
+
+import dasm.dasm_parser: parse_asm_string;
 
 
 __gshared devnull = false;
@@ -186,8 +187,9 @@ int main(int argc, char** argv){
         btext = sb.detach.as!(const(char)[]);
     }
     if(highlevel || sourcefile[].endswith(".ds")){
+        static import dscript.dscript;
         static import dscript_to_dasm;
-        dscript_to_dasm.powerup;
+        dscript.dscript.powerup;
         Box!(char[], Mallocator) dasmtext;
         auto data = btext.data;
         auto d = (cast(const(ubyte)*)data.ptr)[0 .. data.length];
@@ -195,7 +197,7 @@ int main(int argc, char** argv){
         if(err) return err;
         btext.dealloc();
         btext = btext.from(btext.allocator, dasmtext.data);
-        dscript_to_dasm.powerdown;
+        dscript.dscript.powerdown;
     }
     UnlinkedModule prog;
     int err = parse_asm_string(&va, btext.data, &prog);
@@ -207,10 +209,32 @@ int main(int argc, char** argv){
     LinkedModule linked_prog;
     linked_prog.source_text = btext;
     {
+        void find_loc(const char* first_char, out const(char)[] fn, out int line, out int column){
+            import dasm.dasm_tokenizer: Tokenizer;
+            import dasm.dasm_token: Token, TokenType;
+            const(char)[] text = btext.data;
+            auto tokenizer = Tokenizer.from(text);
+            Token tok = tokenizer.current_token_and_advance;
+            while(tok._text != first_char){
+                tok = tokenizer.current_token_and_advance;
+                if(tok.type == TokenType.EOF){
+                    if(!Fuzzing)fprintf(stderr, "Unable to find: %p: %s\n", first_char, first_char);
+                    fn = "unknown"; 
+                    line = -1;
+                    column = -1;
+                    return;
+                }
+            }
+            fn = sourcefile[];
+            if(!fn.length)
+                fn = "(stdin)";
+            line = tok.line;
+            column = tok.column;
+        }
         ArenaAllocator!(Mallocator) arena;
         scope(exit) arena.free_all;
         auto temp_va = VAllocator.from(&arena);
-        err = link_asm(&va, &temp_va, BUILTINS, &prog, &linked_prog);
+        err = link_module(&va, &temp_va, BUILTINS, &prog, &linked_prog, &find_loc);
     }
     if(err){
         if(!Fuzzing)fprintf(stderr, "Linking failed\n");

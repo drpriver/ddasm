@@ -1,6 +1,7 @@
 /*
  * Copyright © 2021-2022, David Priver
  */
+module dlib.box;
 struct Box(T, Allocator, bool inline_allocator=false){
     static if(!is(T == U[], U)){
         T* pointer;

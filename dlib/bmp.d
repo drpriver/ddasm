@@ -1,6 +1,7 @@
 /*
  * Copyright © 2021-2022, David Priver
  */
+module dlib.bmp;
 struct BmpHeader {
     uint   bfSize;
     uint   bfReserved;

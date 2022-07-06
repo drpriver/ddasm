@@ -1,13 +1,14 @@
 /*
  * Copyright © 2021-2022, David Priver
  */
+module dvm.dvm_linked;
 import dlib.allocator;
 import dlib.box;
 import dlib.zstring;
 import dlib.btable;
 import dlib.barray;
 
-import dvm_defs;
+import dvm.dvm_defs;
 
 alias IntegerArray = Barray!(uintptr_t, VAllocator);
 alias FunctionTable = BTable!(const(char)[], FunctionInfo, VAllocator);

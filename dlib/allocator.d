@@ -1,6 +1,7 @@
 /*
  * Copyright © 2021-2022, David Priver
  */
+module dlib.allocator;
 import dlib.zstring;
 import core.stdc.stdlib: realloc, free, malloc, calloc;
 import core.stdc.string: memcpy, memset;

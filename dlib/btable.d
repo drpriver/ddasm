@@ -1,8 +1,9 @@
 /*
  * Copyright © 2021-2022, David Priver
  */
-import allocator: Mallocator;
-import box: Box;
+module dlib.btable;
+import dlib.allocator: Mallocator;
+import dlib.box: Box;
 import core.stdc.string: memset, memcpy;
 struct Item(K, V) {
     K key;
