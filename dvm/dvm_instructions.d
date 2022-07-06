@@ -79,8 +79,8 @@ enum Instruction: uintptr_t {
 
 struct InstructionInfo {
     Instruction instruction;
-    const(char)[] NAME;
-    const(char)[] asm_name;
+    str NAME;
+    str asm_name;
     const(ArgumentKind)[] args;
 }
 

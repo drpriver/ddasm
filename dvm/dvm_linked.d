@@ -11,10 +11,10 @@ import dlib.barray;
 import dvm.dvm_defs;
 
 alias IntegerArray = Barray!(uintptr_t, VAllocator);
-alias FunctionTable = BTable!(const(char)[], FunctionInfo, VAllocator);
+alias FunctionTable = BTable!(str, FunctionInfo, VAllocator);
 
 struct Variable {
-    const(char)[] name;
+    str name;
     uintptr_t value;
 }
 
@@ -55,13 +55,13 @@ struct Function {
 static assert(Function.sizeof == 16);
 
 struct FunctionInfo {
-    const(char)[] name;
+    str name;
     Function* func;
 }
 
 struct LinkedModule {
-    const(char)[] name;
-    Box!(const(char)[], VAllocator) source_text;
+    str name;
+    Box!(str, VAllocator) source_text;
     Box!(uintptr_t[], VAllocator) bytecode;
     Barray!(ZString, VAllocator) strings;
     Barray!(IntegerArray, VAllocator) arrays;
@@ -70,7 +70,7 @@ struct LinkedModule {
     // storage for the variables
     Box!(uintptr_t[], VAllocator) variables;
     // table to look variables up by name
-    BTable!(const(char)[], uintptr_t*, VAllocator) variable_table;
+    BTable!(str, uintptr_t*, VAllocator) variable_table;
     Function* start;
 
     FunctionInfo

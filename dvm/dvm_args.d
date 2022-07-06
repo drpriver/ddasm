@@ -32,8 +32,8 @@ enum CmpMode: uintptr_t {
 
 struct CmpModeInfo {
     CmpMode mode;
-    const(char)[] NAME;
-    const(char)[] name;
+    str NAME;
+    str name;
 }
 
 immutable CmpModeInfo[8] CmpModes = [
@@ -53,14 +53,14 @@ struct Argument {
     const(char)* first_char;
     union {
         uintptr_t array;
-        const(char)[] text; // this is borrow and unescaped
+        str text; // this is borrow and unescaped
         uintptr_t immediate;
         RegisterNames reg;
         CmpMode cmp_mode;
-        const(char)[] function_name;
-        const(char)[] label_name;
-        const(char)[] token;
-        const(char)[] variable;
-        const(char)[] constant;
+        str function_name;
+        str label_name;
+        str token;
+        str variable;
+        str constant;
     }
 }

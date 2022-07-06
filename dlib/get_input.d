@@ -3,6 +3,7 @@
  */
 module dlib.get_input;
 import dlib.allocator;
+import dlib.aliases;
 import core.stdc.stdio: fputs, fflush, stdout, snprintf;
 import core.stdc.string: memcpy, memmove, memset, memchr;
 version(Posix){
@@ -52,7 +53,7 @@ struct LineHistory(Allocator=Mallocator, size_t LINE_HISTORY_MAX=100){
             zed = memchr(p, 0, end - p);
             if(!zed) break;
             void[] line = p[0..zed-p];
-            add_line(cast(const(char)[])line);
+            add_line(cast(str)line);
             p = zed + 1;
         }
         return 0;
@@ -63,14 +64,14 @@ struct LineHistory(Allocator=Mallocator, size_t LINE_HISTORY_MAX=100){
         auto last = &history[--count];
         allocator.free(last.ptr, last.length);
     }
-    const(char)[]
+    str
     last_line(){
         if(!count) return null;
         return history[count-1];
     }
 
     void
-    add_line(const(char)[] line){
+    add_line(str line){
         if(count){
             auto last = &history[count-1];
             if(*last == line)
@@ -100,7 +101,7 @@ struct LineHistory(Allocator=Mallocator, size_t LINE_HISTORY_MAX=100){
 }
 
 ptrdiff_t
-get_input_line(LineHistory)(LineHistory* history, const(char)[] prompt, char[] buff){
+get_input_line(LineHistory)(LineHistory* history, str prompt, char[] buff){
     history.cursor = history.count;
     if(!get_line_is_init)
         get_line_init();
@@ -199,7 +200,7 @@ version(Posix){
 
 struct LineState {
     char[] buff;
-    const(char)[] prompt;
+    str prompt;
     size_t curr_pos;
     size_t length;
     size_t cols;
@@ -207,7 +208,7 @@ struct LineState {
     size_t completion_cookie;
 }
 ptrdiff_t
-get_line_internal_loop(LineHistory)(LineHistory* history, char[]buff, const(char)[] prompt){
+get_line_internal_loop(LineHistory)(LineHistory* history, char[]buff, str prompt){
     LineState ls = {
         buff, prompt, cols: get_cols(),
     };
@@ -442,7 +443,7 @@ get_line_internal_loop(LineHistory)(LineHistory* history, char[]buff, const(char
 }
 
 ptrdiff_t
-write_data(const(char)[] buff){
+write_data(str buff){
     version(Windows){
         fwrite(buff.ptr, buff.length, 1, stdout);
         fflush(stdout);
@@ -604,7 +605,7 @@ change_history(LineHistory)(LineHistory* history, LineState* ls, int magnitude){
         }
     if(history.cursor < 0)
         return;
-    const(char)[] old = history.history[history.cursor];
+    str old = history.history[history.cursor];
     size_t length = old.length < ls.buff.length? old.length : ls.buff.length;
     if(length)
         memcpy(ls.buff.ptr, old.ptr, length);

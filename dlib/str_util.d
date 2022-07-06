@@ -3,11 +3,12 @@
  */
 module dlib.str_util;
 import std.typecons: Tuple;
+import dlib.aliases;
 @safe @nogc pure nothrow
-const(char)[]
-lstripped(const(char)[] str){
-    for(;str.length;str = str[1..$]){
-        switch(str[0]){
+str
+lstripped(str  str_){
+    for(; str_.length; str_ =  str_[1..$]){
+        switch( str_[0]){
             case ' ': case '\t': case '\r': case '\n': case '\f': case '\v':
                 continue;
             default:
@@ -15,14 +16,14 @@ lstripped(const(char)[] str){
         }
         break;
     }
-    return str;
+    return  str_;
 }
 
 @safe @nogc pure nothrow
-const(char)[]
-rstripped(const(char)[] str){
-    for(;str.length;str = str[0..$-1]){
-        switch(str[$-1]){
+str
+rstripped(str  str_){
+    for(; str_.length; str_ =  str_[0..$-1]){
+        switch( str_[$-1]){
             case ' ': case '\t': case '\r': case '\n': case '\f': case '\v':
                 continue;
             default:
@@ -30,39 +31,39 @@ rstripped(const(char)[] str){
         }
         break;
     }
-    return str;
+    return  str_;
 }
 
 @safe @nogc pure nothrow
-const(char)[]
-stripped(const(char)[]str){
-    return str.rstripped.lstripped;
+str
+stripped(str str_){
+    return  str_.rstripped.lstripped;
 }
 
-alias Split = Tuple!(const(char)[], "head", const(char)[], "tail");
+alias Split = Tuple!(str, "head", str, "tail");
 
 @trusted @nogc pure nothrow
 Split
-split(const(char)[]str, char c){
+split(str str_, char c){
     import core.stdc.string: memchr;
-    auto s = cast(const char*)memchr(str.ptr, c, str.length);
+    auto s = cast(const char*)memchr( str_.ptr, c,  str_.length);
     if(!s){
-        return Split(str, null);
+        return Split( str_, null);
     }
     else {
-        return Split(str[0..(s-str.ptr)], str[(s-str.ptr)+1..$]);
+        return Split( str_[0..(s- str_.ptr)],  str_[(s- str_.ptr)+1..$]);
     }
 }
 @trusted @nogc pure nothrow
 Split
-stripped_split(const(char)[]str, char c){
+stripped_split(str str_, char c){
     import core.stdc.string: memchr;
-    auto s = cast(const char*)memchr(str.ptr, c, str.length);
+    auto s = cast(const char*)memchr( str_.ptr, c,  str_.length);
     if(!s){
-        return Split(str.stripped, null);
+        return Split( str_.stripped, null);
     }
     else {
-        return Split(str[0..(s-str.ptr)].stripped, str[(s-str.ptr)+1..$].stripped);
+        return Split( str_[0..(s- str_.ptr)].stripped,  str_[(s- str_.ptr)+1..$].stripped);
     }
 }
 
@@ -71,49 +72,49 @@ extern(C) const(void)* memmem(const void*, size_t, const void*, size_t);
 
 @trusted @nogc pure nothrow
 Split
-split(const(char)[]str, const(char)[] c){
-    auto s = cast(const char*)memmem(str.ptr, str.length, c.ptr, c.length);
+split(str str_, str c){
+    auto s = cast(const char*)memmem( str_.ptr,  str_.length, c.ptr, c.length);
     if(!s){
-        return Split(str, null);
+        return Split( str_, null);
     }
     else {
-        return Split(str[0..(s-str.ptr)], str[(s-str.ptr)+c.length..$]);
+        return Split( str_[0..(s- str_.ptr)],  str_[(s- str_.ptr)+c.length..$]);
     }
 }
 
 @trusted @nogc pure nothrow
 Split
-stripped_split(const(char)[]str, const(char)[] c){
-    auto s = cast(const char*)memmem(str.ptr, str.length, c.ptr, c.length);
+stripped_split(str str_, str c){
+    auto s = cast(const char*)memmem( str_.ptr,  str_.length, c.ptr, c.length);
     if(!s){
-        return Split(str, null);
+        return Split( str_, null);
     }
     else {
-        return Split(str[0..(s-str.ptr)].stripped, str[(s-str.ptr)+c.length..$].stripped);
+        return Split( str_[0..(s- str_.ptr)].stripped,  str_[(s- str_.ptr)+c.length..$].stripped);
     }
 }
 
 @safe @nogc pure nothrow
 bool
-endswith(const(char)[]str, const(char)[] needle){
-    if(needle.length > str.length) return false;
+endswith(str str_, str needle){
+    if(needle.length >  str_.length) return false;
     if(!needle.length) return true;
-    auto strtail = str[$-needle.length .. $];
+    auto strtail =  str_[$-needle.length .. $];
     return strtail == needle;
 }
 
 @safe @nogc pure nothrow
 bool
-startswith(const(char)[]str, const(char)[] needle){
-    if(needle.length > str.length) return false;
+startswith(str str_, str needle){
+    if(needle.length >  str_.length) return false;
     if(!needle.length) return true;
-    return str[0..needle.length] == needle;
+    return  str_[0..needle.length] == needle;
 }
 
 @safe @nogc pure nothrow
 struct Splitter {
-    const(char)[] head;
-    const(char)[] tail;
+    str head;
+    str tail;
     char c;
 
     auto front(){return head;}
@@ -132,9 +133,9 @@ struct Splitter {
     }
 }
 struct SplitterS {
-    const(char)[] head;
-    const(char)[] tail;
-    const(char)[] c;
+    str head;
+    str tail;
+    str c;
 
     auto front(){return head;}
     auto popFront(){
@@ -154,26 +155,26 @@ struct SplitterS {
 
 @safe @nogc pure nothrow
 SplitterS
-split_by(const(char)[]str, const(char)[] c){
-    auto s = str.split(c);
+split_by(str str_, str c){
+    auto s =  str_.split(c);
     return SplitterS(s.head, s.tail, c);
 }
 
 @safe @nogc pure nothrow
 Splitter
-split_by(const(char)[]str, char c){
-    auto s = str.split(c);
+split_by(str str_, char c){
+    auto s =  str_.split(c);
     return Splitter(s.head, s.tail, c);
 }
 
 @trusted @nogc pure nothrow
 Split
-split_spaces(const(char)[]str){
-    str = lstripped(str);
-    if(!str.length) return Split(null, null);
+split_spaces(str str_){
+     str_ = lstripped( str_);
+    if(! str_.length) return Split(null, null);
     size_t i;
-    for(i = 0; i < str.length; i++){
-        switch(str[i]){
+    for(i = 0; i <  str_.length; i++){
+        switch( str_[i]){
             case ' ':
             case '\t':
             case '\r':
@@ -184,8 +185,8 @@ split_spaces(const(char)[]str){
         }
         break;
     }
-    const(char)[] head = str[0 .. i];
-    const(char)[] tail = i !=str.length?str[i+1 .. $]: null;
+    str head =  str_[0 .. i];
+    str tail = i != str_.length? str_[i+1 .. $]: null;
     tail = lstripped(tail);
     if(!tail.length) tail = null;
     return Split(head, tail);
@@ -193,8 +194,8 @@ split_spaces(const(char)[]str){
 
 @safe @nogc pure nothrow
 struct WhitespaceSplitter {
-    const(char)[] head;
-    const(char)[] tail;
+    str head;
+    str tail;
     auto front(){return head;}
     auto popFront(){
         auto s = tail.split_spaces();
@@ -213,15 +214,15 @@ struct WhitespaceSplitter {
 
 @safe @nogc pure nothrow
 WhitespaceSplitter
-split_by_spaces(const(char)[]str){
-    auto s = str.split_spaces();
+split_by_spaces(str str_){
+    auto s =  str_.split_spaces();
     return WhitespaceSplitter(s.head, s.tail);
 }
 
 auto strip(R)(R r){
     static struct S {
         R r;
-        const(char)[] front(){
+        str front(){
             return stripped(r.front);
         }
         bool empty(){
@@ -230,7 +231,7 @@ auto strip(R)(R r){
         void popFront(){
             r.popFront;
         }
-        const(char)[] next(){
+        str next(){
             auto result = front;
             popFront;
             return result;

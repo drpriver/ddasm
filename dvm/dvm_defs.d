@@ -2,8 +2,7 @@
  * Copyright © 2021-2022, David Priver
  */
 module dvm.dvm_defs;
-alias uintptr_t = size_t;
-alias intptr_t = ptrdiff_t;
+public import dlib.aliases;
 
 version(Fuzz){
     enum Fuzzing = true;

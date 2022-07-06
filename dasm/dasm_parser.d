@@ -4,6 +4,7 @@
 module dasm.dasm_parser;
 import core.stdc.stdio: fprintf, stderr;
 
+import dlib.aliases;
 import dlib.allocator;
 import dlib.zstring;
 import dlib.btable;
@@ -20,7 +21,7 @@ import dasm.dasm_tokenizer;
 
 
 int
-parse_asm_string(VAllocator* allocator, const(char)[] text, UnlinkedModule* prog){
+parse_asm_string(VAllocator* allocator, str text, UnlinkedModule* prog){
     ParseContext ctx;
     ctx.allocator = allocator;
     ctx.tokenizer = Tokenizer.from(text);
@@ -121,6 +122,23 @@ struct ParseContext{
                             return PARSE_ERROR;
                         }
                         prog.imports.push(tok.text);
+                    }
+                    else if (tok.text == "module"){
+                        if(prog.name.length){
+                            err_print(tok, "Module already has a name (", Q(prog.name), ")");
+                            return PARSE_ERROR;
+                        }
+                        tok = tokenizer.current_token_and_advance;
+                        if(tok.type != SPACE){
+                            err_print(tok, "module must be followed by a space: ", Q(tok.text));
+                            return PARSE_ERROR;
+                        }
+                        tok = tokenizer.current_token_and_advance;
+                        if(tok.type != IDENTIFIER){
+                            err_print(tok, "expected a module name");
+                            return PARSE_ERROR;
+                        }
+                        prog.name = tok.text;
                     }
                     else if(tok.text == "var"){
                         tok = tokenizer.current_token_and_advance;

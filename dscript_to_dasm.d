@@ -2,8 +2,10 @@
  * Copyright © 2021-2022, David Priver
  */
 module dscript_to_dasm;
-import dscript.dscript;
+
 import core.stdc.stdio: fprintf, stderr;
+
+import dlib.aliases;
 import dlib.allocator: Mallocator, ArenaAllocator;
 import dlib.box: Box;
 import dlib.stringbuilder: StringBuilder, P;
@@ -11,9 +13,9 @@ import dlib.barray: Barray, make_barray;
 import dlib.btable: Table;
 import dlib.bettercobject: BCObject;
 
-import dvm.dvm_regs;
+import dscript.dscript;
 
-alias str = const(char)[];
+import dvm.dvm_regs;
 
 int
 compile_to_dasm(const ubyte[] source, Box!(char[], Mallocator)* progtext){

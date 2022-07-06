@@ -4,6 +4,7 @@
 // A view of a string that is guaranteed to be nul-terminated.
 
 module dlib.zstring;
+import dlib.aliases;
 struct ZString {
     // this struct puns with const(char)[]
     size_t length; // excludes the nul-terminator;
@@ -15,7 +16,7 @@ struct ZString {
     }
 
     bool
-    opEquals(const(char)[] other){
+    opEquals(str other){
         return ptr[0 .. length] == other;
     }
     bool
@@ -23,7 +24,7 @@ struct ZString {
         return ptr[0 .. length] == other.ptr[0 .. other.length];
     }
 
-    const(char)[]
+    str
     opIndex(){ return ptr[0 .. length]; }
 
     char
@@ -35,17 +36,17 @@ struct ZString {
         return result;
     }
 
-    const(char)[]
+    str
     opIndex(size_t[2] slice){ return ptr[slice[0] .. slice[1]]; }
 
 
     size_t
     opDollar(){ return length; }
 
-    this(const(char)[] str){
-        assert(str[$-1] == 0);
-        ptr = str.ptr;
-        length = str.length-1;
+    this(str  str_){
+        assert( str_[$-1] == 0);
+        ptr =  str_.ptr;
+        length =  str_.length-1;
     }
     this(size_t length_, const(char)*str_){
         length = length_;

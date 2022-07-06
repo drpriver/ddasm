@@ -2,6 +2,7 @@
  * Copyright © 2021-2022, David Priver
  */
 module dlib.parse_numbers;
+import dlib.aliases;
 enum ParseNumberError: ubyte {
     NO_ERROR = 0,
     UNEXPECTED_END = 1,
@@ -25,7 +26,7 @@ auto Err(T)(ParseNumberError error){
 }
 
 IntegerResult!ulong
-parse_uint64(const(char)[] s_){
+parse_uint64(str s_){
 with(ParseNumberError){
     const(ubyte)[] s = cast(const(ubyte)[])s_;
     alias err = Err!ulong;
@@ -58,7 +59,7 @@ with(ParseNumberError){
 }
 
 IntegerResult!T
-parse(T)(const(char)[] s){
+parse(T)(str s){
     static if(is(T == ulong)){
         return parse_uint64(s);
     }
@@ -154,7 +155,7 @@ parse_psize(const char[] s){ with(ParseNumberError){
     return result;
 }}
 IntegerResult!ulong
-parse_strnum(const(char)[] s){ with(ParseNumberError){
+parse_strnum(str s){ with(ParseNumberError){
     import core.stdc.stdio;
     // printf("%s:%d: s = '%.*s;\n", __FUNCTION__.ptr, __LINE__, cast(int)s.length, s.ptr);
     if(s.length < 3)

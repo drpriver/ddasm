@@ -2,6 +2,7 @@
  * Copyright © 2021-2022, David Priver
  */
 module dasm.dasm_token;
+import dlib.aliases;
 enum TokenType: ubyte {
     BANG = '!',
     AT = '@',
@@ -50,7 +51,7 @@ struct Token {
     ushort column;
     uint line;
     const(char)* _text;
-    const(char)[] text() {
+    str text() {
         return _text[0..length];
     }
 }

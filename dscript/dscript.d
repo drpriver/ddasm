@@ -1,11 +1,10 @@
 module dscript.dscript;
 import core.stdc.stdio: fprintf, stderr; // FIXME: should be a callback to report errors
+import dlib.aliases;
 import dlib.allocator: Mallocator;
 import dlib.barray: Barray, make_barray;
 import dlib.parse_numbers: parse_unsigned_human;
 import dlib.btable: BTable;
-
-alias str = const(char)[];
 
 enum TokenType: ubyte{
     // Single character tokens
@@ -134,7 +133,7 @@ struct Tokenizer(B) {
 
     void do_identifier(){
         while(peek.isIdentChar) current++;
-        auto text = cast(const(char)[])source[start .. current];
+        auto text = cast(str)source[start .. current];
         if(auto type = text in KEYWORDS)
             addToken(*type);
         else
@@ -164,28 +163,28 @@ struct Tokenizer(B) {
             if(peek == 'x' || peek == 'X'){
                 current++;
                 while(peek.isHexDigit) current++;
-                auto slice = cast(const(char)[])source[start .. current];
+                auto slice = cast(str)source[start .. current];
                 addToken(TokenType.HEX, slice);
                 return;
             }
             if(peek == 'p' || peek == 'P'){
                 current++;
                 while(peek.isHexDigit) current++;
-                auto slice = cast(const(char)[])source[start .. current];
+                auto slice = cast(str)source[start .. current];
                 addToken(TokenType.PHEX, slice);
                 return;
             }
             if(peek == 'b' || peek == 'B'){
                 current++;
                 while(peek == '0' || peek == '1') current++;
-                auto slice = cast(const(char)[])source[start .. current];
+                auto slice = cast(str)source[start .. current];
                 addToken(TokenType.BNUM, slice);
                 return;
             }
             if(peek == 's' || peek == 'S'){
                 current++;
                 while(peek.isAlphaNumeric) current++;
-                auto slice = cast(const(char)[])source[start .. current];
+                auto slice = cast(str)source[start .. current];
                 addToken(TokenType.SNUM, slice);
                 return;
             }
@@ -195,7 +194,7 @@ struct Tokenizer(B) {
             error(current, "Non-integer numbers are not allowed");
             return;
         }
-        auto slice = cast(const(char)[])source[start .. current];
+        auto slice = cast(str)source[start .. current];
         auto res = parse_unsigned_human(slice);
         if(res.errored){
             error(current, "Unable to parse number");

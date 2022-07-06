@@ -23,17 +23,17 @@ struct LinkContext {
     VAllocator* temp_allocator;
     FunctionTable* builtins;
     UnlinkedModule* unlinked;
-    BTable!(const(char)[], LinkedModule*, VAllocator)* modules;
+    BTable!(str, LinkedModule*, VAllocator)* modules;
 
     LinkedModule prog;
-    void delegate(const char*, out const(char)[], out int, out int) find_loc;
+    void delegate(const char*, out str, out int, out int) find_loc;
     Box!(char[], Mallocator) errmess;
 
     void
     err_print(A...)(const char* first_char, A args){
         StringBuilder!Mallocator sb;
         int line, column;
-        const(char)[] fn;
+        str fn;
         find_loc(first_char, fn, line, column);
         sb.FORMAT(fn, ':', line, ':', column, ": LinkError: ");
         foreach(a; args)
@@ -146,7 +146,7 @@ struct LinkContext {
     }
 
     uintptr_t
-    find_function(const(char)[] function_name, const char* first_char){
+    find_function(str function_name, const char* first_char){
         if(auto func = function_name in  prog.functions)
             return cast(uintptr_t)func.func;
         auto s = function_name.split('.');
@@ -289,7 +289,7 @@ struct LinkContext {
 
     AsmError
     link_function(AbstractFunction* afunc, Function* func){
-        BTable!(const(char)[], uintptr_t, VAllocator) labels;
+        BTable!(str, uintptr_t, VAllocator) labels;
         labels.allocator = temp_allocator;
         scope(exit) labels.cleanup;
         // look for labels
@@ -395,7 +395,7 @@ calculate_function_size(AbstractFunction* func){
 }
 
 AsmError
-link_module(VAllocator* allocator, VAllocator* temp_allocator, FunctionTable* builtins, UnlinkedModule* unlinked, LinkedModule* prog, scope void delegate(const char*, out const(char)[], out int, out int) find_loc, BTable!(const(char)[], LinkedModule*, VAllocator)* modules){
+link_module(VAllocator* allocator, VAllocator* temp_allocator, FunctionTable* builtins, UnlinkedModule* unlinked, LinkedModule* prog, scope void delegate(const char*, out str, out int, out int) find_loc, BTable!(str, LinkedModule*, VAllocator)* modules){
     LinkContext ctx;
     ctx.allocator = allocator;
     ctx.temp_allocator = temp_allocator;

@@ -2,11 +2,14 @@
  * Copyright © 2021-2022, David Priver
  */
 module dlib.stringbuilder;
-import dlib.box: Box;
-import dlib.zstring;
+
 import core.stdc.string: memcpy, memset;
 import core.simd;
 import ldc.simd;
+
+import dlib.aliases;
+import dlib.box: Box;
+import dlib.zstring;
 import dlib.fpconv_ctfe: fpconv_dtoa;
 import dlib.str_util: split, Split;
 
@@ -81,7 +84,7 @@ struct StringBuilder(Allocator){
         return result;
     }
 
-    const(char)[]
+    str
     borrow(){
         return data[0..cursor];
     }
@@ -119,16 +122,16 @@ struct StringBuilder(Allocator){
     }
 
     void
-    write(const(char)[]str){
-        if(!str.length) return;
-        _check_remaining_size(str.length);
-        memcpy(data+cursor, str.ptr, str.length);
-        cursor += str.length;
+    write(str str_){
+        if(!str_.length) return;
+        _check_remaining_size(str_.length);
+        memcpy(data+cursor, str_.ptr, str_.length);
+        cursor += str_.length;
     }
     pragma(inline, true)
     void
-    write(ZString str){
-        write(str[]);
+    write(ZString  str_){
+        write(str_[]);
     }
 
     void
@@ -266,7 +269,7 @@ struct StringBuilder(Allocator){
     }
 
     void
-    writef(A...)(const(char)[] fmt, A args){
+    writef(A...)(str fmt, A args){
         foreach(a; args){
             assert(fmt.length);
             Split s = fmt.split('%');
@@ -297,17 +300,17 @@ struct StringBuilder(Allocator){
     }
 
     void
-    escaped(const(char)[] str){
+    escaped(str str_){
         ubyte16 controls = ubyte16(31);
         ubyte16 controls2 = ubyte16(127);
-        while(str.length >= 16){
-            ubyte16 b16 = cast(ubyte16)str[0..16];
+        while(str_.length >= 16){
+            ubyte16 b16 = cast(ubyte16)str_[0..16];
             ubyte16 cmp = cast(ubyte16)greaterOrEqualMask!(ubyte16)(controls, b16);
             ubyte16 cmp2 = cast(ubyte16)greaterOrEqualMask!(ubyte16)(b16, controls2);
             ubyte16 combo = cmp | cmp2;
             if(combo != 0){
                 for(size_t i = 0; i < 16; i++){
-                    char c = str[i];
+                    char c = str_[i];
                     switch(cast(ubyte)c){
                         case '\t'   : write("\\t"); break;
                         case '\r'   : write("\\r"); break;
@@ -328,13 +331,13 @@ struct StringBuilder(Allocator){
                 }
             }
             else {
-                write(str[0..16]);
+                write(str_[0..16]);
             }
-            str = str[16..$];
+            str_ = str_[16..$];
 
         }
-        for(size_t i = 0; i < str.length; i++){
-            char c = str[i];
+        for(size_t i = 0; i < str_.length; i++){
+            char c = str_[i];
             switch(cast(ubyte)c){
                 case '\t'   : write("\\t"); break;
                 case '\r'   : write("\\r"); break;

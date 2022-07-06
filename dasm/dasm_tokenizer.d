@@ -2,6 +2,8 @@
  * Copyright © 2021-2022, David Priver
  */
 module dasm.dasm_tokenizer;
+
+import dlib.aliases;
 import dasm.dasm_token;
 
 Token
@@ -16,7 +18,7 @@ skip_comment(ref Tokenizer tokenizer, Token tok){
 }
 
 struct Tokenizer {
-    const(char)[] text;
+    str text;
     size_t cursor;
     uint line;
     ushort column;
@@ -30,7 +32,7 @@ struct Tokenizer {
 
     static
     Tokenizer
-    from(const(char)[] text){ with(TokenType){
+    from(str text){ with(TokenType){
         Tokenizer result;
         result.text = text;
         result.line = 1;

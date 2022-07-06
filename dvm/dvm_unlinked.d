@@ -11,7 +11,7 @@ import dvm.dvm_args;
 
 struct AbstractInstruction {
     const(char)* first_char;
-    const(char)[] label;
+    str label;
     Instruction instruction;
     enum MAX_ARGS = 5;
     Argument[MAX_ARGS] args;
@@ -20,14 +20,14 @@ struct AbstractInstruction {
 
 struct AbstractFunction {
     const(char)* first_char;
-    const(char)[] name;
+    str name;
     int n_args;
     Barray!(AbstractInstruction, VAllocator) instructions;
     bool finished;
 }
 
 struct AbstractVariable {
-    const(char)[] name;
+    str name;
     Argument value;
     const(char)* first_char;
 }
@@ -38,9 +38,10 @@ struct AbstractArray {
 }
 
 struct UnlinkedModule{
+    str name;
     Barray!(AbstractFunction, VAllocator) functions;
     Barray!(AbstractVariable, VAllocator) variables;
     Barray!(AbstractArray,    VAllocator) arrays;
-    Barray!(const(char)[],    VAllocator) imports;
+    Barray!(str,    VAllocator) imports;
 }
 

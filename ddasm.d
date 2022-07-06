@@ -15,6 +15,7 @@ import dlib.allocator;
 import dlib.box: Box;
 import dlib.str_util: endswith;
 import dlib.btable;
+import dlib.aliases;
 
 
 import dvm.dvm_defs: Fuzzing, uintptr_t;
@@ -135,7 +136,7 @@ int main(int argc, char** argv){
     }
     auto va = VAllocator.from!(Mallocator);
     // fprintf(stdout, "va.vtable.name: %.*s\n", cast(int)va.vtable.name.length, va.vtable.name.ptr);
-    Box!(const(char)[], VAllocator) btext;
+    Box!(str, VAllocator) btext;
     if(sourcefile.length){
         auto fe = read_file!VAllocator(sourcefile.ptr, &va);
         if(fe.errored){
@@ -169,7 +170,7 @@ int main(int argc, char** argv){
             }
             sb.write('\n');
         }
-        btext = sb.detach.as!(const(char)[]);
+        btext = sb.detach.as!(str);
     }
     else {
         StringBuilder!VAllocator sb;
@@ -185,7 +186,7 @@ int main(int argc, char** argv){
         }
         if(!sb.cursor)
             sb.write(' ');
-        btext = sb.detach.as!(const(char)[]);
+        btext = sb.detach.as!(str);
     }
     if(highlevel || sourcefile[].endswith(".ds")){
         static import dscript.dscript;
@@ -221,24 +222,24 @@ int main(int argc, char** argv){
     io_module.functions["fflush"]  = (*BUILTINS)["Fflush"];
     io_module.functions["stdin"]   = (*BUILTINS)["GetStdIn"];
     io_module.functions["stdout"]  = (*BUILTINS)["GetStdOut"];
-    io_module.functions["getline"]  = (*BUILTINS)["GetLine"];
+    io_module.functions["getline"] = (*BUILTINS)["GetLine"];
 
     LinkedModule mem_module;
     mem_module.functions.allocator = &va;
     mem_module.functions["malloc"] = (*BUILTINS)["Malloc"];
-    mem_module.functions["free"] = (*BUILTINS)["Free"];
+    mem_module.functions["free"]   = (*BUILTINS)["Free"];
     mem_module.functions["calloc"] = (*BUILTINS)["Calloc"];
-    mem_module.functions["cpy"] = (*BUILTINS)["Memcpy"];
-    mem_module.functions["set"] = (*BUILTINS)["Memset"];
+    mem_module.functions["cpy"]    = (*BUILTINS)["Memcpy"];
+    mem_module.functions["set"]    = (*BUILTINS)["Memset"];
 
 
     LinkedModule linked_prog;
     linked_prog.source_text = btext;
     {
-        void find_loc(const char* first_char, out const(char)[] fn, out int line, out int column){
+        void find_loc(const char* first_char, out str fn, out int line, out int column){
             import dasm.dasm_tokenizer: Tokenizer;
             import dasm.dasm_token: Token, TokenType;
-            const(char)[] text = btext.data;
+            str text = btext.data;
             auto tokenizer = Tokenizer.from(text);
             Token tok = tokenizer.current_token_and_advance;
             while(tok._text != first_char){
@@ -260,7 +261,7 @@ int main(int argc, char** argv){
         ArenaAllocator!(Mallocator) arena;
         scope(exit) arena.free_all;
         auto temp_va = VAllocator.from(&arena);
-        BTable!(const(char)[], LinkedModule*, VAllocator) loaded;
+        BTable!(str, LinkedModule*, VAllocator) loaded;
         loaded.allocator = &temp_va;
         foreach(imp; prog.imports[]){
             switch(imp){
@@ -504,7 +505,7 @@ expose_builtins(){
             __gshared LineHistory!() history;
             char* buff_ = cast(char*)buff;
             char* prompt = cast(char*)prompt_;
-            const(char)[] promptbuff;
+            str promptbuff;
             if(!prompt)
                 promptbuff = "dasm> ";
             else

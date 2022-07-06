@@ -6,6 +6,7 @@ import core.stdc.stdio: printf, puts, fputs, stdout, fprintf, stderr, putchar;
 import core.stdc.string: strlen;
 import core.stdc.stdlib: strtof, strtod;
 
+import dlib.aliases;
 import dlib.parse_numbers;
 import dlib.zstring;
 enum ArgParseError: int {
@@ -65,9 +66,9 @@ struct SimpleDest {
 }
 
 struct UserType {
-    int delegate(const(char)[]) parse_proc;
-    const(char)[] type_name;
-    const(char)[] default_str;
+    int delegate(str) parse_proc;
+    str type_name;
+    str default_str;
 }
 
 struct ArgParseDestination {
@@ -80,7 +81,7 @@ struct ArgParseDestination {
 }
 
 ArgParseDestination
-ArgUser(scope int delegate(const(char)[]) parse_proc, const(char)[] type_name, const(char)[] default_str = null){
+ArgUser(scope int delegate(str) parse_proc, str type_name, str default_str = null){
     ArgParseDestination result;
     result.type = ArgType.USER_DEFINED;
     result.ut = UserType(parse_proc, type_name, default_str);
@@ -102,7 +103,7 @@ ARGDEST(T)(T* dest){
         return ArgParseDestination(ArgType.FLAG, SimpleDest(dest));
     // This is improperly constrained - it doesn't reject string.
     // You shouldn't go char* -> immutable(char)*.
-    else static if(is(T:const(char)[]))
+    else static if(is(T:str))
         return ArgParseDestination(ArgType.STRING, SimpleDest(dest));
     else static if(is(T==ZString))
         return ArgParseDestination(ArgType.STRING, SimpleDest(dest));
@@ -127,7 +128,7 @@ ARGDEST(T)(scope int delegate(T*) dg){
         result = ArgParseDestination(ArgType.FLAG);
     // This is improperly constrained - it doesn't reject string.
     // You shouldn't go char* -> immutable(char)*.
-    else static if(is(T:const(char)[]))
+    else static if(is(T:str))
         result = ArgParseDestination(ArgType.STRING);
     else static if(is(T==ZString))
         result = ArgParseDestination(ArgType.STRING);
@@ -163,9 +164,9 @@ struct NumRequired {
 }
 
 struct ArgToParse {
-    const(char)[] name;
-    const(char)[] altname1;
-    const(char)[] help;
+    str name;
+    str altname1;
+    str help;
     ArgParseDestination dest;
     NumRequired num = NumRequired(0, 1);
     ArgToParseFlags flags;
@@ -175,13 +176,13 @@ struct ArgToParse {
 }
 
 struct ArgParser {
-    const(char)[] name;
-    const(char)[] description;
+    str name;
+    str description;
     ArgToParse[] early_out;
     ArgToParse[] positional;
     ArgToParse[] keyword;
     ArgToParse* failed_arg_to_parse;
-    const(char)[] failed_arg;
+    str failed_arg;
 }
 
 struct HelpState {
@@ -200,7 +201,7 @@ struct HelpState {
 }
 
 void
-print_wrapped(const(char)[] text, int columns){
+print_wrapped(str text, int columns){
     auto hs = HelpState(columns, 0, );
     hs.remaining = hs.output_width;
     for(;text.length;){
@@ -325,7 +326,7 @@ print_argparse_help(const ArgParser* p, int columns){
 }
 
 void
-print_wrapped_help(const(char)[] help, int columns){
+print_wrapped_help(str help, int columns){
     if(!help.length){
         putchar('\n');
         return;
@@ -354,13 +355,13 @@ print_wrapped_help(const(char)[] help, int columns){
 }
 
 struct HelpTokenized {
-    const(char)[] token;
+    str token;
     bool is_newline;
-    const(char)[] rest;
+    str rest;
 }
 
 HelpTokenized
-next_tokenize_help(const(char)[] help){
+next_tokenize_help(str help){
     for(;help.length;help = help[1..$]){
         switch(help[0]){
             case ' ': case '\r': case '\t': case '\f':
@@ -372,7 +373,7 @@ next_tokenize_help(const(char)[] help){
     if(help[0] == '\n'){
         return HelpTokenized(null, true, help[1..$]);
     }
-    const(char)[] begin = help;
+    str begin = help;
     for(;;){
         if(!help.length)
             return HelpTokenized(begin, false, help);
@@ -437,13 +438,13 @@ print_arg_help(const ArgToParse* arg, int columns){
             print_wrapped_help(help, columns);
         }break;
         case ArgType.STRING:{
-            auto s = cast(const(char)[]*)arg.dest.dest.pointer;
+            auto s = cast(str*)arg.dest.dest.pointer;
             printf(" = '%.*s'", cast(int)s.length, s.ptr);
             print_wrapped_help(help, columns);
         }break;
         case ArgType.ENUM:{
             const ArgParseEnumType* enu = arg.dest.dest.enum_pointer;
-            const(char)[] enu_name = "???";
+            str enu_name = "???";
             final switch(enu.enum_size){
                 case 1:{
                     auto def = cast(ubyte*)arg.dest.dest.pointer;

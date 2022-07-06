@@ -72,7 +72,7 @@ get_register_info(uintptr_t value){
 }
 
 immutable(RegisterInfo)*
-get_register_info(const(char)[] name){
+get_register_info(str name){
     foreach(ref ri; registerinfos){
         if(ri.name == name || ri.NAME == name)
             return &ri;
