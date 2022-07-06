@@ -60,6 +60,7 @@ struct FunctionInfo {
 }
 
 struct LinkedModule {
+    const(char)[] name;
     Box!(const(char)[], VAllocator) source_text;
     Box!(uintptr_t[], VAllocator) bytecode;
     Barray!(ZString, VAllocator) strings;

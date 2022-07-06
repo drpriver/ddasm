@@ -32,6 +32,7 @@ with(ParseNumberError){
     if(!s.length) return err(UNEXPECTED_END);
     if(s[0] == '+')
         s = s[1..$];
+    if(!s.length) return err(UNEXPECTED_END);
     if(s.length > 20) return err(OVERFLOWED_VALUE);
     int bad = false;
     ulong value = 0;

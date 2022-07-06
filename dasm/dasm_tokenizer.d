@@ -39,7 +39,7 @@ struct Tokenizer {
         if(result.current_token.type == NEWLINE){
             result.line++;
             result.column=1;
-            }
+        }
         if(result.current_token.type == EOF){
             result.next_token.type = EOF;
             return result;

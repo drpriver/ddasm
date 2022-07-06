@@ -1,0 +1,24 @@
+import io
+import mem
+
+function start
+  move rarg1 "Hello world"
+  call function io.puts
+  move rarg1 "Hello\n"
+  call function io.printf1
+  move rarg1 24
+  call function mem.malloc
+  push rout1
+  move rarg1 rout1
+  move rarg2 0
+  move rarg3 24
+  call function mem.set
+  pop rarg1
+  push rarg1
+  move rarg2 0sc
+  move rarg3 23
+  call function mem.set
+  pop rarg1
+  call function io.puts
+  ret
+end

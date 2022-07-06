@@ -1,7 +1,7 @@
 /*
  * Copyright © 2021-2022, David Priver
  */
-import core.stdc.string: strlen, strerror, memcpy;
+import core.stdc.string: strlen, strerror, memcpy, memset;
 import core.stdc.stdio: fprintf, stdout, stderr, fread, stdin, FILE, fwrite, fflush, fopen, fputs, fgets;
 import core.stdc.stdlib: calloc, malloc, free, atoi;
 
@@ -14,6 +14,7 @@ import dlib.file_util: read_file, FileFlags;
 import dlib.allocator;
 import dlib.box: Box;
 import dlib.str_util: endswith;
+import dlib.btable;
 
 
 import dvm.dvm_defs: Fuzzing, uintptr_t;
@@ -206,6 +207,31 @@ int main(int argc, char** argv){
         return err;
     }
     expose_builtins;
+    LinkedModule io_module;
+    io_module.functions.allocator = &va;
+    io_module.functions["puts"]    = (*BUILTINS)["Puts"];
+    io_module.functions["printf1"] = (*BUILTINS)["Printf1"];
+    io_module.functions["printf2"] = (*BUILTINS)["Printf2"];
+    io_module.functions["printf3"] = (*BUILTINS)["Printf3"];
+    io_module.functions["printf4"] = (*BUILTINS)["Printf4"];
+    io_module.functions["fread"]   = (*BUILTINS)["Fread"];
+    io_module.functions["fwrite"]  = (*BUILTINS)["Fwrite"];
+    io_module.functions["fputs"]   = (*BUILTINS)["Fputs"];
+    io_module.functions["fgets"]   = (*BUILTINS)["Fgets"];
+    io_module.functions["fflush"]  = (*BUILTINS)["Fflush"];
+    io_module.functions["stdin"]   = (*BUILTINS)["GetStdIn"];
+    io_module.functions["stdout"]  = (*BUILTINS)["GetStdOut"];
+    io_module.functions["getline"]  = (*BUILTINS)["GetLine"];
+
+    LinkedModule mem_module;
+    mem_module.functions.allocator = &va;
+    mem_module.functions["malloc"] = (*BUILTINS)["Malloc"];
+    mem_module.functions["free"] = (*BUILTINS)["Free"];
+    mem_module.functions["calloc"] = (*BUILTINS)["Calloc"];
+    mem_module.functions["cpy"] = (*BUILTINS)["Memcpy"];
+    mem_module.functions["set"] = (*BUILTINS)["Memset"];
+
+
     LinkedModule linked_prog;
     linked_prog.source_text = btext;
     {
@@ -234,7 +260,22 @@ int main(int argc, char** argv){
         ArenaAllocator!(Mallocator) arena;
         scope(exit) arena.free_all;
         auto temp_va = VAllocator.from(&arena);
-        err = link_module(&va, &temp_va, BUILTINS, &prog, &linked_prog, &find_loc);
+        BTable!(const(char)[], LinkedModule*, VAllocator) loaded;
+        loaded.allocator = &temp_va;
+        foreach(imp; prog.imports[]){
+            switch(imp){
+                case "io":
+                    loaded["io"] = &io_module;
+                    break;
+                case "mem":
+                    loaded["mem"] = &mem_module;
+                    break;
+                default:
+                    fprintf(stderr, "Unknown module: '%.*s'\n", cast(int)imp.length, imp.ptr);
+                    return 1;
+            }
+        }
+        err = link_module(&va, &temp_va, BUILTINS, &prog, &linked_prog, &find_loc, &loaded);
     }
     if(err){
         if(!Fuzzing)fprintf(stderr, "Linking failed\n");
@@ -393,8 +434,8 @@ expose_builtins(){
     );
     register_function("Puts",
         (uintptr_t arg){
-        if(devnull) return;
-        if(!Fuzzing)fprintf(stdout, "%s\n", cast(char*)arg);
+            if(devnull) return;
+            if(!Fuzzing)fprintf(stdout, "%s\n", cast(char*)arg);
         }
     );
     version(Posix){
@@ -484,6 +525,12 @@ expose_builtins(){
     register_function("Calloc", (uintptr_t nitems, uintptr_t size){
         return cast(uintptr_t)calloc(nitems, size);
     });
+    register_function("Memset",
+            (uintptr_t dst, uintptr_t c, uintptr_t sz){
+                void* buff = cast(void*)dst;
+                memset(buff, cast(int)c, sz);
+            }
+    );
 }
 
 

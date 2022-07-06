@@ -27,6 +27,7 @@ parse_asm_string(VAllocator* allocator, const(char)[] text, UnlinkedModule* prog
     ctx.prog.functions.bdata.allocator = ctx.allocator;
     ctx.prog.variables.bdata.allocator = ctx.allocator;
     ctx.prog.arrays.bdata.allocator = ctx.allocator;
+    ctx.prog.imports.bdata.allocator = ctx.allocator;
     auto err = ctx.parse_asm();
     if(err){
         if(!Fuzzing)fprintf(stderr, "%.*s\n", cast(int)ctx.errmess.length, ctx.errmess.ptr);
@@ -107,6 +108,19 @@ struct ParseContext{
                         int err = parse_function(&func);
                         if(err) return err;
                         prog.functions.push(func);
+                    }
+                    else if(tok.text == "import"){
+                        tok = tokenizer.current_token_and_advance;
+                        if(tok.type != SPACE){
+                            err_print(tok, "import must be followed by a space: ", Q(tok.text));
+                            return PARSE_ERROR;
+                        }
+                        tok = tokenizer.current_token_and_advance;
+                        if(tok.type != IDENTIFIER){
+                            err_print(tok, "expected an import name");
+                            return PARSE_ERROR;
+                        }
+                        prog.imports.push(tok.text);
                     }
                     else if(tok.text == "var"){
                         tok = tokenizer.current_token_and_advance;
@@ -422,10 +436,33 @@ struct ParseContext{
                         err_print(tok, "Expected an identifier as a ", label, " name, got ", Q(tok.text));
                         return;
                     }
-                    result.kind = kind;
-                    // these all pun, so whatever
-                    result.function_name = tok.text;
-                    return;
+                    if(kind == FUNCTION){
+                        Token fake = tok;
+                        for(;;){
+                            if(tokenizer.current_token.type == DOT){
+                                tok = tokenizer.current_token_and_advance;
+                                fake.length += tok.length;
+                                if(tokenizer.current_token.type == IDENTIFIER){
+                                    tok = tokenizer.current_token_and_advance;
+                                    fake.length += tok.length;
+                                    continue;
+                                }
+                                else {
+                                    err_print(tok, "Expected an identifier");
+                                    return;
+                                }
+                            }
+                            break;
+                        }
+                        result.kind = kind;
+                        result.function_name = fake.text;
+                    }
+                    else {
+                        result.kind = kind;
+                        // these all pun, so whatever
+                        result.function_name = tok.text;
+                        return;
+                    }
                 }
                 switch(text){
                     case "function":

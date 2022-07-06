@@ -4,6 +4,7 @@
 import dlib.allocator: Mallocator, report_leaks;
 import dlib.box: Box;
 import dlib.stringbuilder: StringBuilder;
+import dscript.dscript;
 
 static import dscript_to_dasm;
 import core.stdc.stdio: fprintf, stdout, stderr, stdin, fread;
@@ -18,7 +19,7 @@ int main(int argc, char** argv){
 
     static import core.stdc.string;
 
-    dscript_to_dasm.powerup;
+    dscript.dscript.powerup;
     bool force_interactive = false;
     ZString sourcefile;
     with(dlib.argparse)with(ArgParseFlags) with(ArgToParseFlags){
@@ -130,7 +131,7 @@ int main(int argc, char** argv){
     Box!(char[], Mallocator) progtext;
     int err = dscript_to_dasm.compile_to_dasm(bscript.data, &progtext);
     if(err) return err;
-    dscript_to_dasm.powerdown;
+    dscript.dscript.powerdown;
     fprintf(stdout, "%.*s\n", cast(int)progtext.data.length, progtext.data.ptr);
     bscript.dealloc;
     progtext.dealloc;

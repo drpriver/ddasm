@@ -10,6 +10,7 @@ import dlib.box;
 import dlib.stringbuilder;
 import dlib.parse_numbers: parse_hex_inner;
 import dlib.btable;
+import dlib.str_util: split;
 
 import dvm.dvm_defs;
 import dvm.dvm_linked;
@@ -22,6 +23,8 @@ struct LinkContext {
     VAllocator* temp_allocator;
     FunctionTable* builtins;
     UnlinkedModule* unlinked;
+    BTable!(const(char)[], LinkedModule*, VAllocator)* modules;
+
     LinkedModule prog;
     void delegate(const char*, out const(char)[], out int, out int) find_loc;
     Box!(char[], Mallocator) errmess;
@@ -142,6 +145,35 @@ struct LinkContext {
         return result;
     }
 
+    uintptr_t
+    find_function(const(char)[] function_name, const char* first_char){
+        if(auto func = function_name in  prog.functions)
+            return cast(uintptr_t)func.func;
+        auto s = function_name.split('.');
+        if(s.tail.length){
+            if(!modules){
+                err_print(first_char, "Reference to unknown module: ", Q(s.head));
+                return 0;
+            }
+            if(auto mod = s.head in *modules){
+                if(auto func = s.tail in (*mod).functions){
+                    return cast(uintptr_t)func.func;
+                }
+                else {
+                    err_print(first_char, "Reference to function ", Q(s.tail), " not found in module ", Q(s.head));
+                    return 0;
+                }
+            }
+            else {
+                err_print(first_char, "Reference to unknown module: ", Q(s.head));
+                return 0;
+            }
+        }
+
+        err_print(first_char, "Reference to unknown function: ", Q(function_name));
+        return 0;
+    }
+
     AsmError
     link_arrays(){
         foreach(i, abstract_array; unlinked.arrays[]){with(ArgumentKind){
@@ -166,14 +198,13 @@ struct LinkContext {
                     case CMPMODE:
                         (*actual)[j] = v.cmp_mode;
                         break;
-                    case FUNCTION:
-                        if(auto func = v.function_name in  prog.functions)
-                            (*actual)[j] = cast(uintptr_t)func.func;
-                        else{
-                            err_print(v.first_char, "Reference to unknown function: ", Q(v.function_name));
+                    case FUNCTION:{
+                        auto fi = find_function(v.function_name, v.first_char);
+                        if(!fi)
                             return AsmError.LINK_ERROR;
-                        }
-                        break;
+                        else
+                            (*actual)[j] = fi;
+                        }break;
                     case ARRAY:
                         (*actual)[j] = cast(uintptr_t)prog.arrays[i].bdata.data.ptr;
                         break;
@@ -219,14 +250,13 @@ struct LinkContext {
                 case CMPMODE:
                     *dest = var.value.cmp_mode;
                     break;
-                case FUNCTION:
-                    if(auto func = var.value.function_name in  prog.functions)
-                        *dest = cast(uintptr_t)func.func;
-                    else{
-                        err_print(var.value.first_char, "Reference to unknown function: ", Q(var.value.function_name));
+                case FUNCTION:{
+                    auto fi = find_function(var.value.function_name, var.value.first_char);
+                    if(!fi)
                         return AsmError.LINK_ERROR;
-                    }
-                    break;
+                    else
+                        *dest = fi;
+                }break;
                 case ARRAY:
                     *dest = cast(uintptr_t)prog.arrays[var.value.array].bdata.data.ptr;
                     break;
@@ -299,12 +329,11 @@ struct LinkContext {
                         *(ip++) = arg.cmp_mode;
                         break;
                     case FUNCTION:{
-                        auto f = prog.functions.get(arg.function_name);
-                        if(!f){
-                            err_print(arg.first_char, "Reference to unknown function: ", Q(arg.function_name));
+                        auto fi = find_function(arg.function_name, arg.first_char);
+                        if(!fi)
                             return AsmError.LINK_ERROR;
-                        }
-                        *(ip++) = cast(uintptr_t)f.func;
+                        else
+                            *(ip++) = fi;
                     }break;
                     case LABEL:{
                         if(auto label = arg.label_name in labels){
@@ -366,7 +395,7 @@ calculate_function_size(AbstractFunction* func){
 }
 
 AsmError
-link_module(VAllocator* allocator, VAllocator* temp_allocator, FunctionTable* builtins, UnlinkedModule* unlinked, LinkedModule* prog, scope void delegate(const char*, out const(char)[], out int, out int) find_loc){
+link_module(VAllocator* allocator, VAllocator* temp_allocator, FunctionTable* builtins, UnlinkedModule* unlinked, LinkedModule* prog, scope void delegate(const char*, out const(char)[], out int, out int) find_loc, BTable!(const(char)[], LinkedModule*, VAllocator)* modules){
     LinkContext ctx;
     ctx.allocator = allocator;
     ctx.temp_allocator = temp_allocator;
@@ -382,6 +411,7 @@ link_module(VAllocator* allocator, VAllocator* temp_allocator, FunctionTable* bu
     ctx.prog.variable_table.allocator = allocator;
     ctx.prog.source_text = prog.source_text;
     ctx.find_loc = find_loc;
+    ctx.modules = modules;
     AsmError err = ctx.link();
     if(err){
         auto mess = ctx.errmess.data;

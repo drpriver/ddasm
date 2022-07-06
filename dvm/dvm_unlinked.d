@@ -41,5 +41,6 @@ struct UnlinkedModule{
     Barray!(AbstractFunction, VAllocator) functions;
     Barray!(AbstractVariable, VAllocator) variables;
     Barray!(AbstractArray,    VAllocator) arrays;
+    Barray!(const(char)[],    VAllocator) imports;
 }
 
