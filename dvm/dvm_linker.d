@@ -410,6 +410,7 @@ link_module(VAllocator* allocator, VAllocator* temp_allocator, FunctionTable* bu
     ctx.prog.variables.allocator = allocator;
     ctx.prog.variable_table.allocator = allocator;
     ctx.prog.source_text = prog.source_text;
+    ctx.prog.name = prog.name;
     ctx.find_loc = find_loc;
     ctx.modules = modules;
     AsmError err = ctx.link();

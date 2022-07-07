@@ -235,6 +235,7 @@ int main(int argc, char** argv){
 
     LinkedModule linked_prog;
     linked_prog.source_text = btext;
+    linked_prog.name = prog.name;
     {
         void find_loc(const char* first_char, out str fn, out int line, out int column){
             import dasm.dasm_tokenizer: Tokenizer;
