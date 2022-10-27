@@ -1,10 +1,7 @@
 OPT?=-O1 -g
 
-# too lazy to make this work for windows
-MKDIR=mkdir -p
-
-Bin: ; $(MKDIR) $@
-Deps: ; $(MKDIR) $@
+Bin: ; mkdir $@
+Deps: ; mkdir $@
 
 DEPFILES:=$(wildcard Deps/*.deps)
 include $(DEPFILES)

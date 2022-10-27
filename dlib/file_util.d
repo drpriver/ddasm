@@ -125,8 +125,9 @@ if(!Allocator.state_size){
 }
 
 FileResult!Allocator
-read_file(Allocator)(const char* filepath, Allocator* a, FileFlags flags = FileFlags.NONE)
-if(Allocator.state_size){
+read_file(Allocator)(const char* filepath, Allocator a, FileFlags flags = FileFlags.NONE)
+// if(Allocator.state_size)
+{
     FileResult!Allocator result;
     result.value.allocator = a;
     version(Posix){

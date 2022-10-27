@@ -23,7 +23,7 @@ struct LinkContext {
     VAllocator* temp_allocator;
     FunctionTable* builtins;
     UnlinkedModule* unlinked;
-    BTable!(str, LinkedModule*, VAllocator)* modules;
+    BTable!(str, LinkedModule*, VAllocator*)* modules;
 
     LinkedModule prog;
     void delegate(const char*, out str, out int, out int) find_loc;
@@ -105,7 +105,7 @@ struct LinkContext {
     ZString
     make_string(const char[] text){
         StringBuilder!VAllocator sb;
-        sb.allocator = allocator;
+        sb.allocator = *allocator;
         // This is slow and we should use simd to scan for
         // escape codes.
         for(size_t i = 0; i < text.length; i++){
@@ -289,7 +289,7 @@ struct LinkContext {
 
     AsmError
     link_function(AbstractFunction* afunc, Function* func){
-        BTable!(str, uintptr_t, VAllocator) labels;
+        BTable!(str, uintptr_t, VAllocator*) labels;
         labels.allocator = temp_allocator;
         scope(exit) labels.cleanup;
         // look for labels
@@ -395,7 +395,7 @@ calculate_function_size(AbstractFunction* func){
 }
 
 AsmError
-link_module(VAllocator* allocator, VAllocator* temp_allocator, FunctionTable* builtins, UnlinkedModule* unlinked, LinkedModule* prog, scope void delegate(const char*, out str, out int, out int) find_loc, BTable!(str, LinkedModule*, VAllocator)* modules){
+link_module(VAllocator* allocator, VAllocator* temp_allocator, FunctionTable* builtins, UnlinkedModule* unlinked, LinkedModule* prog, scope void delegate(const char*, out str, out int, out int) find_loc, BTable!(str, LinkedModule*, VAllocator*)* modules){
     LinkContext ctx;
     ctx.allocator = allocator;
     ctx.temp_allocator = temp_allocator;

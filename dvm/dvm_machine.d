@@ -8,7 +8,7 @@ import core.stdc.string: memcpy;
 import dlib.allocator;
 import dlib.get_input;
 import dlib.box;
-import dlib.str_util: split, stripped;
+import dlib.str_util: split, stripped, Split;
 import dlib.stringbuilder;
 
 import dvm.dvm_defs;
@@ -47,7 +47,7 @@ struct Machine {
         paused = false;
         badend = false;
         debugging = false;
-        stack.allocator = &allocator;
+        stack.allocator = allocator;
         stack.resize(stack_size);
         current_program = prog;
         registers[RegisterNames.RIP] = cast(uintptr_t)current_program.start.instructions_;
@@ -61,7 +61,7 @@ struct Machine {
         static if(flags & RunFlags.DEBUG){
             if(result == BEGIN_CONTINUE){
                 registers[RegisterNames.RIP] -= uintptr_t.sizeof;
-                result = run_interpreter!(RunFlags.NONE);
+                result = run_interpreter!((flags & RunFlags.DISASSEMBLE_EACH)?RunFlags.DISASSEMBLE_EACH:RunFlags.NONE);
             }
         }
         if(debug_history_file){
@@ -152,54 +152,42 @@ struct Machine {
     }}
 
     void
-    dump(){
+    dump(int off=0){
         foreach(i, reg; registers){
-            auto ri = get_register_info(i);
+            immutable RegisterInfo* ri = get_register_info(i);
             if(!Fuzzing)fprintf(stderr, "[%s] = %#zx\n", ri.NAME.ptr, reg);
         }
         for(size_t i = 0; i < 4; i++){
             if(!Fuzzing)fprintf(stderr, "ip[%zu] = %#zx\n", i, (cast(uintptr_t*)registers[RegisterNames.RIP])[i]);
         }
         StringBuilder!VAllocator temp;
-        temp.allocator = &allocator;
+        temp.allocator = allocator;
         scope(exit) temp.cleanup;
-        auto ip = cast(uintptr_t*)registers[RegisterNames.RIP];
+        uintptr_t* ip = cast(uintptr_t*)registers[RegisterNames.RIP];
+        ip += off;
         for(int i = 0; i < 4; i++){
             ip += disassemble_one_instruction(current_program, &temp, ip);
             temp.write("\n     ");
         }
-        auto text = temp.borrow;
+        str text = temp.borrow;
         if(!Fuzzing)fprintf(stderr, "Dis: %.*s\n", cast(int)text.length, text.ptr);
-    }
-
-    int
-    debugger(){
-        if(debugging) return 0;
-        debugging = true;
-        int result = run_interpreter!(RunFlags.DEBUG);
-        debugging = false;
-        if(result == 2){
-            registers[RegisterNames.RIP] -= uintptr_t.sizeof;
-            return 0;
-        }
-        return result;
     }
 
     void
     backtrace(){
-        auto current = current_program.addr_to_function(cast(uintptr_t*)registers[RegisterNames.RIP]);
+        FunctionInfo current = current_program.addr_to_function(cast(uintptr_t*)registers[RegisterNames.RIP]);
         if(!Fuzzing)fprintf(stderr, "[%zu] %.*s\n", call_depth, cast(int)current.name.length, current.name.ptr);
         for(ptrdiff_t i = call_depth-1; i >= 0; i--){
-            auto fi = current_program.addr_to_function(cast(uintptr_t*)call_stack[i]);
+            FunctionInfo fi = current_program.addr_to_function(cast(uintptr_t*)call_stack[i]);
             if(!Fuzzing)fprintf(stderr, "[%zu] %.*s\n", i, cast(int)fi.name.length, fi.name.ptr);
         }
     }
 
     void
     print_current_function(uintptr_t* ip){
-        auto func = current_program.addr_to_function(ip);
+        FunctionInfo func = current_program.addr_to_function(ip);
         size_t i = 0;
-        auto insts = func.func.instructions;
+        uintptr_t[] insts = func.func.instructions;
         StringBuilder!Mallocator sb;
         scope(exit) sb.cleanup;
         sb.FORMAT("function ", func.name, "\n");
@@ -211,7 +199,7 @@ struct Machine {
             i++;
         }
         sb.write("end");
-        auto text = sb.borrow;
+        str text = sb.borrow;
         if(!Fuzzing)fprintf(stderr, "\n%.*s\n", cast(int)text.length, text.ptr);
     }
     enum {
@@ -223,12 +211,14 @@ struct Machine {
 
     void
     print_context(uintptr_t* ip){
-        auto func = current_program.addr_to_function(ip);
+        FunctionInfo func = current_program.addr_to_function(ip);
+        assert(func.func);
+        assert(func.func.type == func.func.type.INTERPRETED);
         ptrdiff_t current = 0;
         ptrdiff_t i = 0;
-        auto insts = func.func.instructions;
+        uintptr_t[] insts = func.func.instructions;
         while(insts.length){
-            auto size = instruction_size(cast(Instruction)insts[0]);
+            size_t size = instruction_size(cast(Instruction)insts[0]);
             if(insts.ptr == ip)
                 current = i;
             insts = insts[size .. $];
@@ -249,21 +239,34 @@ struct Machine {
                 disassemble_one_instruction(current_program, &sb, insts.ptr);
                 sb.write('\n');
             }
-            auto size = instruction_size(cast(Instruction)insts[0]);
+            size_t size = instruction_size(cast(Instruction)insts[0]);
             insts = insts[size .. $];
             i++;
         }
         if(n_lines <= current+5){
-            }
+        }
         else
             sb.write("    ...\n");
         sb.write("end");
-        auto text = sb.borrow;
+        str text = sb.borrow;
         if(!Fuzzing)fprintf(stderr, "\n%.*s\n", cast(int)text.length, text.ptr);
     }
 
     int
     run_interpreter(RunFlags flags = RunFlags.NONE)(){ with(RegisterNames) with(Instruction){
+        int
+        debugger(){
+            if(debugging) return 0;
+            debugging = true;
+            int result = run_interpreter!(flags|RunFlags.DEBUG);
+            debugging = false;
+            if(result == 2){
+                registers[RegisterNames.RIP] -= uintptr_t.sizeof;
+                return 0;
+            }
+            return result;
+        }
+
         static if(uintptr_t.sizeof == 4)
             alias float_t = float;
         else
@@ -290,7 +293,7 @@ struct Machine {
         }
         float_t
         get_float(){
-            auto result = *cast(float_t*)registers[RIP];
+            float_t result = *cast(float_t*)registers[RIP];
             registers[RIP]+= uintptr_t.sizeof;
             return result;
         }
@@ -331,18 +334,28 @@ struct Machine {
             }
         }
 
-        static if(flags & RunFlags.DEBUG){
-            int
-            begin(Instruction inst){
+        pragma(inline, true)
+        int
+        begin(Instruction inst){
+            static if(flags & RunFlags.DISASSEMBLE_EACH){{
+                uintptr_t* ip = cast(uintptr_t*)registers[RIP];
+                ip--;
+                StringBuilder!Mallocator sb;
+                scope(exit) sb.cleanup;
+                disassemble_one_instruction(current_program, &sb, ip);
+                str text = sb.borrow;
+                if(!Fuzzing)fprintf(stderr, "%.*s\n", cast(int)text.length, text.ptr);
+            }}
+            static if(flags & RunFlags.DEBUG){{
                 print_context((cast(uintptr_t*)registers[RIP])-1);
                 foreach(i, w; watches){
                     if(!w) continue;
-                    auto ri = get_register_info(i);
+                    immutable(RegisterInfo)* ri = get_register_info(i);
                     fprintf(stderr, "%s = %#zx\n", ri.name.ptr, registers[i]);
                 }
                 char[1024] buff = void;
                 for(;;){
-                    auto len = get_input_line(&debugger_history, "> ", buff[]);
+                    ptrdiff_t len = get_input_line(&debugger_history, "> ", buff[]);
                     if(len < 0){
                         halted = true;
                         return BEGIN_BAD;
@@ -350,22 +363,22 @@ struct Machine {
                     if(!len){
                         return BEGIN_OK;
                     }
-                    auto buf = buff[0 ..len].stripped;
+                    str buf = buff[0 ..len].stripped;
                     if(!buf.length){
                         return BEGIN_OK;
                     }
-                    auto s = buf.split(' ');
-                    auto cmd = s.head;
-                    auto arg = s.tail?s.tail.stripped:null;
+                    Split s = buf.split(' ');
+                    str cmd = s.head;
+                    str arg = s.tail?s.tail.stripped:null;
                     if(arg.length){
                         switch(cmd){
                             case "w": case "watch":{
-                                auto ri = get_register_info(arg);
+                                immutable(RegisterInfo)* ri = get_register_info(arg);
                                 if(!ri) continue;
                                 watches[ri.register] = true;
                             }continue;
                             case "uw": case "unwatch":{
-                                auto ri = get_register_info(arg);
+                                immutable(RegisterInfo)* ri = get_register_info(arg);
                                 if(!ri) continue;
                                 watches[ri.register] = false;
                             }continue;
@@ -391,7 +404,7 @@ struct Machine {
                             continue;
                         case "d": case "dump":
                             debugger_history.add_line(buf);
-                            dump;
+                            dump(-1);
                             continue;
                         case "bt": case "backtrace": case "where":
                             debugger_history.add_line(buf);
@@ -420,67 +433,46 @@ struct Machine {
                             continue;
                     }
                 }
-            }
+            }}
+            return BEGIN_OK;
         }
-        else static if(flags & RunFlags.DISASSEMBLE_EACH){
-            pragma(inline, true)
-            int
-            begin(Instruction inst){
-                auto ip = cast(uintptr_t*)registers[RIP];
-                ip--;
-                StringBuilder!Mallocator sb;
-                scope(exit) sb.cleanup;
-                disassemble_one_instruction(current_program, &sb, ip);
-                auto text = sb.borrow;
-                if(!Fuzzing)fprintf(stderr, "%.*s\n", cast(int)text.length, text.ptr);
-                return BEGIN_OK;
-            }
-        }
-        else {
-            pragma(inline, true)
-            int
-            begin(Instruction inst){
-                return BEGIN_OK;
-            }
-        }
-
         for(;;){
             auto inst = *cast(Instruction*)registers[RIP];
             registers[RIP] += uintptr_t.sizeof;
             switch(inst){
                 case HALT:
-                    if(auto b = begin(HALT)) return b;
+                    if(int b = begin(HALT)) return b;
                     halted = true;
                     return 0;
                 default:
                 case ABORT:
-                    if(auto b = begin(ABORT)) return b;
+                    if(int b = begin(ABORT)) return b;
                     backtrace;
                     badend = true;
                     return 1;
                 case NOP:
-                    if(auto b = begin(NOP)) return b;
+                    if(int b = begin(NOP)) return b;
                     break;
                 case READ:{
-                    if(auto b = begin(READ)) return b;
+                    if(int b = begin(READ)) return b;
                     auto dst = get_reg();
                     auto src = cast(uintptr_t*)read_reg();
                     *dst = *src;
                 }break;
                 case READ_I:{
-                    if(auto b = begin(READ_I)) return b;
+                    if(int b = begin(READ_I)) return b;
                     auto dst = get_reg();
                     auto src = cast(uintptr_t*)get_unsigned();
                     *dst = *src;
                 }break;
                 case MOVE_R:{
-                    if(auto b = begin(MOVE_R)) return b;
+                    if(int b = begin(MOVE_R)) return b;
                     auto dst = get_reg();
                     auto src = get_reg();
                     *dst = *src;
                 }break;
                 case LOCAL_READ:{
-                    if(auto b = begin(LOCAL_READ)) return b;
+                    if(int b = begin(LOCAL_READ)) return b;
                     auto dst = get_reg();
                     auto offset = get_unsigned();
                     auto src = cast(ubyte*)registers[RBP];
@@ -488,7 +480,7 @@ struct Machine {
                     *dst = *cast(uintptr_t*)src;
                 }break;
                 case LOCAL_WRITE:{
-                    if(auto b = begin(LOCAL_WRITE)) return b;
+                    if(int b = begin(LOCAL_WRITE)) return b;
                     auto dst = cast(ubyte*)registers[RBP];
                     auto offset = get_unsigned();
                     dst += offset;
@@ -496,7 +488,7 @@ struct Machine {
                     *cast(uintptr_t*)dst = *src;
                 }break;
                 case LOCAL_WRITE_I:{
-                    if(auto b = begin(LOCAL_WRITE_I)) return b;
+                    if(int b = begin(LOCAL_WRITE_I)) return b;
                     auto dst = cast(ubyte*)registers[RBP];
                     auto offset = get_unsigned();
                     dst += offset;
@@ -504,13 +496,13 @@ struct Machine {
                     *cast(uintptr_t*)dst = src;
                 }break;
                 case MOVE_I:{
-                    if(auto b = begin(MOVE_I)) return b;
+                    if(int b = begin(MOVE_I)) return b;
                     auto dst = get_reg();
                     auto val = get_unsigned();
                     *dst = val;
                 }break;
                 case CMOVE_R:{
-                    if(auto b = begin(CMOVE_R)) return b;
+                    if(int b = begin(CMOVE_R)) return b;
                     auto cmp_mode = get_unsigned();
                     auto dst = get_reg();
                     auto src = get_reg();
@@ -521,7 +513,7 @@ struct Machine {
                         *dst = *src;
                 }break;
                 case CMOVE_I:{
-                    if(auto b = begin(CMOVE_I)) return b;
+                    if(int b = begin(CMOVE_I)) return b;
                     auto cmp_mode = get_unsigned();
                     auto dst = get_reg();
                     auto val = get_unsigned();
@@ -532,203 +524,203 @@ struct Machine {
                         *dst = val;
                 }break;
                 case WRITE_R:{
-                    if(auto b = begin(WRITE_R)) return b;
+                    if(int b = begin(WRITE_R)) return b;
                     auto dst = cast(uintptr_t*)read_reg();
                     auto val = read_reg();
                     *dst = val;
                 }break;
                 case WRITE_I:{
-                    if(auto b = begin(WRITE_I)) return b;
+                    if(int b = begin(WRITE_I)) return b;
                     auto dst = cast(uintptr_t*)read_reg();
                     auto val = get_unsigned();
                     *dst = val;
                 }break;
                 case ITOF:{
-                    if(auto b = begin(ITOF)) return b;
+                    if(int b = begin(ITOF)) return b;
                     auto dst = cast(float_t*)get_reg;
                     auto rhs = get_reg;
                     *dst = cast(typeof(*dst))*rhs;
                 }break;
                 case FTOI:{
-                    if(auto b = begin(FTOI)) return b;
+                    if(int b = begin(FTOI)) return b;
                     auto dst = get_reg;
                     auto rhs = cast(float_t*)get_reg;
                     *dst = cast(typeof(*dst))*rhs;
                 }break;
                 case NOT:{
-                    if(auto b = begin(NOT)) return b;
+                    if(int b = begin(NOT)) return b;
                     auto dst = get_reg;
                     auto rhs = get_reg;
                     *dst = !*rhs;
                 }break;
                 case NEG:{
-                    if(auto b = begin(NEG)) return b;
+                    if(int b = begin(NEG)) return b;
                     auto dst = get_reg;
                     auto rhs = get_reg;
                     *dst = -*rhs;
                 }break;
                 case BINNEG:{
-                    if(auto b = begin(BINNEG)) return b;
+                    if(int b = begin(BINNEG)) return b;
                     auto dst = get_reg;
                     auto rhs = get_reg;
                     *dst = ~*rhs;
                 }break;
                 case FADD_I:{
-                    if(auto b = begin(FADD_I)) return b;
+                    if(int b = begin(FADD_I)) return b;
                     auto dst = cast(float_t*)get_reg;
                     auto lhs = cast(float_t*)get_reg;
                     auto rhs = get_float;
                     *dst = *lhs + rhs;
                 }break;
                 case FADD_R:{
-                    if(auto b = begin(FADD_R)) return b;
+                    if(int b = begin(FADD_R)) return b;
                     auto dst = cast(float_t*)get_reg;
                     auto lhs = cast(float_t*)get_reg;
                     auto rhs = cast(float_t*)get_reg;
                     *dst = *lhs + *rhs;
                 }break;
                 case ADD_I:{
-                    if(auto b = begin(ADD_I)) return b;
+                    if(int b = begin(ADD_I)) return b;
                     auto dst = get_reg;
                     auto lhs = get_reg;
                     auto rhs = get_unsigned;
                     *dst = (*lhs) + rhs;
                 }break;
                 case ADD_R:{
-                    if(auto b = begin(ADD_R)) return b;
+                    if(int b = begin(ADD_R)) return b;
                     auto dst = get_reg;
                     auto lhs = get_reg;
                     auto rhs = get_reg;
                     *dst = (*lhs) + (*rhs);
                 }break;
                 case AND_I:{
-                    if(auto b = begin(AND_I)) return b;
+                    if(int b = begin(AND_I)) return b;
                     auto dst = get_reg;
                     auto lhs = get_reg;
                     auto rhs = get_unsigned;
                     *dst = (*lhs) & rhs;
                 }break;
                 case AND_R:{
-                    if(auto b = begin(AND_R)) return b;
+                    if(int b = begin(AND_R)) return b;
                     auto dst = get_reg;
                     auto lhs = get_reg;
                     auto rhs = get_reg;
                     *dst = (*lhs) & (*rhs);
                 }break;
                 case LOGICAL_AND_I:{
-                    if(auto b = begin(LOGICAL_AND_I)) return b;
+                    if(int b = begin(LOGICAL_AND_I)) return b;
                     auto dst = get_reg;
                     auto lhs = get_reg;
                     auto rhs = get_unsigned;
                     *dst = (*lhs) && rhs;
                 }break;
                 case LOGICAL_AND_R:{
-                    if(auto b = begin(LOGICAL_AND_R)) return b;
+                    if(int b = begin(LOGICAL_AND_R)) return b;
                     auto dst = get_reg;
                     auto lhs = get_reg;
                     auto rhs = get_reg;
                     *dst = (*lhs) && (*rhs);
                 }break;
                 case OR_I:{
-                    if(auto b = begin(OR_I)) return b;
+                    if(int b = begin(OR_I)) return b;
                     auto dst = get_reg;
                     auto lhs = get_reg;
                     auto rhs = get_unsigned;
                     *dst = (*lhs) | rhs;
                 }break;
                 case OR_R:{
-                    if(auto b = begin(OR_R)) return b;
+                    if(int b = begin(OR_R)) return b;
                     auto dst = get_reg;
                     auto lhs = get_reg;
                     auto rhs = get_reg;
                     *dst = (*lhs) | (*rhs);
                 }break;
                 case LOGICAL_OR_I:{
-                    if(auto b = begin(LOGICAL_OR_I)) return b;
+                    if(int b = begin(LOGICAL_OR_I)) return b;
                     auto dst = get_reg;
                     auto lhs = get_reg;
                     auto rhs = get_unsigned;
                     *dst = (*lhs) || rhs;
                 }break;
                 case LOGICAL_OR_R:{
-                    if(auto b = begin(LOGICAL_OR_R)) return b;
+                    if(int b = begin(LOGICAL_OR_R)) return b;
                     auto dst = get_reg;
                     auto lhs = get_reg;
                     auto rhs = get_reg;
                     *dst = (*lhs) || (*rhs);
                 }break;
                 case XOR_I:{
-                    if(auto b = begin(XOR_I)) return b;
+                    if(int b = begin(XOR_I)) return b;
                     auto dst = get_reg;
                     auto lhs = get_reg;
                     auto rhs = get_unsigned;
                     *dst = (*lhs) ^ rhs;
                 }break;
                 case XOR_R:{
-                    if(auto b = begin(XOR_R)) return b;
+                    if(int b = begin(XOR_R)) return b;
                     auto dst = get_reg;
                     auto lhs = get_reg;
                     auto rhs = get_reg;
                     *dst = (*lhs) ^ (*rhs);
                 }break;
                 case SUB_I:{
-                    if(auto b = begin(SUB_I)) return b;
+                    if(int b = begin(SUB_I)) return b;
                     auto dst = get_reg;
                     auto lhs = get_reg;
                     auto rhs = get_unsigned;
                     *dst = (*lhs) - rhs;
                 }break;
                 case SUB_R:{
-                    if(auto b = begin(SUB_R)) return b;
+                    if(int b = begin(SUB_R)) return b;
                     auto dst = get_reg;
                     auto lhs = get_reg;
                     auto rhs = get_reg;
                     *dst = (*lhs) - (*rhs);
                 }break;
                 case MUL_I:{
-                    if(auto b = begin(MUL_I)) return b;
+                    if(int b = begin(MUL_I)) return b;
                     auto dst = get_reg;
                     auto lhs = get_reg;
                     auto rhs = get_unsigned;
                     *dst = (*lhs) * rhs;
                 }break;
                 case MUL_R:{
-                    if(auto b = begin(MUL_R)) return b;
+                    if(int b = begin(MUL_R)) return b;
                     auto dst = get_reg;
                     auto lhs = get_reg;
                     auto rhs = get_reg;
                     *dst = (*lhs) * (*rhs);
                 }break;
                 case SHIFTL_I:{
-                    if(auto b = begin(SHIFTL_I)) return b;
+                    if(int b = begin(SHIFTL_I)) return b;
                     auto dst = get_reg;
                     auto lhs = get_reg;
                     auto rhs = get_unsigned;
                     *dst = (*lhs) << rhs;
                 }break;
                 case SHIFTL_R:{
-                    if(auto b = begin(SHIFTL_R)) return b;
+                    if(int b = begin(SHIFTL_R)) return b;
                     auto dst = get_reg;
                     auto lhs = get_reg;
                     auto rhs = get_reg;
                     *dst = (*lhs) << (*rhs);
                 }break;
                 case SHIFTR_I:{
-                    if(auto b = begin(SHIFTR_I)) return b;
+                    if(int b = begin(SHIFTR_I)) return b;
                     auto dst = get_reg;
                     auto lhs = get_reg;
                     auto rhs = get_unsigned;
                     *dst = (*lhs) >> rhs;
                 }break;
                 case SHIFTR_R:{
-                    if(auto b = begin(SHIFTR_R)) return b;
+                    if(int b = begin(SHIFTR_R)) return b;
                     auto dst = get_reg;
                     auto lhs = get_reg;
                     auto rhs = get_reg;
                     *dst = (*lhs) >> (*rhs);
                 }break;
                 case DIV_I:{
-                    if(auto b = begin(DIV_I)) return b;
+                    if(int b = begin(DIV_I)) return b;
                     auto dst = get_reg;
                     auto dst2 = get_reg;
                     auto lhs = get_reg;
@@ -740,7 +732,7 @@ struct Machine {
                     *dst2 = *lhs - (*dst)*rhs;
                 }break;
                 case DIV_R:{
-                    if(auto b = begin(DIV_R)) return b;
+                    if(int b = begin(DIV_R)) return b;
                     auto dst = get_reg;
                     auto dst2 = get_reg;
                     auto lhs = get_reg;
@@ -752,25 +744,25 @@ struct Machine {
                     *dst2 = *lhs - (*dst)*(*rhs);
                 }break;
                 case PUSH_I:{
-                    if(auto b = begin(PUSH_I)) return b;
+                    if(int b = begin(PUSH_I)) return b;
                     auto src = get_unsigned;
                     *cast(uintptr_t*)registers[RSP] = src;
                     registers[RSP] += uintptr_t.sizeof;
                 }break;
                 case PUSH_R:{
-                    if(auto b = begin(PUSH_R)) return b;
+                    if(int b = begin(PUSH_R)) return b;
                     auto src = read_reg;
                     *cast(uintptr_t*)registers[RSP] = src;
                     registers[RSP] += uintptr_t.sizeof;
                 }break;
                 case POP:{
-                    if(auto b = begin(POP)) return b;
+                    if(int b = begin(POP)) return b;
                     auto dst = get_reg;
                     registers[RSP] -= uintptr_t.sizeof;
                     *dst = *cast(uintptr_t*)registers[RSP];
                 }break;
                 case CALL_I:{
-                    if(auto b = begin(CALL_I)) return b;
+                    if(int b = begin(CALL_I)) return b;
                     Function* f = cast(Function*)get_unsigned;
                     int err = call_function(f);
                     if(err) {
@@ -780,7 +772,7 @@ struct Machine {
                     }
                 }break;
                 case CALL_R:{
-                    if(auto b = begin(CALL_R)) return b;
+                    if(int b = begin(CALL_R)) return b;
                     Function* f = cast(Function*)read_reg;
                     int err = call_function(f);
                     if(err) {
@@ -790,7 +782,7 @@ struct Machine {
                     }
                 }break;
                 case TAIL_CALL_I:{
-                    if(auto b = begin(TAIL_CALL_I)) return b;
+                    if(int b = begin(TAIL_CALL_I)) return b;
                     Function* f = cast(Function*)get_unsigned;
                     int err = tail_call_function(f);
                     if(err) {
@@ -807,7 +799,7 @@ struct Machine {
                     }
                 }break;
                 case TAIL_CALL_R:{
-                    if(auto b = begin(TAIL_CALL_R)) return b;
+                    if(int b = begin(TAIL_CALL_R)) return b;
                     Function* f = cast(Function*)read_reg;
                     int err = tail_call_function(f);
                     if(err) {
@@ -824,7 +816,7 @@ struct Machine {
                     }
                 }break;
                 case RET:{
-                    if(auto b = begin(RET)) return b;
+                    if(int b = begin(RET)) return b;
                     if(!call_depth){
                         halted = true;
                         return 0;
@@ -832,7 +824,7 @@ struct Machine {
                     registers[RIP] = call_stack[--call_depth];
                 }break;
                 case JUMP_ABS_I:{
-                    if(auto b = begin(JUMP_ABS_I)) return b;
+                    if(int b = begin(JUMP_ABS_I)) return b;
                     auto cmp_mode = get_unsigned;
                     auto amount = get_unsigned;
                     int should_jmp = check_cmp(cmp_mode);
@@ -845,7 +837,7 @@ struct Machine {
                     }
                 }break;
                 case JUMP_REL_I:{
-                    if(auto b = begin(JUMP_REL_I)) return b;
+                    if(int b = begin(JUMP_REL_I)) return b;
                     auto cmp_mode = get_unsigned;
                     auto amount = get_unsigned;
                     int should_jmp = check_cmp(cmp_mode);
@@ -858,7 +850,7 @@ struct Machine {
                     }
                 }break;
                 case JUMP_R:{
-                    if(auto b = begin(JUMP_R)) return b;
+                    if(int b = begin(JUMP_R)) return b;
                     auto cmp_mode = get_unsigned;
                     auto jmp_mode = get_unsigned;
                     auto amount = read_reg;
@@ -872,7 +864,7 @@ struct Machine {
                     }
                 }break;
                 case CMP_R:{
-                    if(auto b = begin(CMP_R)) return b;
+                    if(int b = begin(CMP_R)) return b;
                     registers[RFLAGS] = 0;
                     auto lhs = read_reg;
                     auto rhs = read_reg;
@@ -884,7 +876,7 @@ struct Machine {
                     }
                 }break;
                 case CMP_I:{
-                    if(auto b = begin(CMP_I)) return b;
+                    if(int b = begin(CMP_I)) return b;
                     registers[RFLAGS] = 0;
                     auto lhs = read_reg;
                     auto rhs = get_unsigned;
@@ -896,7 +888,7 @@ struct Machine {
                     }
                 }break;
                 case SCMP_R:{
-                    if(auto b = begin(SCMP_R)) return b;
+                    if(int b = begin(SCMP_R)) return b;
                     registers[RFLAGS] = 0;
                     auto lhs = cast(intptr_t)read_reg;
                     auto rhs = cast(intptr_t)read_reg;
@@ -908,7 +900,7 @@ struct Machine {
                     }
                 }break;
                 case SCMP_I:{
-                    if(auto b = begin(SCMP_I)) return b;
+                    if(int b = begin(SCMP_I)) return b;
                     registers[RFLAGS] = 0;
                     auto lhs = cast(intptr_t)read_reg;
                     auto rhs = get_signed;
@@ -920,15 +912,15 @@ struct Machine {
                     }
                 }break;
                 case DUMP:
-                    if(auto b = begin(DUMP)) return b;
+                    if(int b = begin(DUMP)) return b;
                     dump;
                     break;
                 case MSG:
-                    if(auto b = begin(MSG)) return b;
+                    if(int b = begin(MSG)) return b;
                     if(!Fuzzing)fprintf(stderr, "%s\n", cast(char*)get_unsigned);
                     break;
                 case MEMCPY_I:{
-                    if(auto b = begin(MEMCPY_I)) return b;
+                    if(int b = begin(MEMCPY_I)) return b;
                     auto dst = cast(void*)read_reg;
                     auto src = cast(void*)read_reg;
                     auto n = get_unsigned;
@@ -942,7 +934,7 @@ struct Machine {
                     }
                 }break;
                 case MEMCPY_R:{
-                    if(auto b = begin(MEMCPY_R)) return b;
+                    if(int b = begin(MEMCPY_R)) return b;
                     auto dst = cast(void*)read_reg;
                     auto src = cast(void*)read_reg;
                     auto n = read_reg;
@@ -956,26 +948,26 @@ struct Machine {
                     }
                 }break;
                 case PAUSE:
-                    if(auto b = begin(PAUSE)) return b;
+                    if(int b = begin(PAUSE)) return b;
                     paused = true;
                     return 0;
                 case DEBUG_OP:{
-                    if(auto b = begin(DEBUG_OP)) return b;
-                    int result = debugger;
+                    if(int b = begin(DEBUG_OP)) return b;
+                    int result = debugger();
                     if(paused || badend || result || halted)
                         return result;
                     }break;
                 case BACKTRACE:
-                    if(auto b = begin(BACKTRACE)) return b;
-                    backtrace;
+                    if(int b = begin(BACKTRACE)) return b;
+                    backtrace();
                     break;
                 case LEA:{
-                    if(auto b = begin(LEA)) return b;
-                        auto dst = get_reg();
-                        auto x = get_reg();
-                        auto a = get_unsigned();
-                        auto y = get_reg();
-                        auto z = get_unsigned();
+                    if(int b = begin(LEA)) return b;
+                        uintptr_t* dst = get_reg();
+                        uintptr_t* x = get_reg();
+                        uintptr_t a = get_unsigned();
+                        uintptr_t* y = get_reg();
+                        uintptr_t z = get_unsigned();
                         *dst = *x + a*(*y) + z;
                     }break;
             }

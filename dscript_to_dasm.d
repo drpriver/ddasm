@@ -26,12 +26,12 @@ compile_to_dasm(const ubyte[] source, Box!(char[], Mallocator)* progtext){
     int err = tokenizer.tokenizeTokens();
     if(err) return 1;
     tokens.bdata.resize(tokens.count);
-    auto parser = Parser!(typeof(arena))(&arena, tokens[]);
+    auto parser = Parser!(typeof(arena)*)(&arena, tokens[]);
     auto statements = make_barray!(Statement*)(&arena);
     err = parser.parse(&statements);
     if(err) return 1;
     StringBuilder!Mallocator sb;
-    scope writer = new DasmWriter!(typeof(sb), typeof(arena))(&sb, &arena);
+    scope writer = new DasmWriter!(typeof(sb), typeof(arena)*)(&sb, &arena);
     err = writer.do_it(statements[]);
     writer.cleanup;
     if(err){
@@ -92,7 +92,7 @@ struct Analysis(A) {
 class DasmAnalyzer(A): BCObject, Visitor!void, StatementVisitor!void {
     @disable this();
     Analysis!A analysis;
-    this(A* allocator){
+    this(A allocator){
         analysis.vars.bdata.allocator = allocator;
     }
 
@@ -158,7 +158,7 @@ class DasmAnalyzer(A): BCObject, Visitor!void, StatementVisitor!void {
 
 }
 class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
-    A* allocator;
+    A allocator;
     SB* sb;
     RegisterAllocator regallocator;
     StackAllocator stackallocator;
@@ -174,7 +174,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
     bool ERROR_OCCURRED = false;
 
     @disable this();
-    this(SB* s, A* a){
+    this(SB* s, A a){
         allocator = a;
         sb = s;
     }
@@ -790,7 +790,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
             error(stmt.name, "Nested function");
             return -1;
         }
-        scope analyzer = new DasmAnalyzer!(typeof(*allocator))(allocator);
+        scope analyzer = new DasmAnalyzer!(typeof(allocator))(allocator);
         analyzer.visit(stmt);
         analysis = analyzer.analysis;
         funcdepth++;

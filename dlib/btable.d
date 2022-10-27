@@ -131,7 +131,7 @@ struct BHashlessFlatTable(K, V, Allocator){
     else {
         /// Make a new instance of the given size.
         typeof(this)
-        make(Allocator*a, size_t n_items){
+        make(Allocator a, size_t n_items){
             typeof(this) result;
             result.bdata.allocator = a;
             result.bdata.resize(alloc_size(n_items));
@@ -283,7 +283,7 @@ struct BHashTable(K, V, Allocator){
     static if(Allocator.state_size){
         static
         typeof(this)
-        make(Allocator*allocator, size_t length){
+        make(Allocator allocator, size_t length){
             typeof(this) result;
             result.bdata.allocator = allocator;
             result.setup(length);
@@ -665,10 +665,10 @@ struct BTable(K, V, Allocator, size_t small_size=64){
     static assert(this.sizeof == hashed.sizeof);
     enum SMALL_SIZE = small_size;
     static if(Allocator.state_size){
-        void allocator(Allocator* a){
+        void allocator(Allocator a){
             common.bdata.allocator = a;
         }
-        Allocator* allocator(){
+        Allocator allocator(){
             return common.bdata.allocator;
         }
     }

@@ -10,7 +10,7 @@ import dlib.argparse;
 import dlib.zstring: ZString;
 import dlib.get_input: get_input_line, LineHistory;
 import dlib.term_util: get_cols, stdin_is_interactive;
-import dlib.file_util: read_file, FileFlags;
+import dlib.file_util: read_file, FileFlags, FileResult;
 import dlib.allocator;
 import dlib.box: Box;
 import dlib.str_util: endswith;
@@ -27,7 +27,7 @@ import dvm.dvm_linker: link_module;
 import dasm.dasm_parser: parse_asm_string;
 
 
-__gshared devnull = false;
+__gshared bool devnull = false;
 
 static if(Fuzzing){
     __gshared RecordingAllocator!Mallocator recorder;
@@ -37,7 +37,7 @@ static if(Fuzzing){
         const char[] data = d[0 .. Size];
 
         UnlinkedModule prog;
-        auto va = VAllocator.from!(GlobalAllocator!recorder);
+        VAllocator va = VAllocator.from!(GlobalAllocator!recorder);
         int err = parse_asm_string(&va, data, &prog);
         va.free_all;
         return 0;
@@ -130,27 +130,26 @@ int main(int argc, char** argv){
     auto error = parse_args(&parser, argc?argv[1..argc]:null, NONE);
     if(error) {
         print_argparse_error(&parser, error);
-        if(!Fuzzing)fprintf(stderr, "Use --help to see usage.\n");
+        fprintf(stderr, "Use --help to see usage.\n");
         return error;
     }
     }
-    auto va = VAllocator.from!(Mallocator);
-    // fprintf(stdout, "va.vtable.name: %.*s\n", cast(int)va.vtable.name.length, va.vtable.name.ptr);
-    Box!(str, VAllocator) btext;
+    VAllocator va = VAllocator.from!(Mallocator);
+    Box!(str, VAllocator*) btext;
     if(sourcefile.length){
-        auto fe = read_file!VAllocator(sourcefile.ptr, &va);
+        FileResult!(VAllocator*) fe = read_file(sourcefile.ptr, &va);
         if(fe.errored){
             version(Posix)
-                if(!Fuzzing)fprintf(stderr, "Unable to read from '%s': %s\n", sourcefile.ptr, strerror(fe.errored));
+                fprintf(stderr, "Unable to read from '%s': %s\n", sourcefile.ptr, strerror(fe.errored));
             // TODO: get error message from windows
             version(Windows)
-                if(!Fuzzing)fprintf(stderr, "Unable to read from '%s'\n", sourcefile.ptr);
+                fprintf(stderr, "Unable to read from '%s'\n", sourcefile.ptr);
             return fe.errored;
         }
-        btext = cast(typeof(btext))fe.value;
+        btext = fe.value.as!str;
     }
     else if(!no_interactive && (force_interactive || stdin_is_interactive())){
-        StringBuilder!VAllocator sb;
+        StringBuilder!(VAllocator*) sb;
         sb.allocator = &va;
         LineHistory!() history;
         const char* HISTORYFILE = "ddasm.history";
@@ -161,7 +160,7 @@ int main(int argc, char** argv){
         }
         char[4096] buff = void;
         for(;;){
-            auto len = get_input_line(&history, "> ", buff[]);
+            ptrdiff_t len = get_input_line(&history, "> ", buff[]);
             if(len < 0) break;
             if(len == 1 && buff[0] == 'q') break;
             if(len){
@@ -173,13 +172,13 @@ int main(int argc, char** argv){
         btext = sb.detach.as!(str);
     }
     else {
-        StringBuilder!VAllocator sb;
+        StringBuilder!(VAllocator*) sb;
         sb.allocator = &va;
         for(;;){
             enum N = 4096;
             sb.ensure_additional(N);
             char* buff= sb.data + sb.cursor;
-            auto numread = fread(buff, 1, N, stdin);
+            size_t numread = fread(buff, 1, N, stdin);
             sb.cursor += numread;
             if(numread != N)
                 break;
@@ -193,9 +192,8 @@ int main(int argc, char** argv){
         static import dscript_to_dasm;
         dscript.dscript.powerup;
         Box!(char[], Mallocator) dasmtext;
-        auto data = btext.data;
-        auto d = (cast(const(ubyte)*)data.ptr)[0 .. data.length];
-        int err = dscript_to_dasm.compile_to_dasm(d, &dasmtext);
+        ubyte[] data = btext.as!(ubyte[]).data;
+        int err = dscript_to_dasm.compile_to_dasm(data, &dasmtext);
         if(err) return err;
         btext.dealloc();
         btext = btext.from(btext.allocator, dasmtext.data);
@@ -204,34 +202,43 @@ int main(int argc, char** argv){
     UnlinkedModule prog;
     int err = parse_asm_string(&va, btext.data, &prog);
     if(err){
-        if(!Fuzzing)fprintf(stderr, "Parsing failed\n");
+        fprintf(stderr, "Parsing failed\n");
         return err;
     }
     expose_builtins;
     LinkedModule io_module;
     io_module.functions.allocator = &va;
-    io_module.functions["puts"]    = (*BUILTINS)["Puts"];
-    io_module.functions["printf1"] = (*BUILTINS)["Printf1"];
-    io_module.functions["printf2"] = (*BUILTINS)["Printf2"];
-    io_module.functions["printf3"] = (*BUILTINS)["Printf3"];
-    io_module.functions["printf4"] = (*BUILTINS)["Printf4"];
-    io_module.functions["fread"]   = (*BUILTINS)["Fread"];
-    io_module.functions["fwrite"]  = (*BUILTINS)["Fwrite"];
-    io_module.functions["fputs"]   = (*BUILTINS)["Fputs"];
-    io_module.functions["fgets"]   = (*BUILTINS)["Fgets"];
-    io_module.functions["fflush"]  = (*BUILTINS)["Fflush"];
-    io_module.functions["stdin"]   = (*BUILTINS)["GetStdIn"];
-    io_module.functions["stdout"]  = (*BUILTINS)["GetStdOut"];
-    io_module.functions["getline"] = (*BUILTINS)["GetLine"];
+    {
+        void reg(str key, str f){
+            io_module.functions[key] = (*BUILTINS)[f];
+        }
+        reg("puts", "Puts");
+        reg("printf1", "Printf1");
+        reg("printf2", "Printf2");
+        reg("printf3", "Printf3");
+        reg("printf4", "Printf4");
+        reg("fread", "Fread");
+        reg("fwrite", "Fwrite");
+        reg("fputs", "Fputs");
+        reg("fgets", "Fgets");
+        reg("fflush", "Fflush");
+        reg("stdin", "GetStdIn");
+        reg("stdout", "GetStdOut");
+        reg("getline", "GetLine");
+    }
 
     LinkedModule mem_module;
     mem_module.functions.allocator = &va;
-    mem_module.functions["malloc"] = (*BUILTINS)["Malloc"];
-    mem_module.functions["free"]   = (*BUILTINS)["Free"];
-    mem_module.functions["calloc"] = (*BUILTINS)["Calloc"];
-    mem_module.functions["cpy"]    = (*BUILTINS)["Memcpy"];
-    mem_module.functions["set"]    = (*BUILTINS)["Memset"];
-
+    {
+        void reg(str key, str f){
+            mem_module.functions[key] = (*BUILTINS)[f];
+        }
+        reg("malloc", "Malloc");
+        reg("free",   "Free");
+        reg("calloc", "Calloc");
+        reg("cpy",    "Memcpy");
+        reg("set",    "Memset");
+    }
 
     LinkedModule linked_prog;
     linked_prog.source_text = btext;
@@ -241,13 +248,13 @@ int main(int argc, char** argv){
             import dasm.dasm_tokenizer: Tokenizer;
             import dasm.dasm_token: Token, TokenType;
             str text = btext.data;
-            auto tokenizer = Tokenizer.from(text);
+            Tokenizer tokenizer = Tokenizer.from(text);
             Token tok = tokenizer.current_token_and_advance;
             while(tok._text != first_char){
                 tok = tokenizer.current_token_and_advance;
                 if(tok.type == TokenType.EOF){
                     if(!Fuzzing)fprintf(stderr, "Unable to find: %p: %s\n", first_char, first_char);
-                    fn = "unknown"; 
+                    fn = "unknown";
                     line = -1;
                     column = -1;
                     return;
@@ -261,8 +268,8 @@ int main(int argc, char** argv){
         }
         ArenaAllocator!(Mallocator) arena;
         scope(exit) arena.free_all;
-        auto temp_va = VAllocator.from(&arena);
-        BTable!(str, LinkedModule*, VAllocator) loaded;
+        VAllocator temp_va = VAllocator.from(&arena);
+        BTable!(str, LinkedModule*, VAllocator*) loaded;
         loaded.allocator = &temp_va;
         foreach(imp; prog.imports[]){
             switch(imp){
@@ -280,25 +287,27 @@ int main(int argc, char** argv){
         err = link_module(&va, &temp_va, BUILTINS, &prog, &linked_prog, &find_loc, &loaded);
     }
     if(err){
-        if(!Fuzzing)fprintf(stderr, "Linking failed\n");
+        fprintf(stderr, "Linking failed\n");
         return err;
     }
     if(!linked_prog.start){
-        if(!Fuzzing)fprintf(stderr, "Program needs a 'start' function as an entry point\n");
+        fprintf(stderr, "Program needs a 'start' function as an entry point\n");
         return 1;
     }
     Machine machine;
-    auto recorder = RecordingAllocator!(Mallocator)();
+    RecordingAllocator!Mallocator recorder;
     machine.allocator = VAllocator.from(&recorder);
-    if(debugger){
+    if(debugger && disassemble)
+        err = machine.run!(RunFlags.DEBUG|RunFlags.DISASSEMBLE_EACH)(&linked_prog, 1024*1024);
+    else if(debugger)
         err = machine.run!(RunFlags.DEBUG)(&linked_prog, 1024*1024);
-    }
-    else if(!disassemble)
-        err = machine.run!(RunFlags.NONE)(&linked_prog, 1024*1024);
-    else
+    else if(disassemble)
         err = machine.run!(RunFlags.DISASSEMBLE_EACH)(&linked_prog, 1024*1024);
+    else
+        err = machine.run!(RunFlags.NONE)(&linked_prog, 1024*1024);
+
     if(err){
-        if(!Fuzzing)fprintf(stderr, "Running failed\n");
+        fprintf(stderr, "Running failed\n");
         return err;
     }
     return 0;
@@ -398,7 +407,7 @@ register_function(F)(string name, F fun){
 
 FunctionTable*
 BUILTINS(){
-    __gshared initialized = false;
+    __gshared bool initialized = false;
     __gshared FunctionTable table;
     __gshared VAllocator va = VAllocator.from!(Mallocator);
     if(!initialized){

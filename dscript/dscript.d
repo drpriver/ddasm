@@ -547,7 +547,7 @@ struct ReturnStatement {
     Token keyword;
     Expr* value;
     static
-    Statement* make(A)(A* allocator, Token k, Expr* v){
+    Statement* make(A)(A allocator, Token k, Expr* v){
         auto data = allocator.alloc(typeof(this).sizeof);
         auto p = cast(typeof(this)*)data.ptr;
         p.stmt.type = StatementType.RETURN;
@@ -566,7 +566,7 @@ struct FuncStatement {
     Statement*[] body;
     static
     Statement*
-    make(A)(A* allocator, Token n, Token[] params, Statement*[] s){
+    make(A)(A allocator, Token n, Token[] params, Statement*[] s){
         auto data = allocator.alloc(typeof(this).sizeof);
         auto p = cast(typeof(this)*)data.ptr;
         p.stmt.type = StatementType.FUNCTION;
@@ -584,7 +584,7 @@ struct WhileStatement {
 
     static
     Statement*
-    make(A)(A* allocator, Expr* c, Statement* s){
+    make(A)(A allocator, Expr* c, Statement* s){
         auto data = allocator.alloc(typeof(this).sizeof);
         auto p = cast(typeof(this)*)data.ptr;
         p.stmt.type = StatementType.WHILE;
@@ -602,7 +602,7 @@ struct IfStmt {
 
     static
     Statement*
-    make(A)(A* allocator, Expr* c, Statement* t, Statement* e){
+    make(A)(A allocator, Expr* c, Statement* t, Statement* e){
         auto data = allocator.alloc(typeof(this).sizeof);
         auto p = cast(typeof(this)*)data.ptr;
         p.stmt.type = StatementType.IF;
@@ -620,7 +620,7 @@ struct Block {
 
     static
     Statement*
-    make(A)(A* allocator, Statement*[] s){
+    make(A)(A allocator, Statement*[] s){
         auto data = allocator.alloc(typeof(this).sizeof);
         auto p = cast(typeof(this)*)data.ptr;
         p.stmt.type = StatementType.BLOCK;
@@ -635,7 +635,7 @@ struct ExpressionStmt {
 
     static
     Statement*
-    make(A)(A* allocator, Expr* e){
+    make(A)(A allocator, Expr* e){
         auto data = allocator.alloc(typeof(this).sizeof);
         auto p = cast(typeof(this)*)data.ptr;
         p.stmt.type = StatementType.EXPRESSION;
@@ -651,7 +651,7 @@ struct LetStmt {
 
     static
     Statement*
-    make(A)(A* allocator, Token t, Expr* i){
+    make(A)(A allocator, Token t, Expr* i){
         auto data = allocator.alloc(typeof(this).sizeof);
         auto p = cast(typeof(this)*)data.ptr;
         p.stmt.type = StatementType.LET;
@@ -667,7 +667,7 @@ struct GotoStatement {
 
     static
     Statement*
-    make(A)(A* allocator, Token t){
+    make(A)(A allocator, Token t){
         auto data = allocator.alloc(typeof(this).sizeof);
         auto p = cast(typeof(this)*)data.ptr;
         p.stmt.type = StatementType.GOTO;
@@ -681,7 +681,7 @@ struct LabelStatement {
 
     static
     Statement*
-    make(A)(A* allocator, Token t){
+    make(A)(A allocator, Token t){
         auto data = allocator.alloc(typeof(this).sizeof);
         auto p = cast(typeof(this)*)data.ptr;
         p.stmt.type = StatementType.LABEL;
@@ -693,7 +693,7 @@ struct LabelStatement {
 // Parser
 
 struct Parser(A) {
-    A* allocator;
+    A allocator;
     Token[] tokens;
     int current = 0;
     int funcdepth = 0;
@@ -709,7 +709,8 @@ struct Parser(A) {
             fprintf(stderr, "[line %d]: Parse Error at '%.*s': %.*s\n", line, cast(int)token.lexeme.length, token.lexeme.ptr, cast(int)message.length, message.ptr);
     }
 
-    int parse(R)(R* result){
+    int
+    parse(R)(R* result){
         while(!isAtEnd){
             auto s = declaration();
             if(ERROR_OCCURRED) return 1;
@@ -718,13 +719,15 @@ struct Parser(A) {
         return 0;
     }
 
-    Statement* declaration(){
+    Statement*
+    declaration(){
         if(match(TokenType.FUN)) return function_!"function"();
         if(match(TokenType.LET)) return varDeclaration();
         return statement();
     }
 
-    Statement* function_(string kind)(){with(TokenType){
+    Statement*
+    function_(string kind)(){with(TokenType){
         funcdepth++;
         scope(exit) funcdepth--;
         Token name = consume(IDENTIFIER, "Expect " ~ kind ~ " name");
@@ -747,12 +750,13 @@ struct Parser(A) {
         consume(LEFT_BRACE, "Expect {");
         if(ERROR_OCCURRED) return null;
         auto bod = make_barray!(Statement*)(allocator);
-        int err = parse_statement_list(bod);
+        int err = parse_statement_list(&bod);
         if(err) return null;
         return FuncStatement.make(allocator, name, params[], bod[]);
     }}
 
-    Statement* varDeclaration(){
+    Statement*
+    varDeclaration(){
         Token name = consume(TokenType.IDENTIFIER, "Expect variable name");
         if(ERROR_OCCURRED) return null;
         Expr* initializer = &NilExpr_.exp;
@@ -764,7 +768,8 @@ struct Parser(A) {
         return LetStmt.make(allocator, name, initializer);
 
     }
-    Statement* statement(){
+    Statement*
+    statement(){
         if(match(TokenType.RETURN)) return returnStatement();
         if(match(TokenType.FOR)) return forStatement();
         if(match(TokenType.IF)) return ifStatement();
@@ -775,20 +780,23 @@ struct Parser(A) {
         return expressionStatement();
     }
 
-    Statement* label(){
+    Statement*
+    label(){
         Token target = consume(TokenType.IDENTIFIER, "Expect label name");
         if(ERROR_OCCURRED) return null;
         consume(TokenType.SEMICOLON, "Expect ';' after label decl");
         return LabelStatement.make(allocator, target);
     }
-    Statement* goto_(){
+    Statement*
+    goto_(){
         Token target = consume(TokenType.IDENTIFIER, "Expect goto target");
         if(ERROR_OCCURRED) return null;
         consume(TokenType.SEMICOLON, "Expect ';' after goto target");
         return GotoStatement.make(allocator, target);
     }
 
-    Statement* returnStatement(){
+    Statement*
+    returnStatement(){
         if(!funcdepth) {
             error(previous, "Can't return at global scope");
             return null;
@@ -804,7 +812,8 @@ struct Parser(A) {
         return ReturnStatement.make(allocator, keyword, value);
     }
 
-    Statement* forStatement(){
+    Statement*
+    forStatement(){
         consume(TokenType.LEFT_PAREN, "Expect '(' after 'for'.");
         Statement* initializer;
         if(match(TokenType.SEMICOLON))
@@ -850,7 +859,8 @@ struct Parser(A) {
 
     }
 
-    Statement* whileStatement(){
+    Statement*
+    whileStatement(){
         consume(TokenType.LEFT_PAREN, "Expect '(' after 'while'.");
         if(ERROR_OCCURRED) return null;
         auto condition = expression();
@@ -862,7 +872,8 @@ struct Parser(A) {
         return WhileStatement.make(allocator, condition, stmt);
     }
 
-    Statement* ifStatement(){
+    Statement*
+    ifStatement(){
         consume(TokenType.LEFT_PAREN, "Expect '(' after 'if'.");
         if(ERROR_OCCURRED) return null;
         auto condition = expression();
@@ -879,32 +890,36 @@ struct Parser(A) {
         return IfStmt.make(allocator, condition, then, else_);
     }
 
-    int parse_statement_list(ref Barray!(Statement*, typeof(*allocator)) stmts){
+    int
+    parse_statement_list(Barray!(Statement*, A)* stmts){
         while(!check(TokenType.RIGHT_BRACE) && !isAtEnd){
             auto d = declaration();
             if(d is null) return 1;
-            stmts ~= d;
+            *stmts ~= d;
         }
         consume(TokenType.RIGHT_BRACE, "Expect '}' after block");
         if(ERROR_OCCURRED) return 1;
         return 0;
     }
 
-    Statement* block(){
+    Statement*
+    block(){
         auto stmts = make_barray!(Statement*)(allocator);
-        int err = parse_statement_list(stmts);
+        int err = parse_statement_list(&stmts);
         if(err) return null;
         return Block.make(allocator, stmts[]);
     }
 
 
-    Statement* expressionStatement(){
+    Statement*
+    expressionStatement(){
         auto value = expression();
         consume(TokenType.SEMICOLON, "Expected ';' after value");
         return ExpressionStmt.make(allocator, value);
     }
 
-    Expr* comma(){
+    Expr*
+    comma(){
         Expr* expr = equality();
         while(match(TokenType.COMMA)){
             Token operator = previous;
@@ -914,13 +929,15 @@ struct Parser(A) {
         return expr;
     }
 
-    Expr* expression(){
+    Expr*
+    expression(){
         return assignment();
         // return comma();
         // return equality();
     }
 
-    Expr* or(){
+    Expr*
+    or(){
         Expr* expr = and();
         if(expr is null) return null;
         while(match(TokenType.OR)){
@@ -931,7 +948,8 @@ struct Parser(A) {
         }
         return expr;
     }
-    Expr* and(){
+    Expr*
+    and(){
         Expr* expr = equality();
         if(expr is null) return null;
         while(match(TokenType.AND)){
@@ -942,7 +960,8 @@ struct Parser(A) {
         }
         return expr;
     }
-    Expr* assignment(){
+    Expr*
+    assignment(){
         Expr* expr = or();
         if(expr is null) return null;
         if(match(TokenType.EQUAL)){
@@ -958,7 +977,8 @@ struct Parser(A) {
         }
         return expr;
     }
-    Expr* equality(){with(TokenType){
+    Expr*
+    equality(){with(TokenType){
         Expr* expr = comparison();
 
         while(match(BANG_EQUAL, EQUAL_EQUAL)){
@@ -969,7 +989,8 @@ struct Parser(A) {
         return expr;
     }}
 
-    Expr* comparison(){with(TokenType){
+    Expr*
+    comparison(){with(TokenType){
         Expr* expr = term();
         while(match(GREATER, GREATER_EQUAL, LESS, LESS_EQUAL)){
             Token operator = previous;
@@ -978,7 +999,8 @@ struct Parser(A) {
         }
         return expr;
     }}
-    Expr* term(){with(TokenType){
+    Expr*
+    term(){with(TokenType){
         Expr* expr = factor();
         while(match(MINUS, PLUS)){
             Token operator = previous;
@@ -987,7 +1009,8 @@ struct Parser(A) {
         }
         return expr;
     }}
-    Expr* factor(){with(TokenType){
+    Expr*
+    factor(){with(TokenType){
         Expr* expr = unary();
         while(match(STAR, SLASH, MOD)){
             Token operator = previous;
@@ -997,7 +1020,8 @@ struct Parser(A) {
         return expr;
     }}
 
-    Expr* unary(){with(TokenType){
+    Expr*
+    unary(){with(TokenType){
         if(match(BANG, MINUS)){
             Token operator = previous();
             Expr* right = unary();
@@ -1006,7 +1030,8 @@ struct Parser(A) {
         return call();
     }}
 
-    Expr* call(){
+    Expr*
+    call(){
         Expr* expr = primary;
         if(expr is null) return null;
         for(;;){
@@ -1021,7 +1046,8 @@ struct Parser(A) {
         return expr;
     }
 
-    Expr* finishCall(Expr* callee){
+    Expr*
+    finishCall(Expr* callee){
         auto args = make_barray!(Expr*)(allocator);
         if(!check(TokenType.RIGHT_PAREN)){
             do {
@@ -1040,7 +1066,8 @@ struct Parser(A) {
         return Call.make(allocator, callee, paren, args[]);
     }
 
-    Expr* primary(){with(TokenType){
+    Expr*
+    primary(){with(TokenType){
         if(match(FALSE, TRUE, NIL, NUMBER, STRING, HEX, PHEX, SNUM, BNUM)) return Literal.make(allocator, previous);
         if(match(IDENTIFIER)){
             return VarExpr.make(allocator, previous);
@@ -1054,13 +1081,15 @@ struct Parser(A) {
         return null;
     }}
 
-    Token consume(TokenType type, str message){
+    Token
+    consume(TokenType type, str message){
         if(check(type)) return advance();
         error(peek(), message);
         return advance();
     }
 
-    bool match(TokenType[] types...){
+    bool
+    match(TokenType[] types...){
         foreach(type; types){
             if(check(type)){
                 advance();
@@ -1069,24 +1098,29 @@ struct Parser(A) {
         }
         return false;
     }
-    bool check(TokenType type){
+    bool
+    check(TokenType type){
         if(isAtEnd) return false;
         return peek.type == type;
     }
 
-    Token advance(){
+    Token
+    advance(){
         if(!isAtEnd) current++;
         return previous;
     }
 
-    bool isAtEnd(){
+    bool
+    isAtEnd(){
         return peek.type == TokenType.EOF;
     }
 
-    Token peek(){
+    Token
+    peek(){
         return tokens[current];
     }
-    Token previous(){
+    Token
+    previous(){
         return tokens[current-1];
     }
 }

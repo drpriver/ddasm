@@ -19,7 +19,7 @@ struct BmpHeader {
     uint   biClrImportant;
 }
 static assert(BmpHeader.sizeof==52);
-size_t 
+size_t
 PAD(size_t a){
     return (a + ( (4 - (a % 4) ) % 4) );
 }
@@ -30,12 +30,12 @@ struct BmpPixel {
     ubyte red;
 };
 
-BmpPixel 
+BmpPixel
 rgb(ubyte r, ubyte g, ubyte b){
     return BmpPixel(b, g, r);
 }
 
-uint 
+uint
 abs(int x){
     return x < 0? -x : x;
 }
@@ -46,7 +46,7 @@ struct BmpImg {
     inout(BmpPixel[]) pixels() return inout{
         return pixels_.ptr[0 .. header.biWidth * abs(header.biHeight)];
     }
-    ref BmpPixel 
+    ref BmpPixel
     opIndex(ulong x, ulong y){
         uint h = abs(header.biHeight);
         uint w = header.biWidth;

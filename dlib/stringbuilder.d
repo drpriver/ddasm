@@ -23,8 +23,8 @@ static __gshared immutable hextable = {
 }();
 struct StringBuilder(Allocator){
     static if(Allocator.state_size){
-        Allocator* allocator;
-        this(Allocator* allocator){
+        Allocator allocator;
+        this(Allocator allocator){
             allocator = allocator;
             cursor = 0;
             capacity = 0;
@@ -40,7 +40,7 @@ struct StringBuilder(Allocator){
 
     void
     cleanup(){
-        static if(allocator.state_size) assert(allocator);
+        // static if(allocator.state_size) assert(allocator);
         allocator.free(data, capacity);
         data = null;
         cursor = 0;
@@ -364,7 +364,7 @@ struct StringBuilder(Allocator){
     static if(Allocator.state_size){
         static
         Box!(char[], Allocator)
-        mwrite(R...)(Allocator* a, R args){
+        mwrite(R...)(Allocator a, R args){
             StringBuilder sb;
             sb.allocator = a;
             foreach(a; args)
@@ -373,7 +373,7 @@ struct StringBuilder(Allocator){
         }
         static
         Box!(char[], Allocator)
-        mwritef(R...)(Allocator* a, R args){
+        mwritef(R...)(Allocator a, R args){
             StringBuilder sb;
             sb.allocator = a;
             sb.writef(args);
@@ -405,7 +405,7 @@ mwritef(Allocator, R...)(R args)if(!Allocator.state_size){
     return StringBuilder!(Allocator).mwritef(args);
 }
 Box!(char[], Allocator)
-mwritef(Allocator, R...)(Allocator* a, R args)if(Allocator.state_size){
+mwritef(Allocator, R...)(Allocator a, R args)if(Allocator.state_size){
     return StringBuilder!(Allocator).mwritef(a, args);
 }
 

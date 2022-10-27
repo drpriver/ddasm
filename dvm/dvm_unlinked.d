@@ -22,7 +22,7 @@ struct AbstractFunction {
     const(char)* first_char;
     str name;
     int n_args;
-    Barray!(AbstractInstruction, VAllocator) instructions;
+    Barray!(AbstractInstruction, VAllocator*) instructions;
     bool finished;
 }
 
@@ -34,14 +34,14 @@ struct AbstractVariable {
 
 struct AbstractArray {
     uintptr_t id;
-    Barray!(Argument, VAllocator) array;
+    Barray!(Argument, VAllocator*) array;
 }
 
 struct UnlinkedModule{
     str name;
-    Barray!(AbstractFunction, VAllocator) functions;
-    Barray!(AbstractVariable, VAllocator) variables;
-    Barray!(AbstractArray,    VAllocator) arrays;
-    Barray!(str,    VAllocator) imports;
+    Barray!(AbstractFunction, VAllocator*) functions;
+    Barray!(AbstractVariable, VAllocator*) variables;
+    Barray!(AbstractArray,    VAllocator*) arrays;
+    Barray!(str,    VAllocator*) imports;
 }
 

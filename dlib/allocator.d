@@ -111,7 +111,7 @@ struct LinkAllocation {
 //
 struct LinkAllocator(Allocator){
     static if(Allocator.state_size){
-        Allocator* allocator;
+        Allocator allocator;
         size_t
         good_size(size_t size){
             return allocator.good_size(size+LinkAllocation.sizeof)-LinkAllocation.sizeof;
@@ -433,7 +433,7 @@ round_size_up(size_t size){
 
 struct ArenaAllocator(BaseAllocator){
     static if(BaseAllocator.state_size){
-        BaseAllocator* base_allocator;
+        BaseAllocator base_allocator;
     }
     else {
         alias base_allocator = BaseAllocator;
@@ -570,120 +570,6 @@ struct ArenaAllocator(BaseAllocator){
     }
 }
 
-
-enum AllocatorType {
-    UNSET = 0,
-    MALLOCATOR = 1,
-    ARENA_MALLOCATOR = 2,
-    RECORDED_MALLOCATOR = 3,
-}
-struct IAllocator {
-    AllocatorType type;
-    void* data;
-    enum state_size = IAllocator.sizeof;
-    alias ArenaT = ArenaAllocator!Mallocator;
-    alias RecordedT = RecordingAllocator!Mallocator;
-    this(Allocator)(Allocator* a){
-    with(AllocatorType){
-        static if(is(Allocator == ArenaT)){
-            type = ARENA_MALLOCATOR;
-            data = a;
-        }
-        else static if(is(Allocator == RecordedT)){
-            type = RECORDED_MALLOCATOR;
-            data = a;
-        }
-        else static if(is(Allocator == Mallocator)){
-            type = MALLOCATOR;
-            data = null;
-        }
-        else
-            static assert(0, "Unhandled type for IAllocator");
-    }
-    }
-    size_t
-    good_size(size_t size){
-        final switch(type) with(AllocatorType){
-            case UNSET:
-                assert(0);
-            case MALLOCATOR:
-                return Mallocator.good_size(size);
-            case ARENA_MALLOCATOR:
-                return ArenaT.good_size(size);
-            case RECORDED_MALLOCATOR:
-                return RecordedT.good_size(size);
-        }
-    }
-
-    void[]
-    alloc(size_t size){
-        final switch(type) with(AllocatorType){
-            case UNSET:
-                assert(0);
-            case MALLOCATOR:
-                return Mallocator.alloc(size);
-            case ARENA_MALLOCATOR:
-                return (cast(ArenaT*)data).alloc(size);
-            case RECORDED_MALLOCATOR:
-                return (cast(RecordedT*)data).alloc(size);
-        }
-    }
-    void[]
-    zalloc(size_t size){
-        final switch(type) with(AllocatorType){
-            case UNSET:
-                assert(0);
-            case MALLOCATOR:
-                return Mallocator.zalloc(size);
-            case ARENA_MALLOCATOR:
-                return (cast(ArenaT*)data).zalloc(size);
-            case RECORDED_MALLOCATOR:
-                return (cast(RecordedT*)data).zalloc(size);
-        }
-    }
-    void[]
-    realloc(void* ptr, size_t old_size, size_t new_size){
-        final switch(type) with(AllocatorType){
-            case UNSET:
-                assert(0);
-            case MALLOCATOR:
-                return Mallocator.realloc(ptr, old_size, new_size);
-            case ARENA_MALLOCATOR:
-                return (cast(ArenaT*)data).realloc(ptr, old_size, new_size);
-            case RECORDED_MALLOCATOR:
-                return (cast(RecordedT*)data).realloc(ptr, old_size, new_size);
-        }
-    }
-    void
-    free(const(void)*ptr, size_t size){
-        if(!ptr) return;
-        final switch(type) with(AllocatorType){
-            case UNSET:
-                assert(0);
-            case MALLOCATOR:
-                return Mallocator.free(ptr, size);
-            case ARENA_MALLOCATOR:
-                return (cast(ArenaT*)data).free(ptr, size);
-            case RECORDED_MALLOCATOR:
-                return (cast(RecordedT*)data).free(ptr, size);
-        }
-    }
-
-    void
-    free_all(){
-        final switch(type) with(AllocatorType){
-            case UNSET:
-                assert(0);
-            case MALLOCATOR:
-                assert(0);
-            case ARENA_MALLOCATOR:
-                return (cast(ArenaT*)data).free_all();
-            case RECORDED_MALLOCATOR:
-                return (cast(RecordedT*)data).free_all();
-        }
-    }
-}
-
 //
 // The VAllocator is an escape hatch from template hell.
 // It allows you to move the polymorphism from compile time to
@@ -816,7 +702,7 @@ struct VAllocator0 {
 
 struct RcAllocator(Allocator){
     static if(Allocator.state_size){
-        Allocator* allocator;
+        Allocator allocator;
         size_t
         good_size(size_t size){
             return allocator.good_size(size+RcAllocation.sizeof)-RcAllocation.sizeof;
@@ -1010,7 +896,7 @@ struct Rc(T) if(is(T == U[], U)){
 struct LoggingAllocator(Allocator){
     import core.stdc.stdio: fprintf, stderr;
     static if(Allocator.state_size){
-        Allocator* allocator;
+        Allocator allocator;
         size_t
         good_size(size_t size){
             return allocator.good_size(size);

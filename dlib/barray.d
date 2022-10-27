@@ -131,25 +131,22 @@ struct Barray(T, Allocator){
         return bdata.data[0 .. count][slice[0] .. slice[1]];
     }
 
-    static if(!Allocator.state_size){
-        static
-        typeof(this)
-        from(scope const(T)[] values){
-            typeof(this) result;
-            result.extend(values);
-            return result;
-        }
+    static struct _Allocator {
+        static if(Allocator.state_size)
+            Allocator a;
     }
-    else {
-        static
-        typeof(this)
-        from(Allocator* allocator, scope const(T)[] values){
-            typeof(this) result;
-            result.bdata.allocator = allocator;
-            result.extend(values);
-            return result;
-        }
+    alias AParam = typeof(_Allocator.tupleof);
+
+    static
+    typeof(this)
+    from(AParam a, scope const(T)[] values){
+        typeof(this) result;
+        static if(Allocator.state_size)
+            result.bdata.allocator = a[0];
+        result.extend(values);
+        return result;
     }
+
     void opOpAssign(string op)(in T value){
         push(value);
     }
@@ -178,7 +175,7 @@ struct Barray(T, Allocator){
 }
 
 Barray!(T, A)
-make_barray(T, A)(A* allocator){
+make_barray(T, A)(A allocator){
     Barray!(T, A) result;
     result.bdata.allocator = allocator;
     return result;
@@ -186,13 +183,6 @@ make_barray(T, A)(A* allocator){
 
 struct Array(T){
     Barray!(T, Mallocator) array;
-    static
-    typeof(this)
-    from(scope const(T)[] values){
-        typeof(this) result;
-        result.extend(values);
-        return result;
-    }
     alias array this;
 }
 
