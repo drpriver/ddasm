@@ -1,0 +1,17 @@
+{
+	"authors": [
+		"David Priver"
+	],
+	"copyright": "Copyright © 2021, David Priver",
+	"description": "Fantasy Assembly Interpreter",
+	"license": "proprietary",
+	"buildOptions": ["betterC"],
+	"dflags": ["--verror-style=gnu"],
+	"name": "ddasm",
+	"configurations":[
+		{
+			"name": "ddasm",
+			"targetType": "executable"
+		}
+	]
+}

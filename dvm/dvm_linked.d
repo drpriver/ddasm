@@ -77,6 +77,8 @@ struct LinkedModule {
     addr_to_function(uintptr_t* ip){
         foreach(fi; functions.values){
             auto func = fi.func;
+            if(func.type != FunctionType.INTERPRETED)
+                continue;
             uintptr_t* begin = func.instructions_;
             uintptr_t* end = func.instructions_ + func.length;
             if(ip >= begin && ip < end)
