@@ -434,7 +434,8 @@ struct Machine {
                     }
                 }
             }}
-            return BEGIN_OK;
+            else
+                return BEGIN_OK;
         }
         for(;;){
             auto inst = *cast(Instruction*)registers[RIP];

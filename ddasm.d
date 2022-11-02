@@ -23,6 +23,7 @@ import dvm.dvm_linked: LinkedModule, Function, FunctionType, FunctionTable, Func
 import dvm.dvm_unlinked: UnlinkedModule;
 import dvm.dvm_machine: Machine, RunFlags;
 import dvm.dvm_linker: link_module;
+import dvm.dvm_regs: RegisterNames;
 
 import dasm.dasm_parser: parse_asm_string;
 
@@ -53,6 +54,7 @@ int main(int argc, char** argv){
     bool no_interactive = false;
     bool debugger = false;
     bool highlevel = false;
+    uintptr_t[RegisterNames.RARGMAX-RegisterNames.RARG1] rargs;
     ZString sourcefile;
     with(ArgParseFlags) with(ArgToParseFlags) {
     ArgToParse[1] pos_args = [
@@ -63,7 +65,7 @@ int main(int argc, char** argv){
             ARGDEST(&sourcefile),
         },
     ];
-    ArgToParse[6] kw_args = [
+    ArgToParse[7] kw_args = [
         {
             "--force-interactive", "-i",
             "Force interactive mode when reading from stdin.",
@@ -95,6 +97,14 @@ int main(int argc, char** argv){
             davescript instead of dasm",
             ARGDEST(&highlevel),
         },
+        {
+            "-a", "--args",
+            "Set rarg1 to ... to the following integer values",
+            ARGDEST(&rargs[0]),
+            NumRequired(0, rargs.length),
+            SHOW_DEFAULT,
+        },
+
     ];
     enum {HELP=0, VERSION=1}
     ArgToParse[2] early_args = [
@@ -295,6 +305,7 @@ int main(int argc, char** argv){
         return 1;
     }
     Machine machine;
+    machine.registers[RegisterNames.RARG1 .. RegisterNames.RARGMAX] = rargs[];
     RecordingAllocator!Mallocator recorder;
     machine.allocator = VAllocator.from(&recorder);
     if(debugger && disassemble)
