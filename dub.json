@@ -8,20 +8,47 @@
   "buildOptions": [
     "betterC"
   ],
-  "dflags": [
-    "--verror-style=gnu",
-    "-i"
-  ],
+  "targetType": "none",
   "name": "ddasm",
-  "configurations": [
+  "dependencies": {
+    "ddasm:ddasm": "*",
+    "ddasm:ds2dasm": "*"
+  },
+  "subPackages": [
     {
       "name": "ddasm",
+      "targetName": "ddasm",
       "targetType": "executable",
       "buildOptions": [
         "betterC"
       ],
       "sourceFiles": [
         "ddasm.d"
+      ],
+      "importPaths": [
+        "."
+      ],
+      "dflags": [
+        "--verror-style=gnu",
+        "-i"
+      ]
+    },
+    {
+      "name": "ds2dasm",
+      "targetName": "ds2dasm",
+      "targetType": "executable",
+      "buildOptions": [
+        "betterC"
+      ],
+      "sourceFiles": [
+        "ds2dasm.d"
+      ],
+      "importPaths": [
+        "."
+      ],
+      "dflags": [
+        "--verror-style=gnu",
+        "-i"
       ]
     }
   ]
