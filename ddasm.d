@@ -241,6 +241,9 @@ int main(int argc, char** argv){
         reg("printf2", "Printf2");
         reg("printf3", "Printf3");
         reg("printf4", "Printf4");
+        reg("fprintf1", "FPrintf1");
+        reg("fprintf2", "FPrintf2");
+        reg("fprintf3", "FPrintf3");
         reg("fopen", "Fopen");
         reg("fread", "Fread");
         reg("fclose", "Fclose");
@@ -482,6 +485,24 @@ expose_builtins(){
         (uintptr_t fmt, uintptr_t arg, uintptr_t arg2, uintptr_t arg3, uintptr_t arg4){
             if(devnull) return;
             if(!Fuzzing)fprintf(stdout, cast(char*)fmt, arg, arg2, arg3, arg4);
+        }
+    );
+    register_function("FPrintf1",
+        (uintptr_t fp, uintptr_t fmt, uintptr_t arg){
+            if(devnull) return;
+            if(!Fuzzing)fprintf(cast(FILE*)fp, cast(char*)fmt, arg);
+        }
+    );
+    register_function("FPrintf2",
+        (uintptr_t fp, uintptr_t fmt, uintptr_t arg, uintptr_t arg2){
+            if(devnull) return;
+            if(!Fuzzing)fprintf(cast(FILE*)fp, cast(char*)fmt, arg, arg2);
+        }
+    );
+    register_function("FPrintf3",
+        (uintptr_t fp, uintptr_t fmt, uintptr_t arg, uintptr_t arg2, uintptr_t arg3){
+            if(devnull) return;
+            if(!Fuzzing)fprintf(cast(FILE*)fp, cast(char*)fmt, arg, arg2, arg3);
         }
     );
     register_function("Puts",
