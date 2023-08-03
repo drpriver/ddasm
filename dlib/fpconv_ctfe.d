@@ -2,7 +2,7 @@
    https://github.com/night-shift/fpconv
    Converted to (CTFEable) D by Stefan Koch */
 
-module fpconv_ctfe;
+module dlib.fpconv_ctfe;
 import core.stdc.string: memcpy, memset;
 
 enum npowers = 87;
