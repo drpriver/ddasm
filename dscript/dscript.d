@@ -349,8 +349,28 @@ interface RegVisitor(R) {
     R visit(Logical* expr, int target);
 }
 
+Expr* ungroup(Expr* expr){
+    if(expr.type == ExprType.GROUPING){
+        return (cast(Grouping*)expr).expression.ungroup;
+    }
+    return expr;
+}
+
 struct Expr{
     ExprType type;
+
+    void dump(){
+        final switch(type)with(ExprType){
+        case ASSIGN   : (cast(Assign*)&this).dump; break;
+        case BINARY   : (cast(Binary*)&this).dump; break;
+        case GROUPING : (cast(Grouping*)&this).dump; break;
+        case LITERAL  : (cast(Literal*)&this).dump; break;
+        case UNARY    : (cast(Unary*)&this).dump; break;
+        case VARIABLE : (cast(VarExpr*)&this).dump; break;
+        case LOGICAL  : (cast(Logical*)&this).dump; break;
+        case CALL     : (cast(Call*)&this).dump; break;
+        }
+    }
     R accept(R)(Visitor!R visitor){
         final switch(type)with(ExprType){
         case ASSIGN   : return visitor.visit(cast(Assign*)&this);
@@ -379,14 +399,17 @@ struct Expr{
 struct Assign {
     Expr exp;
     Token name;
-    Expr* right;
+    Expr* right_;
+    Expr* right(){
+        return right_.ungroup;
+    }
     static Expr*
     make(A)(A* a, Token o, Expr* r){
         auto data = a.alloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.exp.type = ExprType.ASSIGN;
         result.name = o;
-        result.right = r;
+        result.right_ = r;
         return &result.exp;
     }
     static
@@ -394,11 +417,19 @@ struct Assign {
     make(Token o, Expr* r){
         return Assign(Expr(ExprType.ASSIGN), o, r);
     }
+
+    void dump(){
+        fprintf(stderr, "Assign(");
+        fprintf(stderr, "%.*s = ", cast(int)name.lexeme.length, name.lexeme.ptr);
+        right_.dump;
+        fprintf(stderr, ")");
+    }
 }
 
 struct Call {
     Expr exp;
-    Expr* callee;
+    Expr* callee_;
+    Expr* callee(){return callee_.ungroup;}
     Token paren;
     Expr*[] args;
     static Expr*
@@ -406,27 +437,47 @@ struct Call {
         auto data = a.alloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.exp.type = ExprType.CALL;
-        result.callee = c;
+        result.callee_ = c;
         result.paren = t;
         result.args = args;
         return &result.exp;
+    }
+    void dump(){
+        fprintf(stderr, "Call(");
+        callee_.dump;
+        fprintf(stderr, "(");
+        foreach(arg; args){
+            arg.dump;
+        fprintf(stderr, ", ");
+        }
+        fprintf(stderr, ")");
+        fprintf(stderr, ")");
     }
 }
 
 struct Binary {
     Expr exp;
-    Expr* left;
+    Expr* left_;
+    Expr* left(){return left_.ungroup;}
     Token operator;
-    Expr* right;
+    Expr* right_;
+    Expr* right(){return right_.ungroup;}
     static Expr*
     make(A)(A* a, Expr* l, Token o, Expr* r){
         auto data = a.alloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.exp.type = ExprType.BINARY;
-        result.left = l;
+        result.left_ = l;
         result.operator = o;
-        result.right = r;
+        result.right_ = r;
         return &result.exp;
+    }
+    void dump(){
+        fprintf(stderr, "Binary(");
+        left_.dump;
+        fprintf(stderr, "%.*s", cast(int)operator.lexeme.length, operator.lexeme.ptr);
+        right_.dump;
+        fprintf(stderr, ")");
     }
 }
 
@@ -441,6 +492,11 @@ struct Grouping {
         result.expression = e;
         return &result.exp;
     }
+    void dump(){
+        fprintf(stderr, "Group(");
+        expression.dump;
+        fprintf(stderr, ")");
+    }
 }
 
 struct Literal {
@@ -454,6 +510,9 @@ struct Literal {
         result.value = t;
         return &result.exp;
     }
+    void dump(){
+        fprintf(stderr, "%.*s", cast(int)value.lexeme.length, value.lexeme.ptr);
+    }
 }
 
 __gshared Literal NilExpr_ = {
@@ -463,33 +522,49 @@ __gshared Literal NilExpr_ = {
 
 struct Logical {
     Expr exp;
-    Expr* left;
+    Expr* left_;
+    Expr* left(){return left_.ungroup;}
     Token operator;
-    Expr* right;
+    Expr* right_;
+    Expr* right(){return right_.ungroup;}
     static Expr*
     make(A)(A* a, Expr* l, Token o, Expr* r){
         auto data = a.alloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.exp.type = ExprType.LOGICAL;
-        result.left = l;
+        result.left_ = l;
         result.operator = o;
-        result.right = r;
+        result.right_ = r;
         return &result.exp;
+    }
+    void dump(){
+        fprintf(stderr, "Logical(");
+        left_.dump;
+        fprintf(stderr, "%.*s", cast(int)operator.lexeme.length, operator.lexeme.ptr);
+        right_.dump;
+        fprintf(stderr, ")");
     }
 }
 
 struct Unary {
     Expr exp;
     Token operator;
-    Expr* right;
+    Expr* right_;
+    Expr* right(){return right_.ungroup;}
     static Expr*
     make(A)(A* a, Token t, Expr* e){
         auto data = a.alloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.exp.type = ExprType.UNARY;
         result.operator = t;
-        result.right = e;
+        result.right_ = e;
         return &result.exp;
+    }
+    void dump(){
+        fprintf(stderr, "Unary(");
+        fprintf(stderr, "%.*s", cast(int)operator.lexeme.length, operator.lexeme.ptr);
+        right_.dump;
+        fprintf(stderr, ")");
     }
 }
 
@@ -503,6 +578,11 @@ struct VarExpr {
         result.exp.type = ExprType.VARIABLE;
         result.name = t;
         return &result.exp;
+    }
+    void dump(){
+        fprintf(stderr, "Var(");
+        fprintf(stderr, "%.*s", cast(int)name.lexeme.length, name.lexeme.ptr);
+        fprintf(stderr, ")");
     }
 }
 

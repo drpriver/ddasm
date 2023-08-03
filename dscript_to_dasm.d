@@ -86,8 +86,9 @@ struct LabelAllocator {
 }
 
 struct Analysis(A) {
-    Barray!(str, A) vars;
+    Barray!(Token, A) vars;
     bool vars_on_stack;
+    bool has_goto;
 }
 class DasmAnalyzer(A): BCObject, Visitor!void, StatementVisitor!void {
     @disable this();
@@ -127,7 +128,7 @@ class DasmAnalyzer(A): BCObject, Visitor!void, StatementVisitor!void {
     }
     void visit(LetStmt* stmt){
         stmt.initializer.accept(this);
-        analysis.vars ~= stmt.name.lexeme;
+        analysis.vars ~= stmt.name;
     }
     void visit(IfStmt* stmt){
         stmt.condition.accept(this);
@@ -148,6 +149,7 @@ class DasmAnalyzer(A): BCObject, Visitor!void, StatementVisitor!void {
     }
     void visit(FuncStatement* stmt){
         analysis.vars.clear();
+        analysis.has_goto = false;
         foreach(s; stmt.body)
             s.accept(this);
     }
@@ -158,6 +160,7 @@ class DasmAnalyzer(A): BCObject, Visitor!void, StatementVisitor!void {
     void visit(AbortStatement* stmt){
     }
     void visit(GotoStatement* stmt){
+        analysis.has_goto = true;
     }
     void visit(LabelStatement* stmt){
     }
@@ -200,22 +203,22 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
 
     void save_reglocals(){
         for(int i = 0; i < regallocator.alloced; i++){
-            sb.writef("  push r%\n", i);
+            sb.writef("    push r%\n", i);
         }
     }
     void restore_reglocals(){
         for(int i = regallocator.alloced-1; i >= 0; i--){
-            sb.writef("  pop r%\n", i);
+            sb.writef("    pop r%\n", i);
         }
     }
 
     void restore_stack(){
-        sb.write("  move rsp rbp\n");
-        sb.write("  pop rbp\n");
+        sb.write("    move rsp rbp\n");
+        sb.write("    pop rbp\n");
     }
     void save_stack(){
-        sb.write("  push rbp\n");
-        sb.write("  move rbp rsp\n");
+        sb.write("    push rbp\n");
+        sb.write("    move rbp rsp\n");
     }
     int funcdepth;
     enum {TARGET_IS_CMP_FLAGS = -2};
@@ -223,28 +226,41 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
     int binary_cmp(Binary* expr){
         int before = regallocator.alloced;
         scope(exit) regallocator.reset_to(before);
-        int lhs = regallocator.allocate();
-        int res = expr.left.accept(this, lhs);
-        if(res != 0) return res;
+        int lhs;
+        if(expr.left.type == ExprType.VARIABLE && (cast(VarExpr*)expr.left).name.lexeme in reglocals){
+            lhs = *((cast(VarExpr*)expr.left).name.lexeme in reglocals);
+        }
+        else {
+            lhs = regallocator.allocate();
+            int res = expr.left.accept(this, lhs);
+            if(res != 0) return res;
+        }
         if(expr.right.type == ExprType.LITERAL && (cast(Literal*)expr.right).value.type == TokenType.NUMBER){
             auto lit = cast(Literal*)expr.right;
             auto rhs = cast(size_t)lit.value.number;
-            sb.writef("  scmp r% %\n", lhs, rhs);
+            sb.writef("    scmp r% %\n", lhs, rhs);
             return 0;
         }
         else {
-            int rhs = regallocator.allocate();
-            int res2 = expr.right.accept(this, rhs);
-            if(res2 != 0) return res2;
-            sb.writef("  scmp r% r%\n", lhs, rhs);
+            int rhs;
+            if(expr.right.type == ExprType.VARIABLE && (cast(VarExpr*)expr.right).name.lexeme in reglocals){
+                rhs = *((cast(VarExpr*)expr.right).name.lexeme in reglocals);
+            }
+            else {
+                rhs = regallocator.allocate();
+                int res2 = expr.right.accept(this, rhs);
+                if(res2 != 0) return res2;
+            }
+            sb.writef("    scmp r% r%\n", lhs, rhs);
             return 0;
         }
     }
     int visit(Binary* expr, int target){
-        if(target == TARGET_IS_CMP_FLAGS){
+        // expr.dump; fprintf(stderr, "\n");
+        if(target == TARGET_IS_CMP_FLAGS)
             return binary_cmp(expr);
-        }
         // std.stdio.writefln("HERE: %d", __LINE__);
+        int before = regallocator.alloced;
         int lhs = target;
         int res_ = expr.left.accept(this, lhs);
         if(res_ != 0) return res_;
@@ -256,49 +272,49 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
                 auto rhs = cast(size_t) lit.value.number;
                 switch(expr.operator.type)with(TokenType){
                     case MINUS:
-                        sb.writef("  sub r% r% %\n", target, lhs, rhs);
+                        sb.writef("    sub r% r% %\n", target, lhs, rhs);
                         break;
                     case PLUS:
-                        sb.writef("  add r% r% %\n", target, lhs, rhs);
+                        sb.writef("    add r% r% %\n", target, lhs, rhs);
                         break;
                     case STAR:
-                        sb.writef("  mul r% r% %\n", target, lhs, rhs);
+                        sb.writef("    mul r% r% %\n", target, lhs, rhs);
                         break;
                     case SLASH:
-                        sb.writef("  div r% rjunk r% %\n", target, lhs, rhs);
+                        sb.writef("    div r% rjunk r% %\n", target, lhs, rhs);
                         break;
                     case MOD:
-                        sb.writef("  div rjunk r% r% %\n", target, lhs, rhs);
+                        sb.writef("    div rjunk r% r% %\n", target, lhs, rhs);
                         break;
                     case BANG_EQUAL:
-                        sb.writef("  scmp r% %\n", lhs, rhs);
-                        sb.writef("  move r% 0\n", target);
-                        sb.writef("  cmov ne r% 1\n", target);
+                        sb.writef("    scmp r% %\n", lhs, rhs);
+                        sb.writef("    move r% 0\n", target);
+                        sb.writef("    cmov ne r% 1\n", target);
                         break;
                     case EQUAL_EQUAL:
-                        sb.writef("  scmp r% %\n", lhs, rhs);
-                        sb.writef("  move r% 0\n", target);
-                        sb.writef("  cmov eq r% 1\n", target);
+                        sb.writef("    scmp r% %\n", lhs, rhs);
+                        sb.writef("    move r% 0\n", target);
+                        sb.writef("    cmov eq r% 1\n", target);
                         break;
                     case GREATER:
-                        sb.writef("  scmp r% %\n", lhs, rhs);
-                        sb.writef("  move r% 0\n", target);
-                        sb.writef("  cmov gt r% 1\n", target);
+                        sb.writef("    scmp r% %\n", lhs, rhs);
+                        sb.writef("    move r% 0\n", target);
+                        sb.writef("    cmov gt r% 1\n", target);
                         break;
                     case GREATER_EQUAL:
-                        sb.writef("  scmp r% %\n", lhs, rhs);
-                        sb.writef("  move r% 0\n", target);
-                        sb.writef("  cmov ge r% 1\n", target);
+                        sb.writef("    scmp r% %\n", lhs, rhs);
+                        sb.writef("    move r% 0\n", target);
+                        sb.writef("    cmov ge r% 1\n", target);
                         break;
                     case LESS:
-                        sb.writef("  scmp r% %\n", lhs, rhs);
-                        sb.writef("  move r% 0\n", target);
-                        sb.writef("  cmov lt r% 1\n", target);
+                        sb.writef("    scmp r% %\n", lhs, rhs);
+                        sb.writef("    move r% 0\n", target);
+                        sb.writef("    cmov lt r% 1\n", target);
                         break;
                     case LESS_EQUAL:
-                        sb.writef("  scmp r% %\n", lhs, rhs);
-                        sb.writef("  move r% 0\n", target);
-                        sb.writef("  cmov le r% 1\n", target);
+                        sb.writef("    scmp r% %\n", lhs, rhs);
+                        sb.writef("    move r% 0\n", target);
+                        sb.writef("    cmov le r% 1\n", target);
                         break;
                     default:
                         error(expr.operator, "Unhandled binary op");
@@ -309,19 +325,19 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
                 auto rhs = lit.value.string_;
                 switch(expr.operator.type)with(TokenType){
                     case MINUS:
-                        sb.writef("  sub r% r% %\n", target, lhs, rhs);
+                        sb.writef("    sub r% r% %\n", target, lhs, rhs);
                         break;
                     case PLUS:
-                        sb.writef("  add r% r% %\n", target, lhs, rhs);
+                        sb.writef("    add r% r% %\n", target, lhs, rhs);
                         break;
                     case STAR:
-                        sb.writef("  mul r% r% %\n", target, lhs, rhs);
+                        sb.writef("    mul r% r% %\n", target, lhs, rhs);
                         break;
                     case SLASH:
-                        sb.writef("  div r% rjunk r% %\n", target, lhs, rhs);
+                        sb.writef("    div r% rjunk r% %\n", target, lhs, rhs);
                         break;
                     case MOD:
-                        sb.writef("  div rjunk r% r% %\n", target, lhs, rhs);
+                        sb.writef("    div rjunk r% r% %\n", target, lhs, rhs);
                         break;
                     default:
                         error(expr.operator, "Unhandled binary op");
@@ -333,83 +349,89 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
             if(target == TARGET_IS_NOTHING){
                 return expr.right.accept(this, target);
             }
-            int rhs = regallocator.allocate();
-            int res = expr.right.accept(this, rhs);
-            if(res != 0) return res;
+            int rhs;
+            if(expr.right.type == ExprType.VARIABLE && (cast(VarExpr*)expr.right).name.lexeme in reglocals){
+                rhs = reglocals[(cast(VarExpr*)expr.right).name.lexeme];
+            }
+            else {
+                rhs = regallocator.allocate();
+                int res = expr.right.accept(this, rhs);
+                if(res != 0) return res;
+            }
             switch(expr.operator.type)with(TokenType){
                 case MINUS:
-                    sb.writef("  sub r% r% r%\n", target, lhs, rhs);
+                    sb.writef("    sub r% r% r%\n", target, lhs, rhs);
                     break;
                 case PLUS:
-                    sb.writef("  add r% r% r%\n", target, lhs, rhs);
+                    sb.writef("    add r% r% r%\n", target, lhs, rhs);
                     break;
                 case STAR:
-                    sb.writef("  mul r% r% r%\n", target, lhs, rhs);
+                    sb.writef("    mul r% r% r%\n", target, lhs, rhs);
                     break;
                 case SLASH:
-                    sb.writef("  div r% rjunk r% r%\n", target, lhs, rhs);
+                    sb.writef("    div r% rjunk r% r%\n", target, lhs, rhs);
                     break;
                 case MOD:
-                    sb.writef("  div rjunk r% r% r%\n", target, lhs, rhs);
+                    sb.writef("    div rjunk r% r% r%\n", target, lhs, rhs);
                     break;
                 case BANG_EQUAL:
-                    sb.writef("  scmp r% r%\n", lhs, rhs);
-                    sb.writef("  move r% 0\n", target);
-                    sb.writef("  cmov ne r% 1\n", target);
+                    sb.writef("    scmp r% r%\n", lhs, rhs);
+                    sb.writef("    move r% 0\n", target);
+                    sb.writef("    cmov ne r% 1\n", target);
                     break;
                 case EQUAL_EQUAL:
-                    sb.writef("  scmp r% r%\n", lhs, rhs);
-                    sb.writef("  move r% 0\n", target);
-                    sb.writef("  cmov eq r% 1\n", target);
+                    sb.writef("    scmp r% r%\n", lhs, rhs);
+                    sb.writef("    move r% 0\n", target);
+                    sb.writef("    cmov eq r% 1\n", target);
                     break;
                 case GREATER:
-                    sb.writef("  scmp r% r%\n", lhs, rhs);
-                    sb.writef("  move r% 0\n", target);
-                    sb.writef("  cmov gt r% 1\n", target);
+                    sb.writef("    scmp r% r%\n", lhs, rhs);
+                    sb.writef("    move r% 0\n", target);
+                    sb.writef("    cmov gt r% 1\n", target);
                     break;
                 case GREATER_EQUAL:
-                    sb.writef("  scmp r% r%\n", lhs, rhs);
-                    sb.writef("  move r% 0\n", target);
-                    sb.writef("  cmov ge r% 1\n", target);
+                    sb.writef("    scmp r% r%\n", lhs, rhs);
+                    sb.writef("    move r% 0\n", target);
+                    sb.writef("    cmov ge r% 1\n", target);
                     break;
                 case LESS:
-                    sb.writef("  scmp r% r%\n", lhs, rhs);
-                    sb.writef("  move r% 0\n", target);
-                    sb.writef("  cmov lt r% 1\n", target);
+                    sb.writef("    scmp r% r%\n", lhs, rhs);
+                    sb.writef("    move r% 0\n", target);
+                    sb.writef("    cmov lt r% 1\n", target);
                     break;
                 case LESS_EQUAL:
-                    sb.writef("  scmp r% r%\n", lhs, rhs);
-                    sb.writef("  move r% 0\n", target);
-                    sb.writef("  cmov le r% 1\n", target);
+                    sb.writef("    scmp r% r%\n", lhs, rhs);
+                    sb.writef("    move r% 0\n", target);
+                    sb.writef("    cmov le r% 1\n", target);
                     break;
                 default:
                     error(expr.operator, "Unhandled binary op");
                     return -1;
             }
         }
-        regallocator.reset_to(lhs);
+        regallocator.reset_to(before);
         return 0;
     }
     int visit(Literal* expr, int target){
         if(target == TARGET_IS_NOTHING) return 0;
         if(expr.value.type == TokenType.NUMBER){
-            sb.writef("  move r% %\n", target, cast(size_t)expr.value.number);
+            sb.writef("    move r% %\n", target, cast(size_t)expr.value.number);
             return 0;
         }
         if(expr.value.type == TokenType.NIL){
-            sb.writef("  move r% 0\n", target);
+            sb.writef("    move r% 0\n", target);
             return 0;
         }
         if(expr.value.type == TokenType.TRUE){
-            sb.writef("  move r% 1\n", target);
+            sb.writef("    move r% 1\n", target);
             return 0;
         }
         if(expr.value.type == TokenType.FALSE){
-            sb.writef("  move r% 0\n", target);
+            sb.writef("    move r% 0\n", target);
             return 0;
         }
         if(expr.value.type == TokenType.STRING){
-            sb.writef("  move r% \"%\"\n", target, expr.value.string_);
+            sb.writef("    move r% \"%\"\n", target, expr.value.string_);
             return 0;
         }
         fprintf(stderr, "expr.value.type: %d\n", cast(int)expr.value.type);
@@ -423,10 +445,10 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
         if(target != TARGET_IS_NOTHING){
             switch(expr.operator.type)with(TokenType){
                 case MINUS:
-                    sb.writef("  neg r% r%\n", target, target);
+                    sb.writef("    neg r% r%\n", target, target);
                     break;
                 case BANG:
-                    sb.writef("  not r% r%\n", target, target);
+                    sb.writef("    not r% r%\n", target, target);
                     break;
                 default:
                     error(expr.operator, "Unhandled unary operator");
@@ -438,18 +460,18 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
     int visit(Call* expr, int target){
         int rarg1 = RegisterNames.RARG1;
         for(int i = 0; i < expr.args.length; i++){
-            auto arg = expr.args[i];
+            auto arg = expr.args[i].ungroup;
             int before = regallocator.alloced;
             int res = arg.accept(this, rarg1+i);
             if(res != 0) return res;
             if(i != expr.args.length-1){
                 //can elide the push/pop for last arg
-                sb.writef("  push r%\n", rarg1+i);
+                sb.writef("    push r%\n", rarg1+i);
             }
             regallocator.reset_to(before);
         }
         for(int i = 1; i < expr.args.length; i++){
-            sb.writef("  pop r%\n", rarg1+expr.args.length-1-i);
+            sb.writef("    pop r%\n", rarg1+expr.args.length-1-i);
         }
         bool called = false;
         // this is wrong but whatever
@@ -460,7 +482,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
                 bool hack = (target == regallocator.alloced-1);
                 if(hack) regallocator.alloced--;
                 save_reglocals();
-                sb.writef("  call function %\n", l.value.lexeme);
+                sb.writef("    call function %\n", l.value.lexeme);
                 restore_reglocals();
                 if(hack) regallocator.alloced++;
                 called = true;
@@ -473,17 +495,17 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
             if(res != 0) return res;
             regallocator.reset_to(before);
             save_reglocals();
-            sb.writef("  call r%\n", func);
+            sb.writef("    call r%\n", func);
             restore_reglocals();
         }
         if(target != TARGET_IS_NOTHING)
-            sb.writef(  "  move r% rout1\n", target);
+            sb.writef(  "    move r% rout1\n", target);
         return 0;
     }
     int do_tail_call(Call* expr){
         int rarg1 = RegisterNames.RARG1;
         for(int i = 0; i < expr.args.length; i++){
-            auto arg = expr.args[i];
+            auto arg = expr.args[i].ungroup;
             int before = regallocator.alloced;
             int res = arg.accept(this, rarg1+i);
             if(res != 0) return res;
@@ -496,7 +518,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
             if(l.value.type == TokenType.IDENTIFIER){
                 if(analysis.vars_on_stack)
                     restore_stack();
-                sb.writef("  tail_call function %\n", l.value.lexeme);
+                sb.writef("    tail_call function %\n", l.value.lexeme);
                 called = true;
             }
         }
@@ -508,11 +530,13 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
             regallocator.reset_to(before);
             if(analysis.vars_on_stack)
                 restore_stack();
-            sb.writef("  tail_call r%\n", func);
+            sb.writef("    tail_call r%\n", func);
         }
         return 0;
     }
     int visit(Grouping* expr, int target){
+        int res = expr.expression.accept(this, target);
+        if(res != 0) return res;
         return 0;
     }
     int visit(VarExpr* expr, int target){
@@ -522,15 +546,15 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
                 // loading into the same register
                 return 0;
             }
-            sb.writef("  move r% r%\n", target, *rlocal);
+            sb.writef("    move r% r%\n", target, *rlocal);
             return 0;
         }
         if(auto local = expr.name.lexeme in locals){
-            sb.writef("  local_read r% %\n", target, P(*local));
+            sb.writef("    local_read r% %\n", target, P(*local));
             return 0;
         }
         // must be a global.
-        sb.writef("  read r% var %\n", target, expr.name.lexeme);
+        sb.writef("    read r% var %\n", target, expr.name.lexeme);
         return 0;
     }
     int visit(Assign* expr, int target){
@@ -541,22 +565,22 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
                 switch(lit.value.type)with(TokenType){
                     case NIL:
                     case FALSE:
-                        sb.writef("  move r% 0\n", *rlocal);
+                        sb.writef("    move r% 0\n", *rlocal);
                         break;
                     case TRUE:
-                        sb.writef("  move r% 1\n", *rlocal);
+                        sb.writef("    move r% 1\n", *rlocal);
                         break;
                     case STRING:
-                        sb.writef("  move r% \"%\"\n", *rlocal, lit.value.string_);
+                        sb.writef("    move r% \"%\"\n", *rlocal, lit.value.string_);
                         break;
                     case NUMBER:
-                        sb.writef("  move r% %\n", *rlocal, cast(size_t)lit.value.number);
+                        sb.writef("    move r% %\n", *rlocal, cast(size_t)lit.value.number);
                         break;
                     case BNUM:
                     case SNUM:
                     case PHEX:
                     case HEX:
-                        sb.writef("  move r% %\n", *rlocal, lit.value.string_);
+                        sb.writef("    move r% %\n", *rlocal, lit.value.string_);
                         break;
                     default:
                         error(lit.value, "Unhandled literal type in assign");
@@ -570,7 +594,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
                 int res = expr.right.accept(this, temp);
                 if(res != 0) return res;
                 regallocator.reset_to(before);
-                sb.writef("  move r% r%\n", *rlocal, temp);
+                sb.writef("    move r% r%\n", *rlocal, temp);
             }
             return 0;
         }
@@ -580,16 +604,16 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
                 switch(lit.value.type)with(TokenType){
                     case NIL:
                     case FALSE:
-                        sb.writef("  local_write % 0\n", P(*local));
+                        sb.writef("    local_write % 0\n", P(*local));
                         break;
                     case TRUE:
-                        sb.writef("  local_write % 1\n", P(*local));
+                        sb.writef("    local_write % 1\n", P(*local));
                         break;
                     case STRING:
-                        sb.writef("  local_write % \"%\"\n", P(*local), lit.value.string_);
+                        sb.writef("    local_write % \"%\"\n", P(*local), lit.value.string_);
                         break;
                     case NUMBER:
-                        sb.writef("  local_write % %\n", P(*local), cast(size_t)lit.value.number);
+                        sb.writef("    local_write % %\n", P(*local), cast(size_t)lit.value.number);
                         break;
                     default:
                         error(lit.value, "Unhandled literal type in assign");
@@ -602,7 +626,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
                 int res = expr.right.accept(this, temp);
                 if(res != 0) return res;
                 regallocator.reset_to(before);
-                sb.writef("  local_write % r%\n", P(*local), temp);
+                sb.writef("    local_write % r%\n", P(*local), temp);
             }
             return 0;
         }
@@ -611,21 +635,21 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
             auto lit = cast(Literal*)expr.right;
             int before = regallocator.alloced;
             int temp = regallocator.allocate();
-            sb.writef("  move r% var %\n", temp, expr.name.lexeme);
+            sb.writef("    move r% var %\n", temp, expr.name.lexeme);
             regallocator.reset_to(before);
             switch(lit.value.type)with(TokenType){
                 case NIL:
                 case FALSE:
-                    sb.writef("  write r% 0\n", temp);
+                    sb.writef("    write r% 0\n", temp);
                     break;
                 case TRUE:
-                    sb.writef("  write r% 1\n", temp);
+                    sb.writef("    write r% 1\n", temp);
                     break;
                 case STRING:
-                    sb.writef("  write r% \"%\"\n", temp, lit.value.string_);
+                    sb.writef("    write r% \"%\"\n", temp, lit.value.string_);
                     break;
                 case NUMBER:
-                    sb.writef("  write r% %\n", temp, cast(size_t)lit.value.number);
+                    sb.writef("    write r% %\n", temp, cast(size_t)lit.value.number);
                     break;
                 default:
                     error(lit.value, "Unhandled literal type in assign");
@@ -639,8 +663,8 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
             int res = expr.right.accept(this, rhs);
             if(res != 0) return res;
             regallocator.reset_to(before);
-            sb.writef("  move r% var %\n", lhs, expr.name.lexeme);
-            sb.writef("  write r% r%\n", lhs, rhs);
+            sb.writef("    move r% var %\n", lhs, expr.name.lexeme);
+            sb.writef("    write r% r%\n", lhs, rhs);
         }
         return 0;
     }
@@ -705,7 +729,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
             int res = stmt.initializer.accept(this, temp);
             if(res != 0) return res;
             regallocator.reset_to(before);
-            sb.writef("  local_write % r%\n", P(*local), temp);
+            sb.writef("    local_write % r%\n", P(*local), temp);
             return 0;
         }
         error(stmt.name, "Unhandled var stmt");
@@ -769,7 +793,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
                 default:
                     assert(0);
             }
-            sb.writef("  jump % label L%\n", jmpmode, label);
+            sb.writef("    jump % label L%\n", jmpmode, label);
         }
         else {
             Lgeneric:
@@ -778,14 +802,14 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
             scope(exit) regallocator.reset_to(before);
             int res = stmt.condition.accept(this, cond);
             if(res != 0) return res;
-            sb.writef("  cmp r% 0\n", cond);
-            sb.writef("  jump eq label L%\n", label);
+            sb.writef("    cmp r% 0\n", cond);
+            sb.writef("    jump eq label L%\n", label);
         }
         int res = stmt.thenBranch.accept(this);
         if(res != 0) return res;
         if(stmt.elseBranch){
             int after_else_label = labelallocator.allocate();
-            sb.writef("  move rip label L%\n", after_else_label);
+            sb.writef("    move rip label L%\n", after_else_label);
             sb.writef("  label L%\n", label);
             int r = stmt.elseBranch.accept(this);
             if(r != 0) return r;
@@ -805,7 +829,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
         analyzer.visit(stmt);
         analysis = analyzer.analysis;
         funcdepth++;
-        scope(exit) {
+        scope(exit){
             funcdepth--;
             locals.cleanup();
             reglocals.cleanup();
@@ -819,27 +843,35 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
         foreach(p; stmt.params){
             auto r = regallocator.allocate();
             reglocals[p.lexeme] = r;
-            sb.writef("  move r% r%\n", r, rarg++);
+            sb.writef("    move r% r%\n", r, rarg++);
         }
-        if(analysis.vars[].length >= 4)
+        if(analysis.vars[].length > 4)
             analysis.vars_on_stack = true;
         if(analysis.vars_on_stack)
             save_stack();
         if(!analysis.vars_on_stack){
             foreach(v; analysis.vars){
+                if(v.lexeme in reglocals){
+                    error(v, "duplicate var");
+                    return 1;
+                }
                 auto r = regallocator.allocate();
-                reglocals[v] = r;
+                reglocals[v.lexeme] = r;
             }
         }
         else {
             // our stack grows upwards
             uint nvars = 0;
             foreach(v; analysis.vars){
+                if(v.lexeme in locals){
+                    error(v, "duplicate var");
+                    return 1;
+                }
                 auto s = stackallocator.allocate();
-                locals[v] = cast(int)s;
+                locals[v.lexeme] = cast(int)s;
                 nvars++;
             }
-            sb.writef("  add rsp rsp %\n", P(nvars));
+            sb.writef("    add rsp rsp %\n", P(nvars));
         }
         foreach(s; stmt.body){
             int res = s.accept(this);
@@ -848,7 +880,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
         if(!stmt.body.length || stmt.body[$-1].type != StatementType.RETURN){
             if(analysis.vars_on_stack)
                 restore_stack();
-            sb.write("  ret\n");
+            sb.write("    ret\n");
         }
         sb.write("end\n");
         return 0;
@@ -858,11 +890,11 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
         return 0;
     }
     int visit(HaltStatement* stmt){
-        sb.writef("  halt\n");
+        sb.writef("    halt\n");
         return 0;
     }
     int visit(AbortStatement* stmt){
-        sb.writef("  abort\n");
+        sb.writef("    abort\n");
         return 0;
     }
     int visit(ReturnStatement* stmt){
@@ -878,13 +910,13 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
             int temp = regallocator.allocate();
             int rout = RegisterNames.ROUT1;
             int res = stmt.value.accept(this, temp);
-            regallocator.reset_to(before);
-            sb.writef("  move r% r%\n", rout, temp);
             if(res != 0) return res;
+            regallocator.reset_to(before);
+            sb.writef("    move r% r%\n", rout, temp);
         }
         if(analysis.vars_on_stack)
             restore_stack();
-        sb.write("  ret\n");
+        sb.write("    ret\n");
         return 0;
     }
     int visit(WhileStatement* stmt){
@@ -962,22 +994,22 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
                 default:
                     assert(0);
             }
-            sb.writef("  jump % label L%\n", jmpmode, after);
+            sb.writef("    jump % label L%\n", jmpmode, after);
         }
         else {
-            sb.writef("  label L%\n", top);
+            sb.writef("    label L%\n", top);
             Lgeneric:
             int before = regallocator.alloced;
             int cond = regallocator.allocate();
             scope(exit) regallocator.reset_to(before);
             int res = stmt.condition.accept(this, cond);
             if(res != 0) return res;
-            sb.writef("  cmp r% 0\n", cond);
-            sb.writef("  jump eq label L%\n", after);
+            sb.writef("    cmp r% 0\n", cond);
+            sb.writef("    jump eq label L%\n", after);
         }
         int res = stmt.statement.accept(this);
         if(res != 0) return res;
-        sb.writef("  move rip label L%\n", top);
+        sb.writef("    move rip label L%\n", top);
         sb.writef("  label L%\n", after);
         return 0;
     }
@@ -989,7 +1021,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
         return 0;
     }
     int visit(GotoStatement* stmt){
-        sb.writef("  move rip label L%\n", stmt.label.lexeme);
+        sb.writef("    move rip label L%\n", stmt.label.lexeme);
         return 0;
     }
     int visit(LabelStatement* stmt){
