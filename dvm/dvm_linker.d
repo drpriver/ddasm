@@ -302,12 +302,14 @@ struct LinkContext {
                         return AsmError.LINK_ERROR;
                     }
                     labels[inst.label] = cast(uintptr_t)ip;
+                    continue;
                 }
                 ip += instruction_size(inst.instruction);
             }
         }
         uintptr_t* ip = func.instructions_;
         foreach(inst; afunc.instructions[]){
+            if(inst.label.length) continue;
             *(ip++) = inst.instruction;
             foreach(arg;inst.args[0..inst.n_args]){
                 switch(arg.kind)with(ArgumentKind){
@@ -389,6 +391,7 @@ size_t
 calculate_function_size(AbstractFunction* func){
     size_t size = 0;
     foreach(ref inst; func.instructions[]){
+        if(inst.label.length) continue;
         size += instruction_size(inst.instruction);
     }
     return size;
