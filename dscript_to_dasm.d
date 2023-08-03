@@ -724,7 +724,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
             error(0, "If outside of function");
             return -1;
         }
-        auto label = labelallocator.allocate();
+        int label = labelallocator.allocate();
         if(stmt.condition.type == ExprType.BINARY){
             Binary* b = cast(Binary*)stmt.condition;
             switch(b.operator.type)with(TokenType){
@@ -779,11 +779,16 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
         }
         int res = stmt.thenBranch.accept(this);
         if(res != 0) return res;
-        sb.writef("  label L%\n", label);
         if(stmt.elseBranch){
+            int after_else_label = labelallocator.allocate();
+            sb.writef("  move rip label L%\n", after_else_label);
+            sb.writef("  label L%\n", label);
             int r = stmt.elseBranch.accept(this);
             if(r != 0) return r;
-
+            sb.writef("  label L%\n", after_else_label);
+        }
+        else {
+            sb.writef("  label L%\n", label);
         }
         return 0;
     }
