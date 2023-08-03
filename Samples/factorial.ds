@@ -1,14 +1,21 @@
+import io;
 function start(arg){
-    if(arg == 0)
-        arg = 10;
     let result = factorial(arg);
-    Printf2("%d\n", result);
+    io.printf2("%zd\n", result);
+    result = factorial2(arg, 1);
+    io.printf2("%zd\n", result);
+    io.printf2("%zd\n", factorial2(arg, 1));
 }
 
 function factorial(n){
     let result = 1;
-    for(; n > 1; n = n - 1){
+    for(; n > 1; n = n - 1)
         result = n * result;
-    }
     return result;
+}
+
+function factorial2(n, cum){
+    if(n <= 1) return cum;
+    // Tail call form
+    return factorial2(n-1, n*cum);
 }

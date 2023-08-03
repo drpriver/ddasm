@@ -23,17 +23,17 @@ function factorial 2
     label recur
     mul rarg2 rarg2 rarg1
     sub rarg1 rarg1 1
-    move rip label entry
+    move rip label entry # manual tail call
     abort
 end
 
+import io
 function start 0
-    cmp rarg1 0
-    cmov eq rarg1 10
     move rarg2 1
     call function factorial
     move rarg1 "%d\n"
     move rarg2 rout1
-    call function Printf2
+    call function io.printf2
+    # call function Printf2
     halt
 end

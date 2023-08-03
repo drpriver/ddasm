@@ -20,7 +20,7 @@ enum TokenType: ubyte{
 
     // Keywords
     AND, ELSE, FALSE, FUN, FOR, IF, NIL, OR, RETURN, TRUE, LET,
-    WHILE, GOTO, LABEL, BREAK, CONTINUE,
+    WHILE, GOTO, LABEL, BREAK, CONTINUE, IMPORT,
 
     EOF = 0,
 }
@@ -251,7 +251,7 @@ bool isAlphaNumeric()(ubyte c){
     return isAlpha(c) || isDigit(c);
 }
 bool isIdentChar()(ubyte c){
-    return isAlpha(c) || isDigit(c) || c == '_';
+    return isAlpha(c) || isDigit(c) || c == '_' || c == '.';
 }
 
 __gshared BTable!(str, TokenType, Mallocator) KEYWORDS;
@@ -261,7 +261,7 @@ void powerup(){
     if(KEYWORDSPOWERED) return;
     KEYWORDSPOWERED = true;
     with(TokenType){
-        immutable string[16] keys = [
+        immutable string[17] keys = [
             "and",
             "else",
             "false",
@@ -278,8 +278,9 @@ void powerup(){
             "label",
             "break",
             "continue",
+            "import",
         ];
-        immutable TokenType[16] values = [
+        immutable TokenType[17] values = [
             AND,
             ELSE,
             FALSE,
@@ -296,6 +297,7 @@ void powerup(){
             LABEL,
             BREAK,
             CONTINUE,
+            IMPORT,
         ];
         static assert(keys.length == values.length);
         for(size_t i = 0; i < keys.length; i++){
@@ -511,6 +513,7 @@ enum StatementType {
     RETURN,
     GOTO,
     LABEL,
+    IMPORT,
 }
 
 interface StatementVisitor(R){
@@ -520,6 +523,7 @@ interface StatementVisitor(R){
     R visit(IfStmt* stmt);
     R visit(WhileStatement* stmt);
     R visit(FuncStatement* stmt);
+    R visit(ImportStatement* stmt);
     R visit(ReturnStatement* stmt);
     R visit(GotoStatement* stmt);
     R visit(LabelStatement* stmt);
@@ -535,6 +539,7 @@ struct Statement {
         case IF         : return visitor.visit(cast(IfStmt*)&this);
         case WHILE      : return visitor.visit(cast(WhileStatement*)&this);
         case FUNCTION   : return visitor.visit(cast(FuncStatement*)&this);
+        case IMPORT   : return visitor.visit(cast(ImportStatement*)&this);
         case RETURN     : return visitor.visit(cast(ReturnStatement*)&this);
         case GOTO       : return visitor.visit(cast(GotoStatement*)&this);
         case LABEL      : return visitor.visit(cast(LabelStatement*)&this);
@@ -573,6 +578,20 @@ struct FuncStatement {
         p.name = n;
         p.params = params;
         p.body = s;
+        return &p.stmt;
+    }
+}
+
+struct ImportStatement {
+    Statement stmt;
+    Token name;
+    static
+    Statement*
+    make(A)(A allocator, Token n){
+        auto data = allocator.alloc(typeof(this).sizeof);
+        auto p = cast(typeof(this)*)data.ptr;
+        p.stmt.type = StatementType.IMPORT;
+        p.name = n;
         return &p.stmt;
     }
 }
@@ -723,7 +742,18 @@ struct Parser(A) {
     declaration(){
         if(match(TokenType.FUN)) return function_!"function"();
         if(match(TokenType.LET)) return varDeclaration();
+        if(match(TokenType.IMPORT)) return import_statement;
         return statement();
+    }
+
+    Statement*
+    import_statement(){with(TokenType){
+        Token name = consume(IDENTIFIER, "Expected import name");
+        if(ERROR_OCCURRED) return null;
+        consume(SEMICOLON, "Expected semicolon");
+        if(ERROR_OCCURRED) return null;
+        return ImportStatement.make(allocator, name);
+    }
     }
 
     Statement*

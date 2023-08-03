@@ -151,6 +151,8 @@ class DasmAnalyzer(A): BCObject, Visitor!void, StatementVisitor!void {
         foreach(s; stmt.body)
             s.accept(this);
     }
+    void visit(ImportStatement* stmt){
+    }
     void visit(GotoStatement* stmt){
     }
     void visit(LabelStatement* stmt){
@@ -840,6 +842,10 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
             sb.write("  ret\n");
         }
         sb.write("end\n");
+        return 0;
+    }
+    int visit(ImportStatement* stmt){
+        sb.writef("import %\n", stmt.name.lexeme);
         return 0;
     }
     int visit(ReturnStatement* stmt){

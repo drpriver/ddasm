@@ -250,6 +250,17 @@ int main(int argc, char** argv){
         reg("set",    "Memset");
     }
 
+    LinkedModule misc_module;
+    misc_module.functions.allocator = &va;
+    {
+        void reg(str key, str f){
+            misc_module.functions[key] = (*BUILTINS)[f];
+        }
+        reg("atoi", "Atoi");
+        version(Posix) reg("clock", "Clock");
+    }
+
+
     LinkedModule linked_prog;
     linked_prog.source_text = btext;
     linked_prog.name = prog.name;
@@ -288,6 +299,9 @@ int main(int argc, char** argv){
                     break;
                 case "mem":
                     loaded["mem"] = &mem_module;
+                    break;
+                case "misc":
+                    loaded["misc"] = &misc_module;
                     break;
                 default:
                     fprintf(stderr, "Unknown module: '%.*s'\n", cast(int)imp.length, imp.ptr);

@@ -308,7 +308,7 @@ struct StringBuilder(Allocator){
             ubyte16 cmp = cast(ubyte16)greaterOrEqualMask!(ubyte16)(controls, b16);
             ubyte16 cmp2 = cast(ubyte16)greaterOrEqualMask!(ubyte16)(b16, controls2);
             ubyte16 combo = cmp | cmp2;
-            if(combo != 0){
+            if((cast(ulong2)combo)[0] || (cast(ulong2)combo)[1]){
                 for(size_t i = 0; i < 16; i++){
                     char c = str_[i];
                     switch(cast(ubyte)c){

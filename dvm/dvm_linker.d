@@ -395,7 +395,15 @@ calculate_function_size(AbstractFunction* func){
 }
 
 AsmError
-link_module(VAllocator* allocator, VAllocator* temp_allocator, FunctionTable* builtins, UnlinkedModule* unlinked, LinkedModule* prog, scope void delegate(const char*, out str, out int, out int) find_loc, BTable!(str, LinkedModule*, VAllocator*)* modules){
+link_module(
+    VAllocator* allocator,
+    VAllocator* temp_allocator,
+    FunctionTable* builtins,
+    UnlinkedModule* unlinked,
+    LinkedModule* prog,
+    scope void delegate(const char*, out str, out int, out int) find_loc,
+    BTable!(str, LinkedModule*, VAllocator*)* modules,
+){
     LinkContext ctx;
     ctx.allocator = allocator;
     ctx.temp_allocator = temp_allocator;

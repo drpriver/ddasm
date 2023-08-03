@@ -39,6 +39,7 @@ struct Machine {
     bool debugging;
     LineHistory!VAllocator debugger_history;
     bool[RegisterNames.max+1] watches;
+
     int
     run(RunFlags flags = RunFlags.NONE)(LinkedModule* prog, size_t stack_size, const char* debug_history_file = null){
         if(!prog.start || !prog.start.instructions_)
@@ -313,24 +314,15 @@ struct Machine {
         int
         check_cmp(uintptr_t cmp){
             switch(cmp) with(CmpFlags) with(CmpMode){
-                case EQ:
-                    return !!(registers[RFLAGS] & ZERO);
-                case NE:
-                    return !(registers[RFLAGS] & ZERO);
-                case LT:
-                    return (registers[RFLAGS] & (CARRY|ZERO)) == CARRY;
-                case GT:
-                    return (registers[RFLAGS] & (CARRY|ZERO)) == 0;
-                case LE:
-                    return !!(registers[RFLAGS] & (CARRY|ZERO));
-                case GE:
-                    return (registers[RFLAGS] & CARRY) != CARRY;
-                case TRUE:
-                    return 1;
-                case FALSE:
-                    return 0;
-                default:
-                    return -1;
+                case EQ: return !!(registers[RFLAGS] & ZERO);
+                case NE: return !(registers[RFLAGS] & ZERO);
+                case LT: return (registers[RFLAGS] & (CARRY|ZERO)) == CARRY;
+                case GT: return (registers[RFLAGS] & (CARRY|ZERO)) == 0;
+                case LE: return !!(registers[RFLAGS] & (CARRY|ZERO));
+                case GE: return (registers[RFLAGS] & CARRY) != CARRY;
+                case TRUE: return 1;
+                case FALSE: return 0;
+                default: return -1;
             }
         }
 
@@ -438,7 +430,7 @@ struct Machine {
                 return BEGIN_OK;
         }
         for(;;){
-            auto inst = *cast(Instruction*)registers[RIP];
+            Instruction inst = *cast(Instruction*)registers[RIP];
             registers[RIP] += uintptr_t.sizeof;
             switch(inst){
                 case HALT:
