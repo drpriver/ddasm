@@ -2,7 +2,7 @@
  * Copyright © 2021-2023, David Priver
  */
 import core.stdc.string: strlen, strerror, memcpy, memset;
-import core.stdc.stdio: fprintf, stdout, stderr, fread, stdin, FILE, fwrite, fflush, fopen, fputs, fgets;
+import core.stdc.stdio: fprintf, stdout, stderr, fread, stdin, FILE, fwrite, fflush, fopen, fputs, fgets, fclose;
 import core.stdc.stdlib: calloc, malloc, free, atoi;
 
 import dlib.stringbuilder: StringBuilder;
@@ -55,6 +55,7 @@ int main(int argc, char** argv){
     bool debugger = false;
     bool highlevel = false;
     uintptr_t[RegisterNames.RARGMAX-RegisterNames.RARG1] rargs;
+    ZString[rargs.length] rargs_s;
     ZString sourcefile;
     with(ArgParseFlags) with(ArgToParseFlags) {
     ArgToParse[1] pos_args = [
@@ -99,9 +100,9 @@ int main(int argc, char** argv){
         },
         {
             "-a", "--args",
-            "Set rarg1 to ... to the following integer values",
-            ARGDEST(&rargs[0]),
-            NumRequired(0, rargs.length),
+            "Set rarg1 to ... to the following values (coerced to integers if possible)",
+            ARGDEST(&rargs_s[0]),
+            NumRequired(0, rargs_s.length),
             SHOW_DEFAULT,
         },
 
@@ -143,6 +144,19 @@ int main(int argc, char** argv){
         fprintf(stderr, "Use --help to see usage.\n");
         return error;
     }
+    }
+    foreach(i, arg; rargs_s[]){
+        if(arg.ptr){
+            import dlib.parse_numbers: parse_unsigned_human;
+            auto ir = parse_unsigned_human(arg[]);
+            if(ir.errored){
+                rargs[i] = cast(uintptr_t)arg.ptr;
+            }
+            else
+                rargs[i] = ir.value;
+        }
+        else
+            break;
     }
     VAllocator va = VAllocator.from!(Mallocator);
     Box!(str, VAllocator*) btext;
@@ -227,7 +241,9 @@ int main(int argc, char** argv){
         reg("printf2", "Printf2");
         reg("printf3", "Printf3");
         reg("printf4", "Printf4");
+        reg("fopen", "Fopen");
         reg("fread", "Fread");
+        reg("fclose", "Fclose");
         reg("fwrite", "Fwrite");
         reg("fputs", "Fputs");
         reg("fgets", "Fgets");
@@ -489,6 +505,13 @@ expose_builtins(){
             return cast(uintptr_t)fread(cast(void*)ptr, size, nitems, cast(FILE*)stream);
         }
     );
+    register_function("Fopen", (uintptr_t fn, uintptr_t mode){
+            return cast(uintptr_t)fopen(cast(const char*)fn, cast(const char*)mode);
+        }
+    );
+    register_function("Fclose", (uintptr_t fp){
+            return cast(uintptr_t)fclose(cast(FILE*)fp);
+    });
     register_function("Fwrite",
         (uintptr_t ptr, uintptr_t size, uintptr_t nitems, uintptr_t stream){
             return cast(uintptr_t)fwrite(cast(void*)ptr, size, nitems, cast(FILE*)stream);
