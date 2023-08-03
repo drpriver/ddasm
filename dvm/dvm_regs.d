@@ -1,5 +1,5 @@
 /*
- * Copyright © 2021-2022, David Priver
+ * Copyright © 2021-2023, David Priver
  */
 module dvm.dvm_regs;
 import dvm.dvm_defs;

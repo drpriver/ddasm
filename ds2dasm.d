@@ -1,5 +1,5 @@
 /*
- * Copyright © 2021-2022, David Priver
+ * Copyright © 2021-2023, David Priver
  */
 import dlib.allocator: Mallocator, report_leaks;
 import dlib.box: Box;

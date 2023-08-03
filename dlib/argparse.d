@@ -1,5 +1,5 @@
 /*
- * Copyright © 2021-2022, David Priver
+ * Copyright © 2021-2023, David Priver
  */
 module dlib.argparse;
 import core.stdc.stdio: printf, puts, fputs, stdout, fprintf, stderr, putchar;

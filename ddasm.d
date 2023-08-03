@@ -1,5 +1,5 @@
 /*
- * Copyright © 2021-2022, David Priver
+ * Copyright © 2021-2023, David Priver
  */
 import core.stdc.string: strlen, strerror, memcpy, memset;
 import core.stdc.stdio: fprintf, stdout, stderr, fread, stdin, FILE, fwrite, fflush, fopen, fputs, fgets;

@@ -1,5 +1,5 @@
 /*
- * Copyright © 2021-2022, David Priver
+ * Copyright © 2021-2023, David Priver
  */
 module dlib.file_util;
 import dlib.box: Box;

@@ -1,17 +1,28 @@
 {
-	"authors": [
-		"David Priver"
-	],
-	"copyright": "Copyright © 2021, David Priver",
-	"description": "Fantasy Assembly Interpreter",
-	"license": "proprietary",
-	"buildOptions": ["betterC"],
-	"dflags": ["--verror-style=gnu"],
-	"name": "ddasm",
-	"configurations":[
-		{
-			"name": "ddasm",
-			"targetType": "executable"
-		}
-	]
+  "authors": [
+    "David Priver"
+  ],
+  "copyright": "Copyright © 2021-2023, David Priver",
+  "description": "Fantasy Assembly Interpreter",
+  "license": "proprietary",
+  "buildOptions": [
+    "betterC"
+  ],
+  "dflags": [
+    "--verror-style=gnu",
+    "-i"
+  ],
+  "name": "ddasm",
+  "configurations": [
+    {
+      "name": "ddasm",
+      "targetType": "executable",
+      "buildOptions": [
+        "betterC"
+      ],
+      "sourceFiles": [
+        "ddasm.d"
+      ]
+    }
+  ]
 }
