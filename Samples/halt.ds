@@ -1,0 +1,6 @@
+import io;
+function start(arg){
+    if(arg > 4)
+        halt;
+    io.puts("arg <= 4");
+}

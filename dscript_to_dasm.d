@@ -153,6 +153,10 @@ class DasmAnalyzer(A): BCObject, Visitor!void, StatementVisitor!void {
     }
     void visit(ImportStatement* stmt){
     }
+    void visit(HaltStatement* stmt){
+    }
+    void visit(AbortStatement* stmt){
+    }
     void visit(GotoStatement* stmt){
     }
     void visit(LabelStatement* stmt){
@@ -851,6 +855,14 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
     }
     int visit(ImportStatement* stmt){
         sb.writef("import %\n", stmt.name.lexeme);
+        return 0;
+    }
+    int visit(HaltStatement* stmt){
+        sb.writef("  halt\n");
+        return 0;
+    }
+    int visit(AbortStatement* stmt){
+        sb.writef("  abort\n");
         return 0;
     }
     int visit(ReturnStatement* stmt){

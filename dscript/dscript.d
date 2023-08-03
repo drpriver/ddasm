@@ -20,7 +20,7 @@ enum TokenType: ubyte{
 
     // Keywords
     AND, ELSE, FALSE, FUN, FOR, IF, NIL, OR, RETURN, TRUE, LET,
-    WHILE, GOTO, LABEL, BREAK, CONTINUE, IMPORT,
+    WHILE, GOTO, LABEL, BREAK, CONTINUE, IMPORT, HALT, ABORT,
 
     EOF = 0,
 }
@@ -261,7 +261,7 @@ void powerup(){
     if(KEYWORDSPOWERED) return;
     KEYWORDSPOWERED = true;
     with(TokenType){
-        immutable string[17] keys = [
+        immutable string[19] keys = [
             "and",
             "else",
             "false",
@@ -279,8 +279,10 @@ void powerup(){
             "break",
             "continue",
             "import",
+            "halt",
+            "abort",
         ];
-        immutable TokenType[17] values = [
+        immutable TokenType[19] values = [
             AND,
             ELSE,
             FALSE,
@@ -298,6 +300,8 @@ void powerup(){
             BREAK,
             CONTINUE,
             IMPORT,
+            HALT,
+            ABORT,
         ];
         static assert(keys.length == values.length);
         for(size_t i = 0; i < keys.length; i++){
@@ -514,6 +518,8 @@ enum StatementType {
     GOTO,
     LABEL,
     IMPORT,
+    HALT,
+    ABORT,
 }
 
 interface StatementVisitor(R){
@@ -527,6 +533,8 @@ interface StatementVisitor(R){
     R visit(ReturnStatement* stmt);
     R visit(GotoStatement* stmt);
     R visit(LabelStatement* stmt);
+    R visit(HaltStatement* stmt);
+    R visit(AbortStatement* stmt);
 }
 
 struct Statement {
@@ -543,6 +551,8 @@ struct Statement {
         case RETURN     : return visitor.visit(cast(ReturnStatement*)&this);
         case GOTO       : return visitor.visit(cast(GotoStatement*)&this);
         case LABEL      : return visitor.visit(cast(LabelStatement*)&this);
+        case HALT      : return visitor.visit(cast(HaltStatement*)&this);
+        case ABORT      : return visitor.visit(cast(AbortStatement*)&this);
         }
     }
 }
@@ -561,6 +571,29 @@ struct ReturnStatement {
         return &p.stmt;
     }
 }
+
+struct HaltStatement {
+    Statement stmt;
+
+    static
+    Statement*
+    get(){
+        return cast(Statement*)&hlt_stmt;
+    }
+}
+
+immutable HaltStatement hlt_stmt = HaltStatement(Statement(StatementType.HALT));
+
+struct AbortStatement {
+    Statement stmt;
+
+    static
+    Statement*
+    get(){
+        return cast(Statement*)&abort_stmt;
+    }
+}
+immutable AbortStatement abort_stmt = AbortStatement(Statement(StatementType.ABORT));
 
 
 
@@ -800,6 +833,16 @@ struct Parser(A) {
     }
     Statement*
     statement(){
+        if(match(TokenType.HALT)){
+            consume(TokenType.SEMICOLON, "Expect ';' after halt");
+            if(ERROR_OCCURRED) return null;
+            return HaltStatement.get();
+        }
+        if(match(TokenType.ABORT)){
+            consume(TokenType.SEMICOLON, "Expect ';' after abort");
+            if(ERROR_OCCURRED) return null;
+            return AbortStatement.get();
+        }
         if(match(TokenType.RETURN)) return returnStatement();
         if(match(TokenType.FOR)) return forStatement();
         if(match(TokenType.IF)) return ifStatement();
