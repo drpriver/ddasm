@@ -1,3 +1,4 @@
+import io;
 function fib(n){
     return fib_inner(0, 1, n);
 }
@@ -9,5 +10,5 @@ function fib_inner(a, b, n){
 
 function start(){
    for(let i = 0; i < 20; i = i + 1)
-   	Printf2("fib(%zu) = %zu\n", i, fib(i));
+       io.printf2("fib(%zu) = %zu\n", i, fib(i));
 }

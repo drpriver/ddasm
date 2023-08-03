@@ -1,3 +1,4 @@
+import io;
 function start(){
-    Puts("Hello, World!");
+    io.puts("Hello, World!");
 }

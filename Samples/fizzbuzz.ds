@@ -1,21 +1,25 @@
+import io;
+import mem;
+import misc;
 function start(){
-    let buff = Malloc(80);
-    GetLine(buff, 80, "N (For fizzbuzz): ");
-    let n = Atoi(buff);
+    let buff = mem.malloc(80);
+    io.getline(buff, 80, "N (For fizzbuzz): ");
+    let n = misc.atoi(buff);
     // validate the input a bit
     if(n <= 1){
-        Puts("Too Small!");
+        io.puts("Too Small!");
         return;
     }
     if(n >= 100000){
-        Puts("Too big!");
+        io.puts("Too big!");
         return;
     }
     n = n + 1;
-    Puts("Iterative");
+    io.puts("Iterative");
     fizzbuzz(n);
-    Puts("Recursive");
-    recursive_fizzbuzz(0, n);
+    io.puts("Recursive");
+    recursive_fizzbuzz(1, n);
+    mem.free(buff);
 }
 
 function fizzbuzz(n){
@@ -25,41 +29,41 @@ function fizzbuzz(n){
         let mod5 = x % 5;
         let printed = false;
         if(!mod3){
-            Printf2("%s", "\e[91mfizz");
+            io.printf2("%s", "\e[91mfizz");
             printed = true;
         }
         if(!mod5){
-            Printf2("%s", "\e[92mbuzz");
+            io.printf2("%s", "\e[92mbuzz");
             printed = true;
         }
         if(!printed){
-            Printf2("\e[94m%u", x);
+            io.printf2("\e[94m%u", x);
         }
-        Printf1(" ");
+        io.printf1(" ");
     }
-    Puts("\e[39m");
+    io.puts("\e[39m");
 }
 
 function recursive_fizzbuzz(x, end){
     if(x == end) {
-        Puts("\e[39m");
+        io.puts("\e[39m");
         return;
     }
-    x = x + 1;
     let printed = false;
     let mod3 = x % 3;
     let mod5 = x % 5;
     if(!mod3){
-        Printf2("%s", "\e[91mfizz");
+        io.printf2("%s", "\e[91mfizz");
         printed = true;
     }
     if(!mod5){
-        Printf2("%s", "\e[92mbuzz");
+        io.printf2("%s", "\e[92mbuzz");
         printed = true;
     }
     if(!printed){
-        Printf2("\e[94m%u", x);
+        io.printf2("\e[94m%u", x);
     }
-    Printf1(" ");
+    io.printf1(" ");
+    x = x + 1;
     return recursive_fizzbuzz(x, end);
 }

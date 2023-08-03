@@ -1,6 +1,7 @@
+import io;
 function loops(n){
     for(let x = 0; x < n; x = x + 1){
-        Printf2("x: %zu\n", x);
+        io.printf2("x: %zu\n", x);
     }
     let y = 3;
     while(y < n){
@@ -14,5 +15,5 @@ function loops(n){
 
 function start(){
     let x = loops(4);
-    Printf2("loops(4) = %zu\n", x);
+    io.printf2("loops(4) = %zu\n", x);
 }

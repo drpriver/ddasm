@@ -3,6 +3,7 @@
 // pointers. What this file demonstrates is that if you check the generated
 // dasm, almost all of this file has been optimized out.
 // 
+import io;
 function start(){
 let a1 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1";
 let a2 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2";
@@ -204,6 +205,6 @@ while (i < 100000) {
   a8 == a1; a8 == a2; a8 == a3; a8 == a4; a8 == a5; a8 == a6; a8 == a7; a8 == a8;
 
 }
-  Puts("done");
+  io.puts("done");
 }
 
