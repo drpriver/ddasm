@@ -921,7 +921,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
     }
     int visit(WhileStatement* stmt){
         if(!funcdepth) {
-            error(0, "While outside of function");
+            error(0, "`while` outside of function");
             return -1;
         }
         int top = labelallocator.allocate();
