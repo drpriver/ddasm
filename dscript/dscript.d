@@ -114,8 +114,9 @@ struct Tokenizer(B) {
             case '\n':
                 line++;
                 break;
+            case '\'':
             case '"':
-                do_string();
+                do_string(c);
                 break;
             case '0': .. case '9':
                 do_number(c);
@@ -140,9 +141,9 @@ struct Tokenizer(B) {
             addToken(TokenType.IDENTIFIER);
     }
 
-    void do_string(){
+    void do_string(char c){
         bool backslash = false;
-        while((peek != '"' || backslash) && !isAtEnd()){
+        while((peek != c || backslash) && !isAtEnd()){
             if(peek == '\n') line++;
             if(peek == '\\') backslash = !backslash;
             else             backslash = false;
