@@ -1,3 +1,4 @@
+import io
 function start
     push rbp
     move rbp rsp
@@ -19,6 +20,6 @@ end
 
 function say
     bt
-    call function Printf1
+    call function io.printf1
     ret
 end

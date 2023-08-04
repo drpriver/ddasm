@@ -1,7 +1,8 @@
+import io
 function death
   abort
   move rarg1 "Life after Death"
-  call function Puts
+  call function io.puts
   ret
 end
 

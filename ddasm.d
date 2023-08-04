@@ -54,6 +54,7 @@ int main(int argc, char** argv){
     bool no_interactive = false;
     bool debugger = false;
     bool highlevel = false;
+    bool no_run = false;
     uintptr_t[RegisterNames.RARGMAX-RegisterNames.RARG1] rargs;
     ZString[rargs.length] rargs_s;
     ZString sourcefile;
@@ -66,7 +67,7 @@ int main(int argc, char** argv){
             ARGDEST(&sourcefile),
         },
     ];
-    ArgToParse[7] kw_args = [
+    ArgToParse[8] kw_args = [
         {
             "--force-interactive", "-i",
             "Force interactive mode when reading from stdin.",
@@ -105,6 +106,11 @@ int main(int argc, char** argv){
             NumRequired(0, rargs_s.length),
             SHOW_DEFAULT,
         },
+        {
+            "-y", "--dry-run",
+            "Compile and link, but don't run the script/dasm",
+            ARGDEST(&no_run),
+        }
 
     ];
     enum {HELP=0, VERSION=1}
@@ -236,24 +242,24 @@ int main(int argc, char** argv){
         void reg(str key, str f){
             io_module.functions[key] = (*BUILTINS)[f];
         }
-        reg("puts", "Puts");
-        reg("printf1", "Printf1");
-        reg("printf2", "Printf2");
-        reg("printf3", "Printf3");
-        reg("printf4", "Printf4");
-        reg("fprintf1", "FPrintf1");
-        reg("fprintf2", "FPrintf2");
-        reg("fprintf3", "FPrintf3");
-        reg("fopen", "Fopen");
-        reg("fread", "Fread");
-        reg("fclose", "Fclose");
-        reg("fwrite", "Fwrite");
-        reg("fputs", "Fputs");
-        reg("fgets", "Fgets");
-        reg("fflush", "Fflush");
-        reg("stdin", "GetStdIn");
-        reg("stdout", "GetStdOut");
-        reg("getline", "GetLine");
+        reg("puts",     "io.puts");
+        reg("printf1",  "io.printf1");
+        reg("printf2",  "io.printf2");
+        reg("printf3",  "io.printf3");
+        reg("printf4",  "io.printf4");
+        reg("fprintf1", "io.fprintf1");
+        reg("fprintf2", "io.fprintf2");
+        reg("fprintf3", "io.fprintf3");
+        reg("fopen",    "io.fopen");
+        reg("fread",    "io.fread");
+        reg("fclose",   "io.fclose");
+        reg("fwrite",   "io.fwrite");
+        reg("fputs",    "io.fputs");
+        reg("fgets",    "io.fgets");
+        reg("fflush",   "io.fflush");
+        reg("stdin",    "io.stdin");
+        reg("stdout",   "io.stdout");
+        reg("getline",  "io.getline");
     }
 
     LinkedModule mem_module;
@@ -262,11 +268,11 @@ int main(int argc, char** argv){
         void reg(str key, str f){
             mem_module.functions[key] = (*BUILTINS)[f];
         }
-        reg("malloc", "Malloc");
-        reg("free",   "Free");
-        reg("calloc", "Calloc");
-        reg("cpy",    "Memcpy");
-        reg("set",    "Memset");
+        reg("malloc", "mem.malloc");
+        reg("free",   "mem.free");
+        reg("calloc", "mem.calloc");
+        reg("cpy",    "mem.cpy");
+        reg("set",    "mem.set");
     }
 
     LinkedModule misc_module;
@@ -275,8 +281,8 @@ int main(int argc, char** argv){
         void reg(str key, str f){
             misc_module.functions[key] = (*BUILTINS)[f];
         }
-        reg("atoi", "Atoi");
-        version(Posix) reg("clock", "Clock");
+        reg("atoi", "misc.atoi");
+        version(Posix) reg("clock", "misc.clock");
     }
 
 
@@ -341,6 +347,8 @@ int main(int argc, char** argv){
     machine.registers[RegisterNames.RARG1 .. RegisterNames.RARGMAX] = rargs[];
     RecordingAllocator!Mallocator recorder;
     machine.allocator = VAllocator.from(&recorder);
+    if(no_run)
+        return 0;
     if(debugger && disassemble)
         err = machine.run!(RunFlags.DEBUG|RunFlags.DISASSEMBLE_EACH)(&linked_prog, 1024*1024);
     else if(debugger)
@@ -463,56 +471,56 @@ BUILTINS(){
 
 void
 expose_builtins(){
-    register_function("Printf1",
+    register_function("io.printf1",
         (uintptr_t fmt, uintptr_t arg){
             if(devnull) return;
             if(!Fuzzing)fprintf(stdout, cast(char*)fmt, arg);
         }
     );
-    register_function("Printf2",
+    register_function("io.printf2",
         (uintptr_t fmt, uintptr_t arg, uintptr_t arg2){
             if(devnull) return;
             if(!Fuzzing)fprintf(stdout, cast(char*)fmt, arg, arg2);
         }
     );
-    register_function("Printf3",
+    register_function("io.printf3",
         (uintptr_t fmt, uintptr_t arg, uintptr_t arg2, uintptr_t arg3){
             if(devnull) return;
             if(!Fuzzing)fprintf(stdout, cast(char*)fmt, arg, arg2, arg3);
         }
     );
-    register_function("Printf4",
+    register_function("io.printf4",
         (uintptr_t fmt, uintptr_t arg, uintptr_t arg2, uintptr_t arg3, uintptr_t arg4){
             if(devnull) return;
             if(!Fuzzing)fprintf(stdout, cast(char*)fmt, arg, arg2, arg3, arg4);
         }
     );
-    register_function("FPrintf1",
+    register_function("io.fprintf1",
         (uintptr_t fp, uintptr_t fmt, uintptr_t arg){
             if(devnull) return;
             if(!Fuzzing)fprintf(cast(FILE*)fp, cast(char*)fmt, arg);
         }
     );
-    register_function("FPrintf2",
+    register_function("io.fprintf2",
         (uintptr_t fp, uintptr_t fmt, uintptr_t arg, uintptr_t arg2){
             if(devnull) return;
             if(!Fuzzing)fprintf(cast(FILE*)fp, cast(char*)fmt, arg, arg2);
         }
     );
-    register_function("FPrintf3",
+    register_function("io.fprintf3",
         (uintptr_t fp, uintptr_t fmt, uintptr_t arg, uintptr_t arg2, uintptr_t arg3){
             if(devnull) return;
             if(!Fuzzing)fprintf(cast(FILE*)fp, cast(char*)fmt, arg, arg2, arg3);
         }
     );
-    register_function("Puts",
+    register_function("io.puts",
         (uintptr_t arg){
             if(devnull) return;
             if(!Fuzzing)fprintf(stdout, "%s\n", cast(char*)arg);
         }
     );
     version(Posix){
-    register_function("Clock",
+    register_function("misc.clock",
         (){
             timespec tv;
             clock_gettime(6, &tv);
@@ -521,65 +529,65 @@ expose_builtins(){
         }
     );
     }
-    register_function("Fread",
+    register_function("io.fread",
         (uintptr_t ptr, uintptr_t size, uintptr_t nitems, uintptr_t stream){
             return cast(uintptr_t)fread(cast(void*)ptr, size, nitems, cast(FILE*)stream);
         }
     );
-    register_function("Fopen", (uintptr_t fn, uintptr_t mode){
+    register_function("io.fopen", (uintptr_t fn, uintptr_t mode){
             return cast(uintptr_t)fopen(cast(const char*)fn, cast(const char*)mode);
         }
     );
-    register_function("Fclose", (uintptr_t fp){
+    register_function("io.fclose", (uintptr_t fp){
             return cast(uintptr_t)fclose(cast(FILE*)fp);
     });
-    register_function("Fwrite",
+    register_function("io.fwrite",
         (uintptr_t ptr, uintptr_t size, uintptr_t nitems, uintptr_t stream){
             return cast(uintptr_t)fwrite(cast(void*)ptr, size, nitems, cast(FILE*)stream);
         }
     );
-    register_function("Fputs",
+    register_function("io.fputs",
         (uintptr_t ptr, uintptr_t stream){
             return cast(uintptr_t)fputs(cast(const char*)ptr, cast(FILE*)stream);
         }
     );
-    register_function("Fgets",
+    register_function("io.fgets",
         (uintptr_t ptr, uintptr_t size, uintptr_t stream){
             return cast(uintptr_t)fgets(cast(char*)ptr, cast(int)size, cast(FILE*)stream);
         }
     );
-    register_function("Fflush",
+    register_function("io.fflush",
         (uintptr_t stream){
             return cast(uintptr_t)fflush(cast(FILE*)stream);
         }
     );
-    register_function("GetStdIn",
+    register_function("io.stdin",
         (){
             // return cast(uintptr_t)fopen("hello.txt", "r");
             return cast(uintptr_t)stdin;
         }
     );
-    register_function("GetStdOut",
+    register_function("io.stdout",
         (){
             return cast(uintptr_t)stdout;
         }
     );
-    register_function("Malloc",
+    register_function("mem.malloc",
         (uintptr_t size){
             return cast(uintptr_t)malloc(size);
         }
     );
-    register_function("Free",
+    register_function("mem.free",
         (uintptr_t ptr){
             free(cast(void*)ptr);
         }
     );
-    register_function("Memcpy",
+    register_function("mem.cpy",
         (uintptr_t dst, uintptr_t src, uintptr_t len){
             return cast(uintptr_t)memcpy(cast(void*)dst, cast(void*)src, len);
         }
     );
-    register_function("GetLine",
+    register_function("io.getline",
         (uintptr_t buff, uintptr_t buflen, uintptr_t prompt_){
             __gshared LineHistory!() history;
             char* buff_ = cast(char*)buff;
@@ -597,15 +605,15 @@ expose_builtins(){
             return cast(uintptr_t)len;
         }
     );
-    register_function("Atoi",
+    register_function("misc.atoi",
         (uintptr_t p){
             return cast(uintptr_t)atoi(cast(char*)p);
         }
     );
-    register_function("Calloc", (uintptr_t nitems, uintptr_t size){
+    register_function("mem.calloc", (uintptr_t nitems, uintptr_t size){
         return cast(uintptr_t)calloc(nitems, size);
     });
-    register_function("Memset",
+    register_function("mem.set",
             (uintptr_t dst, uintptr_t c, uintptr_t sz){
                 void* buff = cast(void*)dst;
                 memset(buff, cast(int)c, sz);

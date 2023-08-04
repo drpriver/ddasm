@@ -1,8 +1,10 @@
+import io
+import mem
 function foo 0
     abort
     move rarg1 "XXXHello from foo!"
     add rarg1 rarg1 3
-    call function Puts
+    call function io.puts
     add rip r4 0p3 # jump back to the real instruction pointer
     abort
 end
@@ -10,13 +12,13 @@ end
 function start 0
     sub rarg2 rip 0p16 # this is hackermode - exploit functions being one big block of memory
     move rarg1 "Hello from start"
-    call function Puts
+    call function io.puts
     move rarg1 rsp
     move rarg3 0p19
-    call function Memcpy # just copy the instructions onto the stack
+    call function mem.cpy # just copy the instructions onto the stack
     move r4 rip # stash the actual instruction pointer
     move rip rsp # ... and jump to executing the stack instead
     move rarg1 "Hello from start again"
-    call function Puts
+    call function io.puts
     halt
 end

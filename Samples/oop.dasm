@@ -1,3 +1,5 @@
+import io
+import mem
 # This demo shows how you could implement a basic object system
 # if you wanted to. Maybe we'll add this to the interpreter
 # so that the method look up happens in native code.
@@ -77,7 +79,7 @@ end
 
 function freePrinter 1
     move rarg2 0p3
-    call function Free
+    call function mem.free
     ret
 end
 
@@ -86,7 +88,7 @@ function makePrinter 0
     move rarg2 3
     mul rarg2 rarg2 USIZE
     move rarg1 1
-    call function Calloc
+    call function mem.calloc
     add rout2 rout1 USIZE
     move rarg2 ""
     write rout2 rarg2 # the first data member is prefix, set it to ""
@@ -100,7 +102,7 @@ end
 function makeOtherPrinter 0
     move rarg2 0p3
     move rarg1 1
-    call function Calloc
+    call function mem.calloc
     add rout2 rout1 0p1
     move rarg2 ""
     write rout2 rarg2 # the first data member is prefix, set it to ""
@@ -114,7 +116,7 @@ end
 function makeThirdPrinter 0
     move rarg2 0p3
     move rarg1 1
-    call function Calloc
+    call function mem.calloc
     add rout2 rout1 0p1
     move rarg2 ""
     write rout2 rarg2 # the first data member is prefix, set it to ""
@@ -146,7 +148,7 @@ function printerPrint 2
     add  rarg3 rarg3 1
     add  r0 r0 0p1
     write r0 rarg3
-    call function Printf4
+    call function io.printf4
     pop r0
     ret
 end
@@ -170,7 +172,7 @@ function otherPrinterPrint 2
     add  rarg3 rarg3 1
     add  r0 r0 0p1
     write r0 rarg3
-    call function Printf4
+    call function io.printf4
     pop r0
     ret
 end
@@ -189,7 +191,7 @@ function thirdPrinterPrint 2
     move rarg3 rarg2
     move rarg1 "%s ThirdPrinter: %s\n"
     read rarg2 r0
-    call function Printf3
+    call function io.printf3
     pop r0
     ret
 end
@@ -250,31 +252,31 @@ function start 0
     move rarg1 r0
     call function useprinter
     move rarg1 "=*= Success 1! =*="
-    call function Puts
+    call function io.puts
     move rarg1 r0
     call function useprinter
     move rarg1 "=*= Success 2! =*="
-    call function Puts
+    call function io.puts
 
     read r0 var secondClass
     move rarg1 r0
     call function useprinter
     move rarg1 "=*= Success 3! =*="
-    call function Puts
+    call function io.puts
     move rarg1 r0
     call function useprinter
     move rarg1 "=*= Success 4! =*="
-    call function Puts
+    call function io.puts
 
     read r0 var thirdClass
     move rarg1 r0
     call function useprinter
     move rarg1 "=*= Success 5! =*="
-    call function Puts
+    call function io.puts
     move rarg1 r0
     call function useprinter
     move rarg1 "=*= Success 6! =*="
-    call function Puts
+    call function io.puts
 
     halt
 end

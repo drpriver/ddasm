@@ -1,7 +1,6 @@
 import io;
 import misc;
 function start(){
-  Puts("hello");
   let t = misc.clock();
   for(let i = 0; i < 42; i = i+1){
     io.printf2("fib1(%zu): %zu\n", i, fib1(i));

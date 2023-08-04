@@ -1,3 +1,4 @@
+import io
 function cat 0
     move r0 rarg1
     move r1 rarg2
@@ -12,27 +13,27 @@ function cat 0
     label loop
         move rarg3 32768
         move rarg4 r0
-        call function Fread
+        call function io.fread
         move r3 rout1
 
         move rarg3 r3
         move rarg4 r1
-        call function Fwrite
+        call function io.fwrite
 
         cmp r3 32768
         jump ne label done
         move rip label loop
     label done
     move rarg1 r1
-    call function Fflush
+    call function io.fflush
     move rsp rbp
     ret
 end
 
 function start 0
-    call function GetStdIn
+    call function io.stdin
     move r0 rout1
-    call function GetStdOut
+    call function io.stdout
     move rarg1 r0
     move rarg2 rout1
     call function cat

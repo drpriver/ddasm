@@ -41,19 +41,21 @@ guard against just falling off the end of the function.
 
 Hello world in dasm:
 ```
+import io
 function start 0
   move rarg1 "Hello World"
-  call function Puts
+  call function io.puts
   ret
 end
 ```
 
 Hackerman programming in dasm:
 ```
+import
 function death
   abort
   move rarg1 "Life after Death"
-  call function Puts
+  call function io.puts
   ret
 end
 
