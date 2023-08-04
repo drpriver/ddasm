@@ -93,8 +93,9 @@ Davescript is basically c-like.
 Davescript has functions:
 
 ```
+import io;
 function hello(){
-    Puts("hello");
+    io.puts("hello");
 }
 ```
 Functions are called in the usual manner, as shown above.
@@ -113,9 +114,10 @@ function foo(a){
 
 It has control flow:
 ```
+import io;
 function loops(n){
     for(let x = 0; x < n; x = x + 1){
-        Printf2("x: %zu\n", x);
+        io.printf2("x: %zu\n", x);
     }
     let y = 3;
     while(y < n){
@@ -129,7 +131,7 @@ function loops(n){
 
 function start(){
     let x = loops(4);
-    Printf2("loops(4) = %zu\n", x);
+    io.printf2("loops(4) = %zu\n", x);
 }
 ```
 It has guaranteed tail calls:
@@ -142,14 +144,15 @@ function fib_inner(a, b, n){
     if(n <= 0) return a;
     return fib_inner(b, a+b, n-1);
 }
-
+import io;
 function start(){
-   for(let i = 0; i < 20; i = i + 1)
-   	Printf2("fib(%zu) = %zu\n", i, fib(i));
+    for(let i = 0; i < 20; i = i + 1)
+        io.printf2("fib(%zu) = %zu\n", i, fib(i));
 }
 ```
 Which compiles to:
 ```
+import io
 function fib 1
   move r0 r10
   move r10 0
@@ -196,7 +199,7 @@ function start 0
   pop r11
   pop r10
   push r0
-  call function Printf2
+  call function io.printf2
   pop r0
   move r1 r0
   add r1 r1 1
@@ -253,3 +256,5 @@ Dasm currently has way more features than davescript.
 * This only builds with ldc as it uses an ldc simd intrinsic to accelerate
   escaping characters in strings. It could be made to work without that
   by wrapping that in a `version(){}` block
+* I made it build with dub at some point. I don't know what I'm doing as
+  plain `dub` asserts, but `dub build` works.
