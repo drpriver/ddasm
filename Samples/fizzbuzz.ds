@@ -23,16 +23,13 @@ function start(){
 }
 
 function fizzbuzz(n){
-    let x = 0;
-    for(x = 1; x < n; x = x + 1){
-        let mod3 = x % 3;
-        let mod5 = x % 5;
+    for(let x = 1; x < n; x = x + 1){
         let printed = false;
-        if(!mod3){
+        if(x%3==0){
             io.printf2("%s", "\e[91mfizz");
             printed = true;
         }
-        if(!mod5){
+        if(x%5==0){
             io.printf2("%s", "\e[92mbuzz");
             printed = true;
         }

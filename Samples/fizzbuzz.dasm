@@ -76,7 +76,6 @@ function fizzbuzz 1
 end
 
 function recursive_fizzbuzz 1
-    bt
     cmp rarg1 rarg2
     jump eq label end
     push rarg1
