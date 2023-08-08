@@ -9,7 +9,7 @@ import dlib.allocator;
 import dlib.box;
 import dlib.stringbuilder;
 import dlib.parse_numbers: parse_hex_inner;
-import dlib.btable;
+import dlib.table;
 import dlib.str_util: split;
 
 import dvm.dvm_defs;
@@ -23,7 +23,7 @@ struct LinkContext {
     VAllocator* temp_allocator;
     FunctionTable* builtins;
     UnlinkedModule* unlinked;
-    BTable!(str, LinkedModule*, VAllocator*)* modules;
+    Table!(str, LinkedModule*, VAllocator*)* modules;
 
     LinkedModule prog;
     void delegate(const char*, out str, out int, out int) find_loc;
@@ -289,8 +289,8 @@ struct LinkContext {
 
     AsmError
     link_function(AbstractFunction* afunc, Function* func){
-        BTable!(str, uintptr_t, VAllocator*) labels;
-        labels.allocator = temp_allocator;
+        Table!(str, uintptr_t, VAllocator*) labels;
+        labels.data.allocator = temp_allocator;
         scope(exit) labels.cleanup;
         // look for labels
         {
@@ -405,7 +405,7 @@ link_module(
     UnlinkedModule* unlinked,
     LinkedModule* prog,
     scope void delegate(const char*, out str, out int, out int) find_loc,
-    BTable!(str, LinkedModule*, VAllocator*)* modules,
+    Table!(str, LinkedModule*, VAllocator*)* modules,
 ){
     LinkContext ctx;
     ctx.allocator = allocator;
@@ -415,11 +415,11 @@ link_module(
     ctx.prog.bytecode.allocator = allocator;
     ctx.prog.strings.bdata.allocator = allocator;
     ctx.prog.arrays.bdata.allocator = allocator;
-    ctx.prog.functions.allocator = allocator;
+    ctx.prog.functions.data.allocator = allocator;
     ctx.prog.functions.extend(builtins.items);
     ctx.prog.function_store.allocator = allocator;
     ctx.prog.variables.allocator = allocator;
-    ctx.prog.variable_table.allocator = allocator;
+    ctx.prog.variable_table.data.allocator = allocator;
     ctx.prog.source_text = prog.source_text;
     ctx.prog.name = prog.name;
     ctx.find_loc = find_loc;

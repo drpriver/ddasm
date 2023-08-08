@@ -5,13 +5,13 @@ module dvm.dvm_linked;
 import dlib.allocator;
 import dlib.box;
 import dlib.zstring;
-import dlib.btable;
+import dlib.table;
 import dlib.barray;
 
 import dvm.dvm_defs;
 
 alias IntegerArray = Barray!(uintptr_t, VAllocator*);
-alias FunctionTable = BTable!(str, FunctionInfo, VAllocator*);
+alias FunctionTable = Table!(str, FunctionInfo, VAllocator*);
 
 struct Variable {
     str name;
@@ -70,7 +70,7 @@ struct LinkedModule {
     // storage for the variables
     Box!(uintptr_t[], VAllocator*) variables;
     // table to look variables up by name
-    BTable!(str, uintptr_t*, VAllocator*) variable_table;
+    Table!(str, uintptr_t*, VAllocator*) variable_table;
     Function* start;
 
     FunctionInfo

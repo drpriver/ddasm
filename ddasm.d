@@ -14,7 +14,7 @@ import dlib.file_util: read_file, FileFlags, FileResult;
 import dlib.allocator;
 import dlib.box: Box;
 import dlib.str_util: endswith;
-import dlib.btable;
+import dlib.table;
 import dlib.aliases;
 
 
@@ -237,7 +237,7 @@ int main(int argc, char** argv){
     }
     expose_builtins;
     LinkedModule io_module;
-    io_module.functions.allocator = &va;
+    io_module.functions.data.allocator = &va;
     {
         void reg(str key, str f){
             io_module.functions[key] = (*BUILTINS)[f];
@@ -263,7 +263,7 @@ int main(int argc, char** argv){
     }
 
     LinkedModule mem_module;
-    mem_module.functions.allocator = &va;
+    mem_module.functions.data.allocator = &va;
     {
         void reg(str key, str f){
             mem_module.functions[key] = (*BUILTINS)[f];
@@ -276,7 +276,7 @@ int main(int argc, char** argv){
     }
 
     LinkedModule misc_module;
-    misc_module.functions.allocator = &va;
+    misc_module.functions.data.allocator = &va;
     {
         void reg(str key, str f){
             misc_module.functions[key] = (*BUILTINS)[f];
@@ -315,8 +315,8 @@ int main(int argc, char** argv){
         ArenaAllocator!(Mallocator) arena;
         scope(exit) arena.free_all;
         VAllocator temp_va = VAllocator.from(&arena);
-        BTable!(str, LinkedModule*, VAllocator*) loaded;
-        loaded.allocator = &temp_va;
+        Table!(str, LinkedModule*, VAllocator*) loaded;
+        loaded.data.allocator = &temp_va;
         foreach(imp; prog.imports[]){
             switch(imp){
                 case "io":
@@ -464,7 +464,7 @@ BUILTINS(){
     __gshared VAllocator va = VAllocator.from!(Mallocator);
     if(!initialized){
         initialized = true;
-        table.allocator = &va;
+        table.data.allocator = &va;
     }
     return &table;
 }

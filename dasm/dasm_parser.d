@@ -7,7 +7,7 @@ import core.stdc.stdio: fprintf, stderr;
 import dlib.aliases;
 import dlib.allocator;
 import dlib.zstring;
-import dlib.btable;
+import dlib.table;
 import dlib.stringbuilder;
 import dlib.parse_numbers;
 
@@ -256,7 +256,7 @@ struct ParseContext{
     int
     decode_instruction(Token tok, AbstractInstruction* inst){ with(AsmError) with(TokenType) with(ArgumentKind){
         auto first_tok = tok;
-        auto infos = InstructionTable.get(cast(string)tok.text);
+        auto infos = InstructionTable.get_item(cast(string)tok.text);
         if(!infos){
             err_print(tok, Q(tok.text), " does not match any known instruction");
             return PARSE_ERROR;
@@ -425,7 +425,7 @@ struct ParseContext{
             }
             case IDENTIFIER:{
                 auto text = tok.text;
-                if(auto val = ConstantsTable.get(cast(string)text)){
+                if(auto val = cast(string)text in *ConstantsTable){
                     result.immediate = *val;
                     result.kind = IMMEDIATE;
                     return result;

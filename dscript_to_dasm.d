@@ -10,8 +10,9 @@ import dlib.allocator: Mallocator, ArenaAllocator;
 import dlib.box: Box;
 import dlib.stringbuilder: StringBuilder, P;
 import dlib.barray: Barray, make_barray;
-import dlib.btable: Table;
+import dlib.table: Table;
 import dlib.bettercobject: BCObject;
+import dlib.str_util: stripped;
 
 import dscript.dscript;
 

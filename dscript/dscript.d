@@ -4,7 +4,7 @@ import dlib.aliases;
 import dlib.allocator: Mallocator;
 import dlib.barray: Barray, make_barray;
 import dlib.parse_numbers: parse_unsigned_human;
-import dlib.btable: BTable;
+import dlib.table: Table;
 
 enum TokenType: ubyte{
     // Single character tokens

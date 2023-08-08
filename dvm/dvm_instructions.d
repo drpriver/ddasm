@@ -3,7 +3,7 @@
  */
 module dvm.dvm_instructions;
 import dlib.allocator: Mallocator;
-import dlib.btable: BTable;
+import dlib.table: Table;
 import dlib.barray: Barray;
 import dvm.dvm_defs;
 import dvm.dvm_args: ArgumentKind;
@@ -180,9 +180,9 @@ immutable InstructionInfo[Instruction.max+1] INSTRUCTION_INFOS = {
     }
 }();
 
-BTable!(string, Barray!(InstructionInfo, Mallocator), Mallocator)
+Table!(string, Barray!(InstructionInfo, Mallocator), Mallocator)
 InstructionTable(){
-    static __gshared BTable!(string, Barray!(InstructionInfo, Mallocator), Mallocator) result;
+    static __gshared Table!(string, Barray!(InstructionInfo, Mallocator), Mallocator) result;
     static __gshared initialized = false;
     if(!initialized){
         initialized = true;
