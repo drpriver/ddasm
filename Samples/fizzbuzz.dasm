@@ -3,6 +3,10 @@ import misc
 function start 0
     move rbp rsp
     move r0 rsp
+    move rout1 rarg1
+    cmp rarg1 0
+    cmov ne rip label validate
+
     add rsp rsp 80
     move rarg1 r0
     move rarg2 80
@@ -11,6 +15,8 @@ function start 0
 
     move rarg1 r0
     call function misc.atoi
+
+    label validate
 
     # validate the input a bit
     move r1 rout1
