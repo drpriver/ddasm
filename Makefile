@@ -1,4 +1,4 @@
-OPT?=-O1 -g
+OPT?=-O3 -g
 
 Bin: ; mkdir $@
 Deps: ; mkdir $@
@@ -6,12 +6,8 @@ Deps: ; mkdir $@
 DEPFILES:=$(wildcard Deps/*.deps)
 include $(DEPFILES)
 
-# Apparently a collosal amount of dead code is generated.
-# Telling the linker to strip it out saves a lot!
-LDSTRIP=-L-dead_strip
-
 Bin/%: %.d | Bin Deps
-	ldc2 -i $< -betterC -fvisibility=hidden $(OPT) $(LDSTRIP) -of $@ -makedeps=Deps/$*.deps --allinst
+	ldc2 -i $< -betterC -fvisibility=hidden $(OPT) -of $@ -makedeps=Deps/$*.deps
 
 .PHONY: ddasm
 ddasm: Bin/ddasm
