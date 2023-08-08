@@ -20,7 +20,7 @@ enum TokenType: ubyte{
 
     // Keywords
     AND, ELSE, FALSE, FUN, FOR, IF, NIL, OR, RETURN, TRUE, LET,
-    WHILE, GOTO, LABEL, BREAK, CONTINUE, IMPORT, HALT, ABORT,
+    WHILE, GOTO, LABEL, BREAK, CONTINUE, IMPORT, HALT, ABORT, DASM,
 
     EOF = 0,
 }
@@ -255,14 +255,14 @@ bool isIdentChar()(ubyte c){
     return isAlpha(c) || isDigit(c) || c == '_' || c == '.';
 }
 
-__gshared BTable!(str, TokenType, Mallocator) KEYWORDS;
+__gshared Table!(str, TokenType, Mallocator) KEYWORDS;
 
 __gshared KEYWORDSPOWERED = false;
 void powerup(){
     if(KEYWORDSPOWERED) return;
     KEYWORDSPOWERED = true;
     with(TokenType){
-        immutable string[19] keys = [
+        immutable string[20] keys = [
             "and",
             "else",
             "false",
@@ -282,8 +282,9 @@ void powerup(){
             "import",
             "halt",
             "abort",
+            "dasm",
         ];
-        immutable TokenType[19] values = [
+        immutable TokenType[20] values = [
             AND,
             ELSE,
             FALSE,
@@ -303,6 +304,7 @@ void powerup(){
             IMPORT,
             HALT,
             ABORT,
+            DASM,
         ];
         static assert(keys.length == values.length);
         for(size_t i = 0; i < keys.length; i++){
@@ -601,6 +603,7 @@ enum StatementType {
     IMPORT,
     HALT,
     ABORT,
+    DASM,
 }
 
 interface StatementVisitor(R){
@@ -616,6 +619,7 @@ interface StatementVisitor(R){
     R visit(LabelStatement* stmt);
     R visit(HaltStatement* stmt);
     R visit(AbortStatement* stmt);
+    R visit(DasmStatement* stmt);
 }
 
 struct Statement {
@@ -634,7 +638,21 @@ struct Statement {
         case LABEL      : return visitor.visit(cast(LabelStatement*)&this);
         case HALT      : return visitor.visit(cast(HaltStatement*)&this);
         case ABORT      : return visitor.visit(cast(AbortStatement*)&this);
+        case DASM      : return visitor.visit(cast(DasmStatement*)&this);
         }
+    }
+}
+
+struct DasmStatement {
+    Statement stmt;
+    Token dasm;
+    static
+    Statement* make(A)(A allocator, Token dasm){
+        auto data = allocator.alloc(typeof(this).sizeof);
+        auto p = cast(typeof(this)*)data.ptr;
+        p.stmt.type = StatementType.DASM;
+        p.dasm = dasm;
+        return &p.stmt;
     }
 }
 
@@ -857,6 +875,7 @@ struct Parser(A) {
         if(match(TokenType.FUN)) return function_!"function"();
         if(match(TokenType.LET)) return varDeclaration();
         if(match(TokenType.IMPORT)) return import_statement;
+        if(match(TokenType.DASM)) return dasm_statement;
         return statement();
     }
 
@@ -867,6 +886,15 @@ struct Parser(A) {
         consume(SEMICOLON, "Expected semicolon");
         if(ERROR_OCCURRED) return null;
         return ImportStatement.make(allocator, name);
+    }
+    }
+    Statement*
+    dasm_statement(){with(TokenType){
+        Token dasm = consume(STRING, "Expected dasm string");
+        if(ERROR_OCCURRED) return null;
+        consume(SEMICOLON, "Expected semicolon");
+        if(ERROR_OCCURRED) return null;
+        return DasmStatement.make(allocator, dasm);
     }
     }
 

@@ -156,6 +156,8 @@ class DasmAnalyzer(A): BCObject, Visitor!void, StatementVisitor!void {
     }
     void visit(ImportStatement* stmt){
     }
+    void visit(DasmStatement* stmt){
+    }
     void visit(HaltStatement* stmt){
     }
     void visit(AbortStatement* stmt){
@@ -736,6 +738,10 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
         error(stmt.name, "Unhandled var stmt");
         return -1;
         }
+    }
+    int visit(DasmStatement* stmt){
+        sb.writef("    %\n", stmt.dasm.lexeme[1..$-1].stripped);
+        return 0;
     }
     int visit(Block* stmt){
         if(!funcdepth) {
