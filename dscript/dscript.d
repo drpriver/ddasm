@@ -374,29 +374,17 @@ struct Expr{
         case CALL     : (cast(Call*)&this).dump; break;
         }
     }
-    R accept(R)(Visitor!R visitor){
-        final switch(type)with(ExprType){
-        case ASSIGN   : return visitor.visit(cast(Assign*)&this);
-        case BINARY   : return visitor.visit(cast(Binary*)&this);
-        case GROUPING : return visitor.visit(cast(Grouping*)&this);
-        case LITERAL  : return visitor.visit(cast(Literal*)&this);
-        case UNARY    : return visitor.visit(cast(Unary*)&this);
-        case VARIABLE : return visitor.visit(cast(VarExpr*)&this);
-        case LOGICAL  : return visitor.visit(cast(Logical*)&this);
-        case CALL     : return visitor.visit(cast(Call*)&this);
-        }
-    }
-    R accept(R)(RegVisitor!R visitor, int target){
-        final switch(type)with(ExprType){
-        case ASSIGN   : return visitor.visit(cast(Assign*)&this, target);
-        case BINARY   : return visitor.visit(cast(Binary*)&this, target);
-        case GROUPING : return visitor.visit(cast(Grouping*)&this, target);
-        case LITERAL  : return visitor.visit(cast(Literal*)&this, target);
-        case UNARY    : return visitor.visit(cast(Unary*)&this, target);
-        case VARIABLE : return visitor.visit(cast(VarExpr*)&this, target);
-        case LOGICAL  : return visitor.visit(cast(Logical*)&this, target);
-        case CALL     : return visitor.visit(cast(Call*)&this, target);
-        }
+}
+auto accept(V, A...)(Expr* e, V visitor, A a){
+    final switch(e.type)with(ExprType){
+        case ASSIGN   : return visitor.visit(cast(Assign*)e, a);
+        case BINARY   : return visitor.visit(cast(Binary*)e, a);
+        case GROUPING : return visitor.visit(cast(Grouping*)e, a);
+        case LITERAL  : return visitor.visit(cast(Literal*)e, a);
+        case UNARY    : return visitor.visit(cast(Unary*)e, a);
+        case VARIABLE : return visitor.visit(cast(VarExpr*)e, a);
+        case LOGICAL  : return visitor.visit(cast(Logical*)e, a);
+        case CALL     : return visitor.visit(cast(Call*)e, a);
     }
 }
 struct Assign {

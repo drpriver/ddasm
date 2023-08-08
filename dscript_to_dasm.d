@@ -32,7 +32,7 @@ compile_to_dasm(const ubyte[] source, Box!(char[], Mallocator)* progtext){
     err = parser.parse(&statements);
     if(err) return 1;
     StringBuilder!Mallocator sb;
-    scope writer = new DasmWriter!(typeof(sb), typeof(arena)*)(&sb, &arena);
+    auto writer = DasmWriter!(typeof(sb), typeof(arena)*)(&sb, &arena);
     err = writer.do_it(statements[]);
     writer.cleanup;
     if(err){
@@ -91,68 +91,98 @@ struct Analysis(A) {
     bool vars_on_stack;
     bool has_goto;
 }
-class DasmAnalyzer(A): BCObject, Visitor!void, StatementVisitor!void {
+struct DasmAnalyzer(A){
     @disable this();
     Analysis!A analysis;
     this(A allocator){
         analysis.vars.bdata.allocator = allocator;
     }
 
+    void analyze(Expr* e){
+        final switch(e.type)with(ExprType){
+            case ASSIGN:   return visit(cast(Assign*)e);
+            case BINARY:   return visit(cast(Binary*)e);
+            case GROUPING: return visit(cast(Grouping*)e);
+            case LITERAL:  return visit(cast(Literal*)e);
+            case UNARY:    return visit(cast(Unary*)e);
+            case VARIABLE: return visit(cast(VarExpr*)e);
+            case LOGICAL:  return visit(cast(Logical*)e);
+            case CALL:     return visit(cast(Call*)e);
+        }
+    }
+    void analyze(Statement* s){
+        final switch(s.type)with(StatementType){
+            case BLOCK:      return visit(cast(Block*)s);
+            case EXPRESSION: return visit(cast(ExpressionStmt*)s);
+            case LET:        return visit(cast(LetStmt*)s);
+            case IF:         return visit(cast(IfStmt*)s);
+            case WHILE:      return visit(cast(WhileStatement*)s);
+            case FUNCTION:   return visit(cast(FuncStatement*)s);
+            case IMPORT:     return visit(cast(ImportStatement*)s);
+            case RETURN:     return visit(cast(ReturnStatement*)s);
+            case GOTO:       return visit(cast(GotoStatement*)s);
+            case LABEL:      return visit(cast(LabelStatement*)s);
+            case HALT:       return visit(cast(HaltStatement*)s);
+            case ABORT:      return visit(cast(AbortStatement*)s);
+            case DASM:       return visit(cast(DasmStatement*)s);
+        }
+    }
+
     void visit(Binary* expr){
-        expr.left.accept(this);
-        expr.right.accept(this);
+        analyze(expr.left);
+        analyze(expr.right);
     }
     void visit(Call* expr){
-        expr.callee.accept(this);
+        analyze(expr.callee);
         foreach(a; expr.args)
-            a.accept(this);
+            analyze(a);
     }
     void visit(Grouping* expr){
-        expr.expression.accept(this);
+        analyze(expr.expression);
     }
     void visit(Literal* expr){
     }
     void visit(Unary* expr){
-        expr.right.accept(this);
+        analyze(expr.right);
     }
     void visit(VarExpr* expr){
     }
     void visit(Assign* expr){
-        expr.right.accept(this);
+        analyze(expr.right);
     }
     void visit(Logical* expr){
-        expr.left.accept(this);
-        expr.right.accept(this);
+        analyze(expr.left);
+        analyze(expr.right);
     }
     void visit(ExpressionStmt* stmt){
-        stmt.expr.accept(this);
+        analyze(stmt.expr);
     }
     void visit(LetStmt* stmt){
-        stmt.initializer.accept(this);
+        analyze(stmt.initializer);
         analysis.vars ~= stmt.name;
     }
     void visit(IfStmt* stmt){
-        stmt.condition.accept(this);
-        stmt.thenBranch.accept(this);
+        analyze(stmt.condition);
+        analyze(stmt.thenBranch);
         if(stmt.elseBranch !is null)
-            stmt.elseBranch.accept(this);
+            analyze(stmt.elseBranch);
     }
     void visit(WhileStatement* stmt){
-        stmt.condition.accept(this);
-        stmt.statement.accept(this);
+        analyze(stmt.condition);
+        analyze(stmt.statement);
     }
     void visit(ReturnStatement* stmt){
-        stmt.value.accept(this);
+        analyze(stmt.value);
     }
     void visit(Block* stmt){
         foreach(s; stmt.statements)
-            s.accept(this);
+            analyze(s);
     }
     void visit(FuncStatement* stmt){
         analysis.vars.clear();
         analysis.has_goto = false;
         foreach(s; stmt.body)
-            s.accept(this);
+            analyze(s);
     }
     void visit(ImportStatement* stmt){
     }
@@ -169,7 +199,7 @@ class DasmAnalyzer(A): BCObject, Visitor!void, StatementVisitor!void {
     }
 
 }
-class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
+struct DasmWriter(SB, A){
     A allocator;
     SB* sb;
     RegisterAllocator regallocator;
@@ -189,6 +219,37 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
     this(SB* s, A a){
         allocator = a;
         sb = s;
+    }
+
+    int gen(Expr* e, int target){
+        final switch(e.type)with(ExprType){
+            case ASSIGN:   return visit(cast(Assign*)e, target);
+            case BINARY:   return visit(cast(Binary*)e, target);
+            case GROUPING: return visit(cast(Grouping*)e, target);
+            case LITERAL:  return visit(cast(Literal*)e, target);
+            case UNARY:    return visit(cast(Unary*)e, target);
+            case VARIABLE: return visit(cast(VarExpr*)e, target);
+            case LOGICAL:  return visit(cast(Logical*)e, target);
+            case CALL:     return visit(cast(Call*)e, target);
+        }
+    }
+
+    int gen(Statement* s){
+        final switch(s.type)with(StatementType){
+            case BLOCK:      return visit(cast(Block*)s);
+            case EXPRESSION: return visit(cast(ExpressionStmt*)s);
+            case LET:        return visit(cast(LetStmt*)s);
+            case IF:         return visit(cast(IfStmt*)s);
+            case WHILE:      return visit(cast(WhileStatement*)s);
+            case FUNCTION:   return visit(cast(FuncStatement*)s);
+            case IMPORT:     return visit(cast(ImportStatement*)s);
+            case RETURN:     return visit(cast(ReturnStatement*)s);
+            case GOTO:       return visit(cast(GotoStatement*)s);
+            case LABEL:      return visit(cast(LabelStatement*)s);
+            case HALT:       return visit(cast(HaltStatement*)s);
+            case ABORT:      return visit(cast(AbortStatement*)s);
+            case DASM:       return visit(cast(DasmStatement*)s);
+        }
     }
 
     void
@@ -235,7 +296,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
         }
         else {
             lhs = regallocator.allocate();
-            int res = expr.left.accept(this, lhs);
+            int res = gen(expr.left, lhs);
             if(res != 0) return res;
         }
         if(expr.right.type == ExprType.LITERAL && (cast(Literal*)expr.right).value.type == TokenType.NUMBER){
@@ -251,7 +312,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
             }
             else {
                 rhs = regallocator.allocate();
-                int res2 = expr.right.accept(this, rhs);
+                int res2 = gen(expr.right, rhs);
                 if(res2 != 0) return res2;
             }
             sb.writef("    scmp r% r%\n", lhs, rhs);
@@ -265,7 +326,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
         // std.stdio.writefln("HERE: %d", __LINE__);
         int before = regallocator.alloced;
         int lhs = target;
-        int res_ = expr.left.accept(this, lhs);
+        int res_ = gen(expr.left, lhs);
         if(res_ != 0) return res_;
         if(expr.right.type == ExprType.LITERAL){
             if(target == TARGET_IS_NOTHING)
@@ -350,7 +411,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
         }
         else {
             if(target == TARGET_IS_NOTHING){
-                return expr.right.accept(this, target);
+                return gen(expr.right, target);
             }
             int rhs;
             if(expr.right.type == ExprType.VARIABLE && (cast(VarExpr*)expr.right).name.lexeme in reglocals){
@@ -358,7 +419,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
             }
             else {
                 rhs = regallocator.allocate();
-                int res = expr.right.accept(this, rhs);
+                int res = gen(expr.right, rhs);
                 if(res != 0) return res;
             }
             switch(expr.operator.type)with(TokenType){
@@ -443,7 +504,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
         return -1;
     }
     int visit(Unary* expr, int target){
-        int v = expr.right.accept(this, target);
+        int v = gen(expr.right, target);
         if(v < 0) return v;
         if(target != TARGET_IS_NOTHING){
             switch(expr.operator.type)with(TokenType){
@@ -465,7 +526,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
         for(int i = 0; i < expr.args.length; i++){
             auto arg = expr.args[i].ungroup;
             int before = regallocator.alloced;
-            int res = arg.accept(this, rarg1+i);
+            int res = gen(arg, rarg1+i);
             if(res != 0) return res;
             if(i != expr.args.length-1){
                 //can elide the push/pop for last arg
@@ -494,7 +555,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
         if(!called){
             int before = regallocator.alloced;
             auto func = regallocator.allocate();
-            int res = expr.callee.accept(this, func);
+            int res = gen(expr.callee, func);
             if(res != 0) return res;
             regallocator.reset_to(before);
             save_reglocals();
@@ -510,7 +571,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
         for(int i = 0; i < expr.args.length; i++){
             auto arg = expr.args[i].ungroup;
             int before = regallocator.alloced;
-            int res = arg.accept(this, rarg1+i);
+            int res = gen(arg, rarg1+i);
             if(res != 0) return res;
             regallocator.reset_to(before);
         }
@@ -528,7 +589,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
         if(!called){
             int before = regallocator.alloced;
             auto func = regallocator.allocate();
-            int res = expr.callee.accept(this, func);
+            int res = gen(expr.callee, func);
             if(res != 0) return res;
             regallocator.reset_to(before);
             if(analysis.vars_on_stack)
@@ -538,7 +599,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
         return 0;
     }
     int visit(Grouping* expr, int target){
-        int res = expr.expression.accept(this, target);
+        int res = gen(expr.expression, target);
         if(res != 0) return res;
         return 0;
     }
@@ -594,7 +655,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
 
                 int before = regallocator.alloced;
                 int temp = regallocator.allocate();
-                int res = expr.right.accept(this, temp);
+                int res = gen(expr.right, temp);
                 if(res != 0) return res;
                 regallocator.reset_to(before);
                 sb.writef("    move r% r%\n", *rlocal, temp);
@@ -626,7 +687,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
             else {
                 int before = regallocator.alloced;
                 int temp = regallocator.allocate();
-                int res = expr.right.accept(this, temp);
+                int res = gen(expr.right, temp);
                 if(res != 0) return res;
                 regallocator.reset_to(before);
                 sb.writef("    local_write % r%\n", P(*local), temp);
@@ -663,7 +724,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
             int before = regallocator.alloced;
             int lhs = regallocator.allocate();
             int rhs = regallocator.allocate();
-            int res = expr.right.accept(this, rhs);
+            int res = gen(expr.right, rhs);
             if(res != 0) return res;
             regallocator.reset_to(before);
             sb.writef("    move r% var %\n", lhs, expr.name.lexeme);
@@ -683,7 +744,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
             return -1;
         }
         int before = regallocator.alloced;
-        int result = stmt.expr.accept(this, TARGET_IS_NOTHING);
+        int result = gen(stmt.expr, TARGET_IS_NOTHING);
         regallocator.reset_to(before);
         return result;
     }
@@ -718,18 +779,18 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
         // if(!stmt.initializer) return 0;
         // Turn the initializer into an assignment statement.
         Assign assign = Assign.make(stmt.name, stmt.initializer);
-        int res = (&assign.exp).accept(this, 0);
+        int res = visit(&assign, 0);
         return res;
         static if(0){
         if(auto rlocal = stmt.name.lexeme in reglocals){
-            int res = stmt.initializer.accept(this, *rlocal);
+            int res = gen(stmt.initializer, *rlocal);
             if(res != 0) return res;
             return 0;
         }
         if(auto local = stmt.name.lexeme in locals){
             int before = regallocator.alloced;
             int temp = regallocator.allocate();
-            int res = stmt.initializer.accept(this, temp);
+            int res = gen(stmt.initializer, temp);
             if(res != 0) return res;
             regallocator.reset_to(before);
             sb.writef("    local_write % r%\n", P(*local), temp);
@@ -749,7 +810,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
             return -1;
         }
         foreach(s; stmt.statements){
-            int res = s.accept(this);
+            int res = gen(s);
             if(res != 0) return res;
         }
         return 0;
@@ -769,7 +830,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
                 case LESS_EQUAL:
                 case LESS:
                 case BANG_EQUAL:
-                    int res = stmt.condition.accept(this, TARGET_IS_CMP_FLAGS);
+                    int res = gen(stmt.condition, TARGET_IS_CMP_FLAGS);
                     if(res != 0) return res;
                     break;
                 default:
@@ -807,18 +868,18 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
             int before = regallocator.alloced;
             int cond = regallocator.allocate();
             scope(exit) regallocator.reset_to(before);
-            int res = stmt.condition.accept(this, cond);
+            int res = gen(stmt.condition, cond);
             if(res != 0) return res;
             sb.writef("    cmp r% 0\n", cond);
             sb.writef("    jump eq label L%\n", label);
         }
-        int res = stmt.thenBranch.accept(this);
+        int res = gen(stmt.thenBranch);
         if(res != 0) return res;
         if(stmt.elseBranch){
             int after_else_label = labelallocator.allocate();
             sb.writef("    move rip label L%\n", after_else_label);
             sb.writef("  label L%\n", label);
-            int r = stmt.elseBranch.accept(this);
+            int r = gen(stmt.elseBranch);
             if(r != 0) return r;
             sb.writef("  label L%\n", after_else_label);
         }
@@ -832,7 +893,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
             error(stmt.name, "Nested function");
             return -1;
         }
-        scope analyzer = new DasmAnalyzer!(typeof(allocator))(allocator);
+        auto analyzer = DasmAnalyzer!(typeof(allocator))(allocator);
         analyzer.visit(stmt);
         analysis = analyzer.analysis;
         funcdepth++;
@@ -881,7 +942,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
             sb.writef("    add rsp rsp %\n", P(nvars));
         }
         foreach(s; stmt.body){
-            int res = s.accept(this);
+            int res = gen(s);
             if(res != 0) return res;
         }
         if(!stmt.body.length || stmt.body[$-1].type != StatementType.RETURN){
@@ -916,7 +977,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
             int before = regallocator.alloced;
             int temp = regallocator.allocate();
             int rout = RegisterNames.ROUT1;
-            int res = stmt.value.accept(this, temp);
+            int res = gen(stmt.value, temp);
             if(res != 0) return res;
             regallocator.reset_to(before);
             sb.writef("    move r% r%\n", rout, temp);
@@ -970,7 +1031,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
                 case LESS_EQUAL:
                 case LESS:
                 case BANG_EQUAL:
-                    int res = stmt.condition.accept(this, TARGET_IS_CMP_FLAGS);
+                    int res = gen(stmt.condition, TARGET_IS_CMP_FLAGS);
                     if(res != 0) return res;
                     break;
                 default:
@@ -1009,12 +1070,12 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
             int before = regallocator.alloced;
             int cond = regallocator.allocate();
             scope(exit) regallocator.reset_to(before);
-            int res = stmt.condition.accept(this, cond);
+            int res = gen(stmt.condition, cond);
             if(res != 0) return res;
             sb.writef("    cmp r% 0\n", cond);
             sb.writef("    jump eq label L%\n", after);
         }
-        int res = stmt.statement.accept(this);
+        int res = gen(stmt.statement);
         if(res != 0) return res;
         sb.writef("    move rip label L%\n", top);
         sb.writef("  label L%\n", after);
@@ -1022,7 +1083,7 @@ class DasmWriter(SB, A): BCObject, RegVisitor!int, StatementVisitor!int {
     }
     int do_it(Statement*[] stmts){
         foreach(s; stmts){
-            int res = s.accept(this);
+            int res = gen(s);
             if(res != 0) return res;
         }
         return 0;
