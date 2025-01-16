@@ -70,24 +70,7 @@ struct Table(K, V, A=Mallocator){
     
     void
     set_item(K k, V v){
-        reserve(count+1);
-        const hash = k.hashOf;
-        uint[] idxes = _idxes;
-        const i_len = cast(uint)idxes.length;
-        uint mask = i_len - 1;
-        uint idx = hash_fast_reduce(cast(uint)hash, cast(uint)idxes.length);
-        auto items_ = items;
-        while(idxes[idx] != uint.max){
-            const i = idxes[idx];
-            if(items_[i].key == k){
-                items_[i].value = v;
-                return;
-            }
-            idx++;
-            idx &= mask;
-        }
-        idxes[idx] = cast(uint)count;
-        _items[count++] = It(k, v);
+        *set(k) = v;
     }
 
     V*
@@ -147,6 +130,7 @@ struct Table(K, V, A=Mallocator){
 
     void cleanup(){
         data.dealloc;
+        count = 0;
     }
 
     static struct ValueIter {
