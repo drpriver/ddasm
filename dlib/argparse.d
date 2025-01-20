@@ -165,7 +165,7 @@ struct NumRequired {
 
 struct ArgToParse {
     str name;
-    str altname1;
+    str altname;
     str help;
     ArgParseDestination dest;
     NumRequired num = NumRequired(0, 1);
@@ -260,10 +260,10 @@ print_argparse_help(const ArgParser* p, int columns){
         if(arg.flags & ArgToParseFlags.HIDDEN)
             continue;
         if(arg.dest.type == ArgType.FLAG){
-            if(arg.altname1.length){
-                auto to_print = " [%.*s | %.*s]".length - 8 + arg.name.length + arg.altname1.length;
+            if(arg.altname.length){
+                auto to_print = " [%.*s | %.*s]".length - 8 + arg.name.length + arg.altname.length;
                 hs.update(cast(int)to_print);
-                printf(" [%.*s | %.*s]", cast(int)arg.name.length, arg.name.ptr, cast(int)arg.altname1.length, arg.altname1.ptr);
+                printf(" [%.*s | %.*s]", cast(int)arg.name.length, arg.name.ptr, cast(int)arg.altname.length, arg.altname.ptr);
             }
             else{
                 auto to_print = " [%.*s]".length - 4 + arg.name.length;
@@ -272,11 +272,11 @@ print_argparse_help(const ArgParser* p, int columns){
             }
         }
         else {
-            if(arg.altname1.length){
+            if(arg.altname.length){
                 auto tn = ArgTypeNames[arg.dest.type];
-                auto to_print = " [%.*s | %.*s <%.*s>%s]".length - "%.*s%.*s%.*s%s".length + arg.name.length + arg.altname1.length + tn.length + (arg.num.max != 1?" ...".length: 0);
+                auto to_print = " [%.*s | %.*s <%.*s>%s]".length - "%.*s%.*s%.*s%s".length + arg.name.length + arg.altname.length + tn.length + (arg.num.max != 1?" ...".length: 0);
                 hs.update(cast(int)to_print);
-                printf(" [%.*s | %.*s <%.*s>%s]", cast(int)arg.name.length, arg.name.ptr, cast(int)arg.altname1.length, arg.altname1.ptr, cast(int)tn.length, tn.ptr, arg.num.max != 1?" ...".ptr:"".ptr);
+                printf(" [%.*s | %.*s <%.*s>%s]", cast(int)arg.name.length, arg.name.ptr, cast(int)arg.altname.length, arg.altname.ptr, cast(int)tn.length, tn.ptr, arg.num.max != 1?" ...".ptr:"".ptr);
             }
             else{
                 auto tn = ArgTypeNames[arg.dest.type];
@@ -292,8 +292,8 @@ print_argparse_help(const ArgParser* p, int columns){
            ~ "--------------------");
     }
     foreach(ref early; p.early_out){
-        if(early.altname1.length){
-            printf("%.*s, %.*s:", cast(int)early.name.length, early.name.ptr, cast(int)early.altname1.length, early.altname1.ptr);
+        if(early.altname.length){
+            printf("%.*s, %.*s:", cast(int)early.name.length, early.name.ptr, cast(int)early.altname.length, early.altname.ptr);
         }
         else{
             printf("%.*s:", cast(int)early.name.length, early.name.ptr);
@@ -395,8 +395,8 @@ print_arg_help(const ArgToParse* arg, int columns){
     auto name = arg.name;
     auto typename = arg.dest.type != ArgType.USER_DEFINED?ArgTypeNames[arg.dest.type]:arg.dest.ut.type_name;
     printf("%.*s", cast(int)name.length, name.ptr);
-    if(arg.altname1.length){
-        printf(", %.*s", cast(int)arg.altname1.length, arg.altname1.ptr);
+    if(arg.altname.length){
+        printf(", %.*s", cast(int)arg.altname.length, arg.altname.ptr);
     }
     printf(": %.*s", cast(int)typename.length, typename.ptr);
     if(arg.num.min != 0 || !(arg.flags & ArgToParseFlags.SHOW_DEFAULT)){
@@ -496,7 +496,7 @@ check_for_early_out_args(const ArgParser* parser, char*[] args){
         foreach(i, ref early; parser.early_out){
             if(arg == early.name)
                 return i;
-            if(arg == early.altname1)
+            if(arg == early.altname)
                 return i;
         }
     }
@@ -504,7 +504,11 @@ check_for_early_out_args(const ArgParser* parser, char*[] args){
 }
 
 ArgParseError
-parse_args(ArgParser* parser, char*[]args, ArgParseFlags flags){
+parse_args(ref ArgParser parser, char*[]args, ArgParseFlags flags = ArgParseFlags.NONE){
+    return parse_args(&parser, args, flags);
+}
+ArgParseError
+parse_args(ArgParser* parser, char*[]args, ArgParseFlags flags = ArgParseFlags.NONE){
     with(ArgType) with(ArgParseFlags) with(ArgParseError){
     ArgToParse* pos_arg = null;
     ArgToParse* past_the_end = null;
@@ -600,19 +604,19 @@ parse_args(ArgParser* parser, char*[]args, ArgParseFlags flags){
         if(arg.num_parsed < arg.num.min){
             parser.failed_arg_to_parse = &arg;
             return INSUFFICIENT_ARGS;
-            }
+        }
         if(arg.num.max >= 0 && arg.num_parsed > arg.num.max){
             parser.failed_arg_to_parse = &arg;
             return EXCESS_ARGS;
-            }
+        }
         // This only makes sense for keyword arguments.
         if(arg.visited && arg.num_parsed == 0){
             parser.failed_arg_to_parse = &arg;
             return VISITED_NO_ARG_GIVEN;
-            }
         }
-    return NO_ERROR;
     }
+    return NO_ERROR;
+}
 }
 
 ArgToParse*
@@ -621,7 +625,7 @@ find_matching_kwarg(ArgParser* parser, char[] s){
     foreach(ref arg; parser.keyword){
         if(arg.name == s)
             return &arg;
-        if(arg.altname1 == s)
+        if(arg.altname == s)
             return &arg;
     }
     return null;

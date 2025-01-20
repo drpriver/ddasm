@@ -4,61 +4,59 @@
 import dlib.allocator: Mallocator, report_leaks;
 import dlib.box: Box;
 import dlib.stringbuilder: StringBuilder;
-import dscript.dscript;
-
+static import dscript.dscript;
 static import dscript_to_dasm;
 import core.stdc.stdio: fprintf, stdout, stderr, stdin, fread;
 
+import dlib.zstring: ZString;
+static import dlib.argparse;
+import dlib.term_util: stdin_is_interactive, get_cols;
+import dlib.get_input: LineHistory, get_input_line;
+import dlib.file_util: read_file, FileFlags;
+
+static import core.stdc.string;
+
 extern(C)
 int main(int argc, char** argv){
-    import dlib.zstring: ZString;
-    static import dlib.argparse;
-    import dlib.term_util: stdin_is_interactive, get_cols;
-    import dlib.get_input: LineHistory, get_input_line;
-    import dlib.file_util: read_file, FileFlags;
-
-    static import core.stdc.string;
-
     dscript.dscript.powerup;
+    scope(exit) dscript.dscript.powerdown;
     bool force_interactive = false;
     ZString sourcefile;
     with(dlib.argparse)with(ArgParseFlags) with(ArgToParseFlags){
         import core.stdc.stdio: fprintf, stdout, stderr;
         ArgToParse[1] pos_args = [
-            {
-                "source", null,
-                "Source file (.ds file) to read from.
+            ArgToParse(
+                name: "source",
+                help: "Source file (.ds file) to read from.
                 If not given, will read from stdin.",
-                ARGDEST(&sourcefile),
-            },
+                dest: ARGDEST(&sourcefile),
+            ),
         ];
         ArgToParse[1] kw_args = [
-            {
-                "--force-interactive", "-i",
-                "Force interactive command history mode when reading from stdin.",
-                ARGDEST(&force_interactive),
-            },
+            ArgToParse(
+                name:"--force-interactive", altname: "-i",
+                help: "Force interactive command history mode when reading from stdin.",
+                dest: ARGDEST(&force_interactive),
+            ),
         ];
         enum {HELP=0, VERSION=1}
         ArgToParse[2] early_args = [
-            {
-                "-h", "--help",
-                "Print this help and exit.",
-            },
-            {
-                "-v", "--version",
-                "Print the version and exit.",
-            },
+            ArgToParse(
+                name: "-h", altname: "--help",
+                help: "Print this help and exit.",
+            ),
+            ArgToParse(
+                name: "-v", altname: "--version",
+                help: "Print the version and exit.",
+            ),
         ];
         int columns = get_cols();
         ArgParser parser = {
-            argc?argv[0][0 .. core.stdc.string.strlen(argv[0])]:"dscript",
-            "A davescript compiler",
-            early_args,
-            pos_args,
-            kw_args,
-            null,
-            null,
+            name: argc?argv[0][0 .. core.stdc.string.strlen(argv[0])]:"dscript",
+            description: "A davescript compiler",
+            early_out: early_args,
+            positional: pos_args,
+            keyword: kw_args,
         };
         switch(check_for_early_out_args(&parser, argc?argv[1 .. argc]:null)){
             case HELP:
@@ -70,7 +68,7 @@ int main(int argc, char** argv){
             default:
                 break;
         }
-        auto error = parse_args(&parser, argc?argv[1 .. argc]:null, NONE);
+        auto error = parser.parse_args(argc?argv[1 .. argc]:null);
         if(error) {
             print_argparse_error(&parser, error);
             fprintf(stderr, "Use --help to see usage.\n");
@@ -78,6 +76,7 @@ int main(int argc, char** argv){
         }
     }
     Box!(const(ubyte)[], Mallocator) bscript;
+    scope(exit) bscript.dealloc;
     if(sourcefile.length){
         auto fe = read_file!Mallocator(sourcefile.ptr);
         if(fe.errored){
@@ -129,12 +128,10 @@ int main(int argc, char** argv){
     }
     // fprintf(stderr, "%.*s\n", cast(int)bscript.data.length, bscript.data.ptr);
     Box!(char[], Mallocator) progtext;
+    scope(exit) progtext.dealloc;
     int err = dscript_to_dasm.compile_to_dasm(bscript.data, &progtext);
     if(err) return err;
-    dscript.dscript.powerdown;
     fprintf(stdout, "%.*s\n", cast(int)progtext.data.length, progtext.data.ptr);
-    bscript.dealloc;
-    progtext.dealloc;
     report_leaks;
     return 0;
 }

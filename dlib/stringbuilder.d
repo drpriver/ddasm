@@ -24,12 +24,6 @@ static __gshared immutable hextable = {
 struct StringBuilder(Allocator){
     static if(Allocator.state_size){
         Allocator allocator;
-        this(Allocator allocator){
-            allocator = allocator;
-            cursor = 0;
-            capacity = 0;
-            data = null;
-        }
     }
     else {
         alias allocator = Allocator;

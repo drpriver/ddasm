@@ -61,78 +61,76 @@ int main(int argc, char** argv){
     with(ArgParseFlags) with(ArgToParseFlags) {
     ArgToParse[1] pos_args = [
         {
-            "source", null,
-            "Source file (.dasm file) to read from.
+            name: "source",
+            help: "Source file (.dasm file) to read from.
             If not given, will read from stdin.",
-            ARGDEST(&sourcefile),
+            dest: ARGDEST(&sourcefile),
         },
     ];
     ArgToParse[8] kw_args = [
         {
-            "--force-interactive", "-i",
-            "Force interactive mode when reading from stdin.",
-            ARGDEST(&force_interactive),
+            name: "--force-interactive", altname: "-i",
+            help: "Force interactive mode when reading from stdin.",
+            dest: ARGDEST(&force_interactive),
         },
         {
-            "--no-interactive", null,
-            "Force non-interactive mode when reading from stdin.",
-            ARGDEST(&no_interactive),
+            name: "--no-interactive",
+            help: "Force non-interactive mode when reading from stdin.",
+            dest: ARGDEST(&no_interactive),
         },
         {
-            "--dev-null", null,
-            "Builtin funcs don't print anymore",
-            ARGDEST(&devnull),
+            name: "--dev-null",
+            help: "Builtin funcs don't print anymore",
+            dest: ARGDEST(&devnull),
         },
         {
-            "--disassemble-every-op", "--dis",
-            "Print out the disassembly before executing each op",
-            ARGDEST(&disassemble),
+            name: "--disassemble-every-op", altname: "--dis",
+            help: "Print out the disassembly before executing each op",
+            dest: ARGDEST(&disassemble),
         },
         {
-            "--debug", "-g",
-            "Executes in debug mode",
-            ARGDEST(&debugger),
+            name: "--debug", altname: "-g",
+            help: "Executes in debug mode",
+            dest: ARGDEST(&debugger),
         },
         {
-            "--ds", "--davescript",
-            "Force interpretation of the source as
+            name: "--ds", altname: "--davescript",
+            help: "Force interpretation of the source as
             davescript instead of dasm",
-            ARGDEST(&highlevel),
+            dest: ARGDEST(&highlevel),
         },
         {
-            "-a", "--args",
-            "Set rarg1 to ... to the following values (coerced to integers if possible)",
-            ARGDEST(&rargs_s[0]),
-            NumRequired(0, rargs_s.length),
-            SHOW_DEFAULT,
+            name: "-a", altname: "--args",
+            help: "Set rarg1 to ... to the following values (coerced to integers if possible)",
+            dest: ARGDEST(&rargs_s[0]),
+            num: NumRequired(0, rargs_s.length),
+            flags: SHOW_DEFAULT,
         },
         {
-            "-y", "--dry-run",
-            "Compile and link, but don't run the script/dasm",
-            ARGDEST(&no_run),
+            name: "-y", altname: "--dry-run",
+            help: "Compile and link, but don't run the script/dasm",
+            dest: ARGDEST(&no_run),
         }
 
     ];
     enum {HELP=0, VERSION=1}
     ArgToParse[2] early_args = [
         {
-            "-h", "--help",
-            "Print this help and exit.",
+            name: "-h", altname: "--help",
+            help: "Print this help and exit.",
         },
         {
-            "-v", "--version",
-            "Print the version and exit.",
+            name: "-v", altname: "--version",
+            help: "Print the version and exit.",
         },
     ];
     int columns = get_cols();
     ArgParser parser = {
-        argc?argv[0][0..strlen(argv[0])]:"ddasm",
-        "A dasm interpreter",
-        early_args,
-        pos_args,
-        kw_args,
-        null,
-        null,
+        name: argc?argv[0][0..strlen(argv[0])]:"ddasm",
+        description: "A dasm interpreter",
+        early_out: early_args,
+        positional: pos_args,
+        keyword: kw_args,
     };
     switch(check_for_early_out_args(&parser, argc?argv[1..argc]:null)){
         case HELP:
@@ -144,14 +142,14 @@ int main(int argc, char** argv){
         default:
             break;
     }
-    auto error = parse_args(&parser, argc?argv[1..argc]:null, NONE);
+    auto error = parser.parse_args(argc?argv[1..argc]:null);
     if(error) {
         print_argparse_error(&parser, error);
         fprintf(stderr, "Use --help to see usage.\n");
         return error;
     }
     }
-    foreach(i, arg; rargs_s[]){
+    foreach(size_t i, ZString arg; rargs_s[]){
         if(arg.ptr){
             import dlib.parse_numbers: parse_unsigned_human;
             auto ir = parse_unsigned_human(arg[]);
@@ -179,8 +177,7 @@ int main(int argc, char** argv){
         btext = fe.value.as!str;
     }
     else if(!no_interactive && (force_interactive || stdin_is_interactive())){
-        StringBuilder!(VAllocator*) sb;
-        sb.allocator = &va;
+        StringBuilder!(VAllocator*) sb = {allocator: &va};
         LineHistory!() history;
         const char* HISTORYFILE = "ddasm.history";
         history.load_history(HISTORYFILE);
@@ -202,8 +199,7 @@ int main(int argc, char** argv){
         btext = sb.detach.as!(str);
     }
     else {
-        StringBuilder!(VAllocator*) sb;
-        sb.allocator = &va;
+        StringBuilder!(VAllocator*) sb = {allocator: &va};
         for(;;){
             enum N = 4096;
             sb.ensure_additional(N);
@@ -236,8 +232,7 @@ int main(int argc, char** argv){
         return err;
     }
     expose_builtins;
-    LinkedModule io_module;
-    io_module.functions.data.allocator = &va;
+    LinkedModule io_module = {functions:{data:{allocator:&va}}};
     {
         void reg(str key, str f){
             io_module.functions[key] = (*BUILTINS)[f];
@@ -275,8 +270,7 @@ int main(int argc, char** argv){
         reg("set",    "mem.set");
     }
 
-    LinkedModule misc_module;
-    misc_module.functions.data.allocator = &va;
+    LinkedModule misc_module = {functions:{data:{allocator: &va}}};
     {
         void reg(str key, str f){
             misc_module.functions[key] = (*BUILTINS)[f];
@@ -286,9 +280,7 @@ int main(int argc, char** argv){
     }
 
 
-    LinkedModule linked_prog;
-    linked_prog.source_text = btext;
-    linked_prog.name = prog.name;
+    LinkedModule linked_prog = {source_text: btext, name: prog.name};
     {
         void find_loc(const char* first_char, out str fn, out int line, out int column){
             import dasm.dasm_tokenizer: Tokenizer;
@@ -315,8 +307,7 @@ int main(int argc, char** argv){
         ArenaAllocator!(Mallocator) arena;
         scope(exit) arena.free_all;
         VAllocator temp_va = VAllocator.from(&arena);
-        Table!(str, LinkedModule*, VAllocator*) loaded;
-        loaded.data.allocator = &temp_va;
+        Table!(str, LinkedModule*, VAllocator*) loaded = {data:{allocator: &temp_va}};
         foreach(imp; prog.imports[]){
             switch(imp){
                 case "io":
@@ -343,10 +334,9 @@ int main(int argc, char** argv){
         fprintf(stderr, "Program needs a 'start' function as an entry point\n");
         return 1;
     }
-    Machine machine;
-    machine.registers[RegisterNames.RARG1 .. RegisterNames.RARGMAX] = rargs[];
     RecordingAllocator!Mallocator recorder;
-    machine.allocator = VAllocator.from(&recorder);
+    Machine machine = {allocator: VAllocator.from(&recorder)};
+    machine.registers[RegisterNames.RARG1 .. RegisterNames.RARGMAX] = rargs[];
     if(no_run)
         return 0;
     if(debugger && disassemble)
