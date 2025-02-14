@@ -21,7 +21,7 @@ import dasm.dasm_tokenizer;
 
 
 int
-parse_asm_string(VAllocator* allocator, str text, UnlinkedModule* prog){
+parse_asm_string(Allocator allocator, str text, UnlinkedModule* prog){
     ParseContext ctx;
     ctx.allocator = allocator;
     ctx.tokenizer = Tokenizer.from(text);
@@ -29,7 +29,7 @@ parse_asm_string(VAllocator* allocator, str text, UnlinkedModule* prog){
     ctx.prog.variables.bdata.allocator = ctx.allocator;
     ctx.prog.arrays.bdata.allocator = ctx.allocator;
     ctx.prog.imports.bdata.allocator = ctx.allocator;
-    auto err = ctx.parse_asm();
+    int err = ctx.parse_asm();
     if(err){
         if(!Fuzzing)fprintf(stderr, "%.*s\n", cast(int)ctx.errmess.length, ctx.errmess.ptr);
         Mallocator.free(ctx.errmess.ptr, ctx.errmess.mem_size);
@@ -47,12 +47,12 @@ parse_asm_string(VAllocator* allocator, str text, UnlinkedModule* prog){
 
 struct ParseContext{
     Tokenizer tokenizer;
-    VAllocator* allocator;
+    Allocator allocator;
     UnlinkedModule prog;
     ZString errmess;
     void
     err_print(A...)(Token tok, A args){
-        StringBuilder!Mallocator sb;
+        StringBuilder sb = {allocator:MALLOCATOR};
         sb.FORMAT(tok.line, ':', tok.column, ": ParseError: ");
         foreach(a; args)
             sb.write(a);
@@ -92,7 +92,7 @@ struct ParseContext{
                         while(tok.type == SPACE || tok.type == TAB)
                             tok = tokenizer.current_token_and_advance;
                         if(tok.type == NUMBER){
-                            auto err = parse_unsigned_human(tok.text);
+                            IntegerResult!ulong err = parse_unsigned_human(tok.text);
                             if(err.errored){
                                 err_print(tok, "Unable to parse a number from ", Q(tok.text));
                                 return PARSE_ERROR;
@@ -162,7 +162,7 @@ struct ParseContext{
                         tok = tokenizer.current_token_and_advance;
                         while(tok.type == SPACE && tok.type == TAB)
                             tok = tokenizer.current_token_and_advance;
-                        auto arg = parse_one_argument(tok);
+                        Argument arg = parse_one_argument(tok);
                         switch(arg.kind){
                             case UNSET:
                             case REGISTER:
@@ -193,7 +193,7 @@ struct ParseContext{
         Token tok;
         for(;;){
             tok = tokenizer.current_token_and_advance;
-            while(tok.type == SPACE || tok.type == NEWLINE || tok.type == TAB)
+            while(tok.type == SPACE || tok.type == NEWLINE || tok.type == TAB || tok.type == SEMICOLON)
                 tok = tokenizer.current_token_and_advance;
             if(tok.type == EOF){
                 err_print(tok, "Unexpected end of file");
@@ -213,7 +213,7 @@ struct ParseContext{
                     err_print(tok, "function should have instructions");
                     return PARSE_ERROR;
                 }
-                auto end = func.instructions[$-1].instruction;
+                uintptr_t end = func.instructions[$-1].instruction;
                 if(end != HALT && end != RET && end != ABORT && end != TAIL_CALL_I && end != TAIL_CALL_R){
                     err_print(tok, "Last instruction of a function should be a halt, ret, tail_call or abort.");
                     return PARSE_ERROR;
@@ -255,8 +255,9 @@ struct ParseContext{
 
     int
     decode_instruction(Token tok, AbstractInstruction* inst){ with(AsmError) with(TokenType) with(ArgumentKind){
-        auto first_tok = tok;
-        auto infos = InstructionTable.get_item(cast(string)tok.text);
+        Token first_tok = tok;
+        import dlib.barray: Barray;
+        Barray!(InstructionInfo)* infos = InstructionTable.get_item(cast(string)tok.text);
         if(!infos){
             err_print(tok, Q(tok.text), " does not match any known instruction");
             return PARSE_ERROR;
@@ -265,13 +266,13 @@ struct ParseContext{
             tok = tokenizer.current_token_and_advance;
             while(tok.type == SPACE || tok.type == TAB)
                 tok = tokenizer.current_token_and_advance;
-            if(tok.type == NEWLINE)
+            if(tok.type == NEWLINE || tok.type == SEMICOLON)
                 break;
             if(tok.type == POUND){
                 tok = tokenizer.skip_comment(tok);
                 break;
             }
-            auto arg = parse_one_argument(tok);
+            Argument arg = parse_one_argument(tok);
             if(arg.kind == UNSET){
                 if(!errmess.length)
                     err_print(tok, "Unable to decode an argument from ", Q(tok.text));
@@ -344,9 +345,10 @@ struct ParseContext{
                         case SPACE:
                         case TAB:
                         case CARRIAGERETURN:
+                        case SEMICOLON:
                             continue;
                         default:{
-                            auto arg = parse_one_argument(tok);
+                            Argument arg = parse_one_argument(tok);
                             if(arg.kind == UNSET){
                                 err_print(tok, "array"); // lol what
                                 array.array.cleanup;
@@ -362,12 +364,14 @@ struct ParseContext{
                 result.kind = ARRAY;
                 return result;
             }
+            case APOSTROPHE:
             case QUOTATION:{
+                TokenType q = tok.type;
                 const char * before = tok.text.ptr;
                 bool backslash = false;
                 tok = tokenizer.current_token_and_advance;
                 for(;;){
-                    if(tok.type == QUOTATION && !backslash)
+                    if(tok.type == q && !backslash)
                         break;
                     if(tok.type == BACKSLASH)
                         backslash = !backslash;
@@ -401,12 +405,12 @@ struct ParseContext{
                             return result;
                     }
                 }
-                auto e = parse_unsigned_human(tok.text);
+                IntegerResult!ulong e = parse_unsigned_human(tok.text);
                 if(e.errored){
                     err_print(tok, "Unable to parse a number from ", Q(tok.text));
                     return result;
                 }
-                auto value = e.value;
+                ulong value = e.value;
                 if(minuses & 1)
                     value = -value;
                 result.kind = IMMEDIATE;
@@ -414,7 +418,7 @@ struct ParseContext{
                 return result;
             }
             case NUMBER:{
-                auto e = parse_unsigned_human(tok.text);
+                IntegerResult!ulong e = parse_unsigned_human(tok.text);
                 if(e.errored){
                     err_print(tok, "Unable to parse a number from ", Q(tok.text));
                     return result;
@@ -424,8 +428,8 @@ struct ParseContext{
                 return result;
             }
             case IDENTIFIER:{
-                auto text = tok.text;
-                if(auto val = cast(string)text in *ConstantsTable){
+                str text = tok.text;
+                if(uintptr_t* val = cast(string)text in *ConstantsTable){
                     result.immediate = *val;
                     result.kind = IMMEDIATE;
                     return result;
@@ -437,7 +441,7 @@ struct ParseContext{
                         result.kind = CMPMODE;
                         return result;
                     }
-                if(auto ri = get_register_info(text)){
+                if(immutable(RegisterInfo)* ri = get_register_info(text)){
                     result.reg = ri.register;
                     result.kind = REGISTER;
                     return result;
@@ -495,7 +499,8 @@ struct ParseContext{
                     case "constant":
                         parse_namespaced("constant", CONSTANT);
                         return result;
-                    default: break;
+                    default: 
+                        break;
                 }
                 return result;
             }
@@ -514,6 +519,7 @@ ConstantsTable(){
     __gshared TableT constants_table;
     if(!initialized){
         initialized = true;
+        constants_table.data.allocator = MALLOCATOR;
         foreach(ii; INSTRUCTION_INFOS){
             constants_table[ii.NAME] = ii.instruction;
         }

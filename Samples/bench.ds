@@ -1,0 +1,32 @@
+import io;
+function start(){
+    let fp = io.fopen("/dev/null", "wb");
+    for(let i = 10000; i; i = i - 1){
+        fizzother(fp, 10000);
+    }
+    io.fclose(fp);
+}
+
+function fizzother(fp, n){
+    let a = 1;
+    let mod_3 = 0;
+    let mod_5 = 0;
+    let d = n + 1;
+    let printed = 0;
+    for(;a != d; a = a+1){
+        printed = 0;
+        mod_3 = mod_3 + 1;
+        mod_5 = mod_5 + 1;
+        if(mod_3 == 3){
+            io.fprintf1(fp, "fizz");
+            mod_3 = 0;
+            printed = 1;
+        }
+        if(mod_5 == 5){
+            mod_5 = 0;
+            io.fprintf1(fp, "buzz");
+            printed = 1;
+        }
+        if(!printed) io.fprintf2(fp, "%llu", a);
+    }
+}

@@ -1,7 +1,7 @@
 /*
  * Copyright © 2021-2023, David Priver
  */
-import dlib.allocator: Mallocator, report_leaks;
+import dlib.allocator: Mallocator, Allocator, MALLOCATOR;
 import dlib.box: Box;
 import dlib.stringbuilder: StringBuilder;
 static import dscript.dscript;
@@ -75,10 +75,10 @@ int main(int argc, char** argv){
             return error;
         }
     }
-    Box!(const(ubyte)[], Mallocator) bscript;
+    Box!(const(ubyte)[]) bscript;
     scope(exit) bscript.dealloc;
     if(sourcefile.length){
-        auto fe = read_file!Mallocator(sourcefile.ptr);
+        auto fe = read_file(sourcefile.ptr);
         if(fe.errored){
             version(Windows)
                 fprintf(stderr, "Unable to read from '%s'\n", sourcefile.ptr);
@@ -90,8 +90,8 @@ int main(int argc, char** argv){
         bscript = fe.value.as!(const(ubyte)[]);
     }
     else if(force_interactive || stdin_is_interactive){
-        StringBuilder!Mallocator sb;
-        LineHistory!() history;
+        StringBuilder sb = {allocator:Mallocator.allocator()};
+        LineHistory history = {allocator:MALLOCATOR};
         const char* HISTORYFILE = "dscript.history";
         history.load_history(HISTORYFILE);
         scope(exit){
@@ -112,7 +112,7 @@ int main(int argc, char** argv){
         bscript = sb.detach.as!(const(ubyte)[]);
     }
     else {
-        StringBuilder!Mallocator sb;
+        StringBuilder sb = {allocator:Mallocator.allocator()};
         for(;;){
             enum N = 4096;
             sb.ensure_additional(N);
@@ -127,11 +127,10 @@ int main(int argc, char** argv){
         bscript = sb.detach.as!(const(ubyte)[]);
     }
     // fprintf(stderr, "%.*s\n", cast(int)bscript.data.length, bscript.data.ptr);
-    Box!(char[], Mallocator) progtext;
+    Box!(char[]) progtext = {allocator:MALLOCATOR};
     scope(exit) progtext.dealloc;
     int err = dscript_to_dasm.compile_to_dasm(bscript.data, &progtext);
     if(err) return err;
     fprintf(stdout, "%.*s\n", cast(int)progtext.data.length, progtext.data.ptr);
-    report_leaks;
     return 0;
 }

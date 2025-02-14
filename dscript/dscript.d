@@ -1,7 +1,7 @@
 module dscript.dscript;
 import core.stdc.stdio: fprintf, stderr; // FIXME: should be a callback to report errors
 import dlib.aliases;
-import dlib.allocator: Mallocator;
+import dlib.allocator: MALLOCATOR, Allocator;
 import dlib.barray: Barray, make_barray;
 import dlib.parse_numbers: parse_unsigned_human;
 import dlib.table: Table;
@@ -9,18 +9,28 @@ import dlib.table: Table;
 enum TokenType: ubyte{
     // Single character tokens
     LEFT_PAREN = '(', RIGHT_PAREN =')', LEFT_BRACE='{', RIGHT_BRACE = '}',
-    COMMA = ',', DOT = '.', MINUS ='-', PLUS = '+', SEMICOLON = ';', SLASH = '/', STAR = '*', MOD = '%',
+    COMMA = ',', DOT = '.', MINUS ='-', PLUS = '+', SEMICOLON = ';', SLASH = '/', STAR = '*', MOD = '%', AMP = '&', BAR = '|', POUND = '#',
 
     // One or two character tokens
     BANG = '!', BANG_EQUAL = BANG + 127, EQUAL = '=', EQUAL_EQUAL = EQUAL+127,
     GREATER = '>', GREATER_EQUAL = GREATER + 127, LESS = '<', LESS_EQUAL = LESS + 127,
 
+    MINUS_EQUAL = MINUS + 127,
+    PLUS_EQUAL  = PLUS + 127,
+    SLASH_EQUAL = SLASH + 127,
+    STAR_EQUAL  = STAR + 127,
+    MOD_EQUAL   = MOD + 127,
+    AMP_EQUAL   = AMP + 127,
+    BAR_EQUAL   = BAR + 127,
+
     // Literals
     IDENTIFIER = 127, STRING = 128, NUMBER = 129, HEX=130, PHEX=131, SNUM=132, BNUM=133,
 
     // Keywords
-    AND, ELSE, FALSE, FUN, FOR, IF, NIL, OR, RETURN, TRUE, LET,
-    WHILE, GOTO, LABEL, BREAK, CONTINUE, IMPORT, HALT, ABORT, DASM,
+    AND = 1, ELSE = 2, FALSE = 3, FUN = 4, FOR = 5, 
+    IF = 6, NIL = 7, OR = 8, RETURN = 9, TRUE = 10, LET = 11,
+    WHILE = 12, GOTO = 13, LABEL = 14, BREAK = 15, CONTINUE = 16, 
+    IMPORT = 17, HALT = 18, ABORT = 19, DASM = 20,
 
     EOF = 0,
 }
@@ -28,24 +38,10 @@ enum TokenType: ubyte{
 struct Token {
     TokenType type;
     str lexeme;
-    union {
-        ulong number;
-        str string_;
-    }
     int line;
-    this(TokenType ty, str lex, ulong num, int l){
-        type = ty, number = num, line = l, lexeme=lex;
-    }
-    this(TokenType ty, str lex, str string__, int l){
-        type = ty, string_ = string__, line = l, lexeme=lex;
-    }
-    this(TokenType ty, str lex, int l){
-        type = ty, line = l, lexeme = lex;
-    }
 }
 
 struct Tokenizer(B) {
-    @disable this();
     const ubyte[] source;
     B* tokens;
     int start = 0, current = 0, line = 1;
@@ -58,26 +54,21 @@ struct Tokenizer(B) {
         fprintf(stderr, "[line %d]: Parse Error: %.*s\n", line, cast(int)message.length, message.ptr);
     }
 
-    this(const ubyte[] s, B* toks){
-        source = s;
-        tokens = toks;
-    }
-
-    bool isAtEnd(){
+    bool at_end(){
         return current >= source.length;
     }
 
     int
-    tokenizeTokens(){
-        while(!isAtEnd){
+    tokenize_tokens(){
+        while(!at_end){
             start = current;
-            tokenizeToken();
+            tokenize_token();
             if(ERROR_OCCURRED) return 1;
         }
         *tokens ~= Token(TokenType.EOF, "", line);
         return 0;
     }
-    void tokenizeToken(){ with(TokenType){
+    void tokenize_token(){ with(TokenType){
         auto c = advance();
         switch(c){
             case '(':
@@ -86,26 +77,45 @@ struct Tokenizer(B) {
             case '}':
             case ',':
             case '.':
+            case ';':
+                add_token(cast(TokenType)c);
+                break;
             case '-':
             case '+':
-            case ';':
             case '*':
             case '%':
-                addToken(cast(TokenType)c);
-                break;
+            case '&':
+                if(match('&')){
+                    add_token(TokenType.AND);
+                    break;
+                }
+                goto case;
+            case '|':
+                if(match('|')){
+                    add_token(TokenType.OR);
+                    break;
+                }
+                goto case;
             case '!':
-                addToken(match('=')?BANG_EQUAL:BANG);
+            case '=':
+            case '<':
+            case '>':
+                add_token(cast(TokenType)(match('=')?127+c:c));
                 break;
-            case '=': addToken(match('=')? EQUAL_EQUAL:   EQUAL);   break;
-            case '<': addToken(match('=')? LESS_EQUAL:    LESS);    break;
-            case '>': addToken(match('=')? GREATER_EQUAL: GREATER); break;
+            case '#':
+                while(peek != '\n' && !at_end) current++;
+                break;
             case '/':
+                if(match('=')){
+                    add_token(SLASH_EQUAL);
+                    break;
+                }
                 if(match('/')){
                     // ignore comments
-                    while(peek != '\n' && !isAtEnd) current++;
+                    while(peek != '\n' && !at_end) current++;
                 }
                 else {
-                    addToken(SLASH);
+                    add_token(SLASH);
                 }
                 break;
             // skip whitespace
@@ -133,78 +143,65 @@ struct Tokenizer(B) {
     }}
 
     void do_identifier(){
-        while(peek.isIdentChar) current++;
+        while(peek.is_ident_char) current++;
         auto text = cast(str)source[start .. current];
         if(auto type = text in KEYWORDS)
-            addToken(*type);
+            add_token(*type);
         else
-            addToken(TokenType.IDENTIFIER);
+            add_token(TokenType.IDENTIFIER);
     }
 
     void do_string(char c){
         bool backslash = false;
-        while((peek != c || backslash) && !isAtEnd()){
+        while((peek != c || backslash) && !at_end()){
             if(peek == '\n') line++;
             if(peek == '\\') backslash = !backslash;
             else             backslash = false;
             current++;
         }
-        if(isAtEnd){
+        if(at_end){
             error(current, "Unterminated string");
             return;
         }
         current++; // closing '"'
-        auto value = cast(const char[])source[start+1 .. current-1];
-        addToken(TokenType.STRING, value);
+        add_token(TokenType.STRING);
     }
     void do_number(ubyte c){
         if(c == '0'){
-            // TODO: these don't check how long the resulting literal
-            // is, which means the assembler ends up doing it.
             if(peek == 'x' || peek == 'X'){
                 current++;
-                while(peek.isHexDigit) current++;
-                auto slice = cast(str)source[start .. current];
-                addToken(TokenType.HEX, slice);
+                while(peek.is_hex_digit) current++;
+                add_token(TokenType.HEX);
                 return;
             }
             if(peek == 'p' || peek == 'P'){
                 current++;
-                while(peek.isHexDigit) current++;
-                auto slice = cast(str)source[start .. current];
-                addToken(TokenType.PHEX, slice);
+                while(peek.is_hex_digit) current++;
+                add_token(TokenType.PHEX);
                 return;
             }
             if(peek == 'b' || peek == 'B'){
                 current++;
                 while(peek == '0' || peek == '1') current++;
-                auto slice = cast(str)source[start .. current];
-                addToken(TokenType.BNUM, slice);
+                add_token(TokenType.BNUM);
                 return;
             }
             if(peek == 's' || peek == 'S'){
                 current++;
-                while(peek.isAlphaNumeric) current++;
-                auto slice = cast(str)source[start .. current];
-                addToken(TokenType.SNUM, slice);
+                while(peek.is_alpha_numeric) current++;
+                add_token(TokenType.SNUM);
                 return;
             }
         }
-        while(peek.isDigit) current++;
+        while(peek.is_digit) current++;
         if(peek == '.'){
             error(current, "Non-integer numbers are not allowed");
             return;
         }
-        auto slice = cast(str)source[start .. current];
-        auto res = parse_unsigned_human(slice);
-        if(res.errored){
-            error(current, "Unable to parse number");
-            return;
-        }
-        addToken(TokenType.NUMBER, res.value);
+        add_token(TokenType.NUMBER);
     }
     bool match(ubyte c){
-        if(isAtEnd) return false;
+        if(at_end) return false;
         if(source[current] != c) return false;
         current++; return true;
     }
@@ -212,50 +209,42 @@ struct Tokenizer(B) {
         return source[current++];
     }
     ubyte peek(){
-        return isAtEnd? 0: source[current];
+        return at_end? 0: source[current];
     }
     ubyte peekNext(){
         return current +1 >= source.length? 0 : source[current+1];
     }
     // The casts to char[] are safe as we have already scanned those bytes
     // and found them to be valid.
-    void addToken(TokenType type){
+    void add_token(TokenType type){
         auto lex = cast(char[])(source[start .. current]);
         *tokens ~= Token(type, lex, line);
     }
-    void addToken(TokenType type, str string_){
-        auto lex = cast(char[])(source[start .. current]);
-        *tokens ~= Token(type, lex, string_, line);
-    }
-    void addToken(TokenType type, ulong num){
-        auto lex = cast(char[])(source[start .. current]);
-        *tokens ~= Token(type, lex, num, line);
-    }
 }
 
-bool isAlpha()(ubyte c){
+bool is_alpha()(ubyte c){
     c |= 32; // ascii tolower
     return c >= 'a' && c <= 'z';
 }
 
-bool isDigit()(ubyte c){
+bool is_digit()(ubyte c){
     return c >= '0' && c <= '9';
 }
-bool isHexDigit()(ubyte c){
+bool is_hex_digit()(ubyte c){
     c |= 0x20;
     bool number =  c >= '0' && c <= '9' ;
     bool af = c >= 'a' && c <= 'f';
     return number | af;
 }
 
-bool isAlphaNumeric()(ubyte c){
-    return isAlpha(c) || isDigit(c);
+bool is_alpha_numeric()(ubyte c){
+    return is_alpha(c) || is_digit(c);
 }
-bool isIdentChar()(ubyte c){
-    return isAlpha(c) || isDigit(c) || c == '_' || c == '.';
+bool is_ident_char()(ubyte c){
+    return is_alpha(c) || is_digit(c) || c == '_' || c == '.';
 }
 
-__gshared Table!(str, TokenType, Mallocator) KEYWORDS;
+__gshared Table!(str, TokenType) KEYWORDS = {data:{allocator:MALLOCATOR}};
 
 __gshared KEYWORDSPOWERED = false;
 void powerup(){
@@ -331,26 +320,6 @@ enum ExprType {
     CALL,
 }
 
-interface Visitor(R) {
-    R visit(Binary* expr);
-    R visit(Call* expr);
-    R visit(Grouping* expr);
-    R visit(Literal* expr);
-    R visit(Unary* expr);
-    R visit(VarExpr* expr);
-    R visit(Assign* expr);
-    R visit(Logical* expr);
-}
-interface RegVisitor(R) {
-    R visit(Binary* expr, int target);
-    R visit(Call* expr, int target);
-    R visit(Grouping* expr, int target);
-    R visit(Literal* expr, int target);
-    R visit(Unary* expr, int target);
-    R visit(VarExpr* expr, int target);
-    R visit(Assign* expr, int target);
-    R visit(Logical* expr, int target);
-}
 
 Expr* ungroup(Expr* expr){
     if(expr.type == ExprType.GROUPING){
@@ -361,6 +330,38 @@ Expr* ungroup(Expr* expr){
 
 struct Expr{
     ExprType type;
+    inout(Assign)* is_assign() inout{
+        return type == ExprType.ASSIGN? cast(typeof(return))&this:null;
+    }
+    alias as_assign = is_assign;
+    inout(Binary)* is_binary() inout{
+        return type == ExprType.BINARY? cast(typeof(return))&this:null;
+    }
+    alias as_binary = is_binary;
+    inout(Grouping)* is_grouping() inout{
+        return type == ExprType.GROUPING? cast(typeof(return))&this:null;
+    }
+    alias as_grouping = is_grouping;
+    inout(Literal)* is_literal() inout{
+        return type == ExprType.LITERAL? cast(typeof(return))&this:null;
+    }
+    alias as_literal = is_literal;
+    inout(Unary)* is_unary() inout{
+        return type == ExprType.UNARY? cast(typeof(return))&this:null;
+    }
+    alias as_unary = is_unary;
+    inout(VarExpr)* is_variable() inout{
+        return type == ExprType.VARIABLE? cast(typeof(return))&this:null;
+    }
+    alias as_variable = is_variable;
+    inout(Logical)* is_logical() inout{
+        return type == ExprType.LOGICAL? cast(typeof(return))&this:null;
+    }
+    alias as_logical = is_logical;
+    inout(Call)* is_call() inout{
+        return type == ExprType.CALL? cast(typeof(return))&this:null;
+    }
+    alias as_call = is_call;
 
     void dump(){
         final switch(type)with(ExprType){
@@ -375,18 +376,6 @@ struct Expr{
         }
     }
 }
-auto accept(V, A...)(Expr* e, V visitor, A a){
-    final switch(e.type)with(ExprType){
-        case ASSIGN   : return visitor.visit(cast(Assign*)e, a);
-        case BINARY   : return visitor.visit(cast(Binary*)e, a);
-        case GROUPING : return visitor.visit(cast(Grouping*)e, a);
-        case LITERAL  : return visitor.visit(cast(Literal*)e, a);
-        case UNARY    : return visitor.visit(cast(Unary*)e, a);
-        case VARIABLE : return visitor.visit(cast(VarExpr*)e, a);
-        case LOGICAL  : return visitor.visit(cast(Logical*)e, a);
-        case CALL     : return visitor.visit(cast(Call*)e, a);
-    }
-}
 struct Assign {
     Expr exp;
     Token name;
@@ -395,7 +384,7 @@ struct Assign {
         return right_.ungroup;
     }
     static Expr*
-    make(A)(A* a, Token o, Expr* r){
+    make(Allocator a, Token o, Expr* r){
         auto data = a.alloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.exp.type = ExprType.ASSIGN;
@@ -424,7 +413,7 @@ struct Call {
     Token paren;
     Expr*[] args;
     static Expr*
-    make(A)(A* a, Expr* c, Token t, Expr*[] args){
+    make(Allocator a, Expr* c, Token t, Expr*[] args){
         auto data = a.alloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.exp.type = ExprType.CALL;
@@ -454,7 +443,7 @@ struct Binary {
     Expr* right_;
     Expr* right(){return right_.ungroup;}
     static Expr*
-    make(A)(A* a, Expr* l, Token o, Expr* r){
+    make(Allocator a, Expr* l, Token o, Expr* r){
         auto data = a.alloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.exp.type = ExprType.BINARY;
@@ -476,7 +465,7 @@ struct Grouping {
     Expr exp;
     Expr* expression;
     static Expr*
-    make(A)(A* a, Expr* e){
+    make(Allocator a, Expr* e){
         auto data = a.alloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.exp.type = ExprType.GROUPING;
@@ -493,8 +482,22 @@ struct Grouping {
 struct Literal {
     Expr exp;
     Token value;
+
+    size_t as_number(){
+        switch(value.type)with(TokenType){
+            case NUMBER:
+            case PHEX:
+            case HEX:
+            case BNUM:
+                return parse_unsigned_human(value.lexeme).value;
+            case SNUM:
+                return 1; // FIXME
+            default:
+                return 0;
+        }
+    }
     static Expr*
-    make(A)(A* a, Token t){
+    make(Allocator a, Token t){
         auto data = a.alloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.exp.type = ExprType.LITERAL;
@@ -507,8 +510,8 @@ struct Literal {
 }
 
 __gshared Literal NilExpr_ = {
-    {ExprType.LITERAL},
-    Token(TokenType.NIL, "nil", 0),
+    exp: {ExprType.LITERAL},
+    value: Token(TokenType.NIL, "nil", 0),
 };
 
 struct Logical {
@@ -519,7 +522,7 @@ struct Logical {
     Expr* right_;
     Expr* right(){return right_.ungroup;}
     static Expr*
-    make(A)(A* a, Expr* l, Token o, Expr* r){
+    make(Allocator a, Expr* l, Token o, Expr* r){
         auto data = a.alloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.exp.type = ExprType.LOGICAL;
@@ -543,7 +546,7 @@ struct Unary {
     Expr* right_;
     Expr* right(){return right_.ungroup;}
     static Expr*
-    make(A)(A* a, Token t, Expr* e){
+    make(Allocator a, Token t, Expr* e){
         auto data = a.alloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.exp.type = ExprType.UNARY;
@@ -563,7 +566,7 @@ struct VarExpr {
     Expr exp;
     Token name;
     static Expr*
-    make(A)(A* a, Token t){
+    make(Allocator a, Token t){
         auto data = a.alloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.exp.type = ExprType.VARIABLE;
@@ -592,50 +595,19 @@ enum StatementType {
     HALT,
     ABORT,
     DASM,
-}
-
-interface StatementVisitor(R){
-    R visit(ExpressionStmt* stmt);
-    R visit(LetStmt* stmt);
-    R visit(Block* stmt);
-    R visit(IfStmt* stmt);
-    R visit(WhileStatement* stmt);
-    R visit(FuncStatement* stmt);
-    R visit(ImportStatement* stmt);
-    R visit(ReturnStatement* stmt);
-    R visit(GotoStatement* stmt);
-    R visit(LabelStatement* stmt);
-    R visit(HaltStatement* stmt);
-    R visit(AbortStatement* stmt);
-    R visit(DasmStatement* stmt);
+    BREAK,
+    CONTINUE,
 }
 
 struct Statement {
     StatementType type;
-    R accept(R)(StatementVisitor!R visitor){
-        final switch(type)with(StatementType){
-        case BLOCK      : return visitor.visit(cast(Block*)&this);
-        case EXPRESSION : return visitor.visit(cast(ExpressionStmt*)&this);
-        case LET        : return visitor.visit(cast(LetStmt*)&this);
-        case IF         : return visitor.visit(cast(IfStmt*)&this);
-        case WHILE      : return visitor.visit(cast(WhileStatement*)&this);
-        case FUNCTION   : return visitor.visit(cast(FuncStatement*)&this);
-        case IMPORT   : return visitor.visit(cast(ImportStatement*)&this);
-        case RETURN     : return visitor.visit(cast(ReturnStatement*)&this);
-        case GOTO       : return visitor.visit(cast(GotoStatement*)&this);
-        case LABEL      : return visitor.visit(cast(LabelStatement*)&this);
-        case HALT      : return visitor.visit(cast(HaltStatement*)&this);
-        case ABORT      : return visitor.visit(cast(AbortStatement*)&this);
-        case DASM      : return visitor.visit(cast(DasmStatement*)&this);
-        }
-    }
 }
 
 struct DasmStatement {
     Statement stmt;
     Token dasm;
     static
-    Statement* make(A)(A allocator, Token dasm){
+    Statement* make(Allocator allocator, Token dasm){
         auto data = allocator.alloc(typeof(this).sizeof);
         auto p = cast(typeof(this)*)data.ptr;
         p.stmt.type = StatementType.DASM;
@@ -649,7 +621,7 @@ struct ReturnStatement {
     Token keyword;
     Expr* value;
     static
-    Statement* make(A)(A allocator, Token k, Expr* v){
+    Statement* make(Allocator allocator, Token k, Expr* v){
         auto data = allocator.alloc(typeof(this).sizeof);
         auto p = cast(typeof(this)*)data.ptr;
         p.stmt.type = StatementType.RETURN;
@@ -691,7 +663,7 @@ struct FuncStatement {
     Statement*[] body;
     static
     Statement*
-    make(A)(A allocator, Token n, Token[] params, Statement*[] s){
+    make(Allocator allocator, Token n, Token[] params, Statement*[] s){
         auto data = allocator.alloc(typeof(this).sizeof);
         auto p = cast(typeof(this)*)data.ptr;
         p.stmt.type = StatementType.FUNCTION;
@@ -707,7 +679,7 @@ struct ImportStatement {
     Token name;
     static
     Statement*
-    make(A)(A allocator, Token n){
+    make(Allocator allocator, Token n){
         auto data = allocator.alloc(typeof(this).sizeof);
         auto p = cast(typeof(this)*)data.ptr;
         p.stmt.type = StatementType.IMPORT;
@@ -723,7 +695,7 @@ struct WhileStatement {
 
     static
     Statement*
-    make(A)(A allocator, Expr* c, Statement* s){
+    make(Allocator allocator, Expr* c, Statement* s){
         auto data = allocator.alloc(typeof(this).sizeof);
         auto p = cast(typeof(this)*)data.ptr;
         p.stmt.type = StatementType.WHILE;
@@ -736,18 +708,18 @@ struct WhileStatement {
 struct IfStmt {
     Statement stmt;
     Expr* condition;
-    Statement* thenBranch;
-    Statement* elseBranch;
+    Statement* then_branch;
+    Statement* else_branch;
 
     static
     Statement*
-    make(A)(A allocator, Expr* c, Statement* t, Statement* e){
+    make(Allocator allocator, Expr* c, Statement* t, Statement* e){
         auto data = allocator.alloc(typeof(this).sizeof);
         auto p = cast(typeof(this)*)data.ptr;
         p.stmt.type = StatementType.IF;
         p.condition = c;
-        p.thenBranch = t;
-        p.elseBranch = e;
+        p.then_branch = t;
+        p.else_branch = e;
         return &p.stmt;
     }
 }
@@ -759,7 +731,7 @@ struct Block {
 
     static
     Statement*
-    make(A)(A allocator, Statement*[] s){
+    make(Allocator allocator, Statement*[] s){
         auto data = allocator.alloc(typeof(this).sizeof);
         auto p = cast(typeof(this)*)data.ptr;
         p.stmt.type = StatementType.BLOCK;
@@ -774,7 +746,7 @@ struct ExpressionStmt {
 
     static
     Statement*
-    make(A)(A allocator, Expr* e){
+    make(Allocator allocator, Expr* e){
         auto data = allocator.alloc(typeof(this).sizeof);
         auto p = cast(typeof(this)*)data.ptr;
         p.stmt.type = StatementType.EXPRESSION;
@@ -790,7 +762,7 @@ struct LetStmt {
 
     static
     Statement*
-    make(A)(A allocator, Token t, Expr* i){
+    make(Allocator allocator, Token t, Expr* i){
         auto data = allocator.alloc(typeof(this).sizeof);
         auto p = cast(typeof(this)*)data.ptr;
         p.stmt.type = StatementType.LET;
@@ -800,14 +772,34 @@ struct LetStmt {
     }
 }
 
+struct BreakStatement {
+    Statement stmt;
+    static
+    Statement*
+    get(){
+        return cast(Statement*)&break_stmt;
+    }
+}
+immutable BreakStatement break_stmt = {stmt:{type:StatementType.BREAK}};
+
+struct ContinueStatement {
+    Statement stmt;
+    static
+    Statement*
+    get(){
+        return cast(Statement*)&continue_stmt;
+    }
+}
+immutable ContinueStatement continue_stmt = {stmt:{type:StatementType.CONTINUE}};
+
 struct GotoStatement {
     Statement stmt;
     Token label;
 
     static
     Statement*
-    make(A)(A allocator, Token t){
-        auto data = allocator.alloc(typeof(this).sizeof);
+    make(Allocator allocator, Token t){
+        void[] data = allocator.alloc(typeof(this).sizeof);
         auto p = cast(typeof(this)*)data.ptr;
         p.stmt.type = StatementType.GOTO;
         p.label = t;
@@ -820,8 +812,8 @@ struct LabelStatement {
 
     static
     Statement*
-    make(A)(A allocator, Token t){
-        auto data = allocator.alloc(typeof(this).sizeof);
+    make(Allocator allocator, Token t){
+        void[] data = allocator.alloc(typeof(this).sizeof);
         auto p = cast(typeof(this)*)data.ptr;
         p.stmt.type = StatementType.LABEL;
         p.label = t;
@@ -831,11 +823,12 @@ struct LabelStatement {
 
 // Parser
 
-struct Parser(A) {
-    A allocator;
+struct Parser {
+    Allocator allocator;
     Token[] tokens;
     int current = 0;
     int funcdepth = 0;
+    int loop_depth = 0;
     bool ERROR_OCCURRED = false;
 
     void
@@ -850,7 +843,7 @@ struct Parser(A) {
 
     int
     parse(R)(R* result){
-        while(!isAtEnd){
+        while(!at_end){
             auto s = declaration();
             if(ERROR_OCCURRED) return 1;
             *result ~= s;
@@ -860,7 +853,7 @@ struct Parser(A) {
 
     Statement*
     declaration(){
-        if(match(TokenType.FUN)) return function_!"function"();
+        if(match(TokenType.FUN)) return function_();
         if(match(TokenType.LET)) return varDeclaration();
         if(match(TokenType.IMPORT)) return import_statement;
         if(match(TokenType.DASM)) return dasm_statement;
@@ -887,10 +880,10 @@ struct Parser(A) {
     }
 
     Statement*
-    function_(string kind)(){with(TokenType){
+    function_(){with(TokenType){
         funcdepth++;
         scope(exit) funcdepth--;
-        Token name = consume(IDENTIFIER, "Expect " ~ kind ~ " name");
+        Token name = consume(IDENTIFIER, "Expect function name");
         if(ERROR_OCCURRED) return null;
         consume(LEFT_PAREN, "Expected a paren noob");
         if(ERROR_OCCURRED) return null;
@@ -947,6 +940,8 @@ struct Parser(A) {
         if(match(TokenType.LEFT_BRACE)) return block();
         if(match(TokenType.LABEL)) return label();
         if(match(TokenType.GOTO)) return goto_();
+        if(match(TokenType.CONTINUE)) return continue_();
+        if(match(TokenType.BREAK)) return break_();
         return expressionStatement();
     }
 
@@ -957,12 +952,32 @@ struct Parser(A) {
         consume(TokenType.SEMICOLON, "Expect ';' after label decl");
         return LabelStatement.make(allocator, target);
     }
+
     Statement*
     goto_(){
         Token target = consume(TokenType.IDENTIFIER, "Expect goto target");
         if(ERROR_OCCURRED) return null;
         consume(TokenType.SEMICOLON, "Expect ';' after goto target");
         return GotoStatement.make(allocator, target);
+    }
+
+    Statement*
+    continue_(){
+        if(!loop_depth){
+            error(previous, "Can't continue outside of a loop");
+            return null;
+        }
+        consume(TokenType.SEMICOLON, "Expect ';' after continue");
+        return ContinueStatement.get();
+    }
+    Statement*
+    break_(){
+        if(!loop_depth){
+            error(previous, "Can't break outside of a loop");
+            return null;
+        }
+        consume(TokenType.SEMICOLON, "Expect ';' after continue");
+        return BreakStatement.get();
     }
 
     Statement*
@@ -1007,11 +1022,13 @@ struct Parser(A) {
             if(increment is null) return null;
         }
         consume(TokenType.RIGHT_PAREN, "Expect a ')' after for clauses");
+        loop_depth++;
         Statement* body = statement();
+        loop_depth--;
         if(body is null) return null;
         if(increment !is null){
-            auto p = allocator.alloc((Statement*).sizeof*2);
-            Statement*[] s = (cast(Statement**)p.ptr)[0 .. 2];
+            void[] p = allocator.alloc((Statement*).sizeof*2);
+            Statement*[] s = cast(Statement*[])p;
             s[0] = body;
             s[1] = ExpressionStmt.make(allocator, increment);
             body = Block.make(allocator, s);
@@ -1033,11 +1050,13 @@ struct Parser(A) {
     whileStatement(){
         consume(TokenType.LEFT_PAREN, "Expect '(' after 'while'.");
         if(ERROR_OCCURRED) return null;
-        auto condition = expression();
+        Expr* condition = expression();
         if(condition is null) return null;
         consume(TokenType.RIGHT_PAREN, "Expect ')' after condition of 'while'");
         if(ERROR_OCCURRED) return null;
-        auto stmt = statement();
+        loop_depth++;
+        Statement* stmt = statement();
+        loop_depth--;
         if(stmt is null) return null;
         return WhileStatement.make(allocator, condition, stmt);
     }
@@ -1061,8 +1080,8 @@ struct Parser(A) {
     }
 
     int
-    parse_statement_list(Barray!(Statement*, A)* stmts){
-        while(!check(TokenType.RIGHT_BRACE) && !isAtEnd){
+    parse_statement_list(Barray!(Statement*)* stmts){
+        while(!check(TokenType.RIGHT_BRACE) && !at_end){
             auto d = declaration();
             if(d is null) return 1;
             *stmts ~= d;
@@ -1180,11 +1199,22 @@ struct Parser(A) {
         return expr;
     }}
     Expr*
-    factor(){with(TokenType){
+    bitops(){with(TokenType){
         Expr* expr = unary();
-        while(match(STAR, SLASH, MOD)){
+        while(match(BAR, AMP)){
+            import core.stdc.stdio;
             Token operator = previous;
             Expr* right = unary();
+            expr = Binary.make(allocator, expr, operator, right);
+        }
+        return expr;
+    }}
+    Expr*
+    factor(){with(TokenType){
+        Expr* expr = bitops();
+        while(match(STAR, SLASH, MOD)){
+            Token operator = previous;
+            Expr* right = bitops();
             expr = Binary.make(allocator, expr, operator, right);
         }
         return expr;
@@ -1192,7 +1222,8 @@ struct Parser(A) {
 
     Expr*
     unary(){with(TokenType){
-        if(match(BANG, MINUS)){
+        if(match(PLUS)) return unary();
+        if(match(BANG, MINUS, AMP)){
             Token operator = previous();
             Expr* right = unary();
             return Unary.make(allocator, operator, right);
@@ -1206,7 +1237,7 @@ struct Parser(A) {
         if(expr is null) return null;
         for(;;){
             if(match(TokenType.LEFT_PAREN)){
-                expr = finishCall(expr);
+                expr = finish_call(expr);
                 if(expr is null) return null;
             }
             else {
@@ -1217,11 +1248,11 @@ struct Parser(A) {
     }
 
     Expr*
-    finishCall(Expr* callee){
-        auto args = make_barray!(Expr*)(allocator);
+    finish_call(Expr* callee){
+        Barray!(Expr*) args = make_barray!(Expr*)(allocator);
         if(!check(TokenType.RIGHT_PAREN)){
             do {
-                auto e = expression;
+                Expr* e = expression;
                 if(e is null) return null;
                 args ~= e;
                 if(args.count >= 255){
@@ -1270,18 +1301,18 @@ struct Parser(A) {
     }
     bool
     check(TokenType type){
-        if(isAtEnd) return false;
+        if(at_end) return false;
         return peek.type == type;
     }
 
     Token
     advance(){
-        if(!isAtEnd) current++;
+        if(!at_end) current++;
         return previous;
     }
 
     bool
-    isAtEnd(){
+    at_end(){
         return peek.type == TokenType.EOF;
     }
 

@@ -6,7 +6,7 @@ module dscript_to_dasm;
 import core.stdc.stdio: fprintf, stderr;
 
 import dlib.aliases;
-import dlib.allocator: Mallocator, ArenaAllocator;
+import dlib.allocator: MALLOCATOR, ArenaAllocator, Allocator, Mallocator;
 import dlib.box: Box;
 import dlib.stringbuilder: StringBuilder, P;
 import dlib.barray: Barray, make_barray;
@@ -19,20 +19,20 @@ import dscript.dscript;
 import dvm.dvm_regs;
 
 int
-compile_to_dasm(const ubyte[] source, Box!(char[], Mallocator)* progtext){
-    ArenaAllocator!(Mallocator) arena;
+compile_to_dasm(const ubyte[] source, Box!(char[])* progtext){
+    ArenaAllocator arena = ArenaAllocator(MALLOCATOR);
     scope(exit) arena.free_all;
-    auto tokens = make_barray!Token(&arena);
-    auto tokenizer = Tokenizer!(typeof(tokens))(source, &tokens);
-    int err = tokenizer.tokenizeTokens();
+    Barray!Token tokens = make_barray!Token(arena.allocator());
+    Tokenizer!(Barray!Token) tokenizer = Tokenizer!(Barray!Token)(source, &tokens);
+    int err = tokenizer.tokenize_tokens();
     if(err) return 1;
     tokens.bdata.resize(tokens.count);
-    auto parser = Parser!(typeof(arena)*)(&arena, tokens[]);
-    auto statements = make_barray!(Statement*)(&arena);
+    auto parser = Parser(arena.allocator(), tokens[]);
+    auto statements = make_barray!(Statement*)(arena.allocator());
     err = parser.parse(&statements);
     if(err) return 1;
-    StringBuilder!Mallocator sb;
-    auto writer = DasmWriter!(typeof(sb), typeof(arena)*)(&sb, &arena);
+    StringBuilder sb = {allocator:progtext.allocator};
+    auto writer = DasmWriter(&sb, arena.allocator());
     err = writer.do_it(statements[]);
     writer.cleanup;
     if(err){
@@ -86,128 +86,138 @@ struct LabelAllocator {
     }
 }
 
-struct Analysis(A) {
-    Barray!(Token, A) vars;
+struct Analysis {
+    Barray!(Token) vars;
     bool vars_on_stack;
     bool has_goto;
 }
-struct DasmAnalyzer(A){
+struct DasmAnalyzer{
     @disable this();
-    Analysis!A analysis;
-    this(A allocator){
+    Analysis analysis;
+    this(Allocator allocator){
         analysis.vars.bdata.allocator = allocator;
     }
 
     void analyze(Expr* e){
         final switch(e.type)with(ExprType){
-            case ASSIGN:   return visit(cast(Assign*)e);
-            case BINARY:   return visit(cast(Binary*)e);
-            case GROUPING: return visit(cast(Grouping*)e);
-            case LITERAL:  return visit(cast(Literal*)e);
-            case UNARY:    return visit(cast(Unary*)e);
-            case VARIABLE: return visit(cast(VarExpr*)e);
-            case LOGICAL:  return visit(cast(Logical*)e);
-            case CALL:     return visit(cast(Call*)e);
+            case ASSIGN:   return visit_assign(cast(Assign*)e);
+            case BINARY:   return visit_binary(cast(Binary*)e);
+            case GROUPING: return visit_grouping(cast(Grouping*)e);
+            case LITERAL:  return visit_literal(cast(Literal*)e);
+            case UNARY:    return visit_unary(cast(Unary*)e);
+            case VARIABLE: return visit_var(cast(VarExpr*)e);
+            case LOGICAL:  return visit_logical(cast(Logical*)e);
+            case CALL:     return visit_call(cast(Call*)e);
         }
     }
     void analyze(Statement* s){
         final switch(s.type)with(StatementType){
-            case BLOCK:      return visit(cast(Block*)s);
-            case EXPRESSION: return visit(cast(ExpressionStmt*)s);
-            case LET:        return visit(cast(LetStmt*)s);
-            case IF:         return visit(cast(IfStmt*)s);
-            case WHILE:      return visit(cast(WhileStatement*)s);
-            case FUNCTION:   return visit(cast(FuncStatement*)s);
-            case IMPORT:     return visit(cast(ImportStatement*)s);
-            case RETURN:     return visit(cast(ReturnStatement*)s);
-            case GOTO:       return visit(cast(GotoStatement*)s);
-            case LABEL:      return visit(cast(LabelStatement*)s);
-            case HALT:       return visit(cast(HaltStatement*)s);
-            case ABORT:      return visit(cast(AbortStatement*)s);
-            case DASM:       return visit(cast(DasmStatement*)s);
+            case BLOCK:      return visit_block(cast(Block*)s);
+            case EXPRESSION: return visit_expression(cast(ExpressionStmt*)s);
+            case LET:        return visit_let(cast(LetStmt*)s);
+            case IF:         return visit_if(cast(IfStmt*)s);
+            case WHILE:      return visit_while(cast(WhileStatement*)s);
+            case FUNCTION:   return visit_function(cast(FuncStatement*)s);
+            case IMPORT:     return visit_import(cast(ImportStatement*)s);
+            case RETURN:     return visit_return(cast(ReturnStatement*)s);
+            case CONTINUE:   return visit_continue(cast(ContinueStatement*)s);
+            case BREAK:      return visit_break(cast(BreakStatement*)s);
+            case GOTO:       return visit_goto(cast(GotoStatement*)s);
+            case LABEL:      return visit_label(cast(LabelStatement*)s);
+            case HALT:       return visit_halt(cast(HaltStatement*)s);
+            case ABORT:      return visit_abort(cast(AbortStatement*)s);
+            case DASM:       return visit_dasm(cast(DasmStatement*)s);
         }
     }
 
-    void visit(Binary* expr){
+    void visit_binary(Binary* expr){
         analyze(expr.left);
         analyze(expr.right);
     }
-    void visit(Call* expr){
+    void visit_call(Call* expr){
         analyze(expr.callee);
         foreach(a; expr.args)
             analyze(a);
     }
-    void visit(Grouping* expr){
+    void visit_grouping(Grouping* expr){
         analyze(expr.expression);
     }
-    void visit(Literal* expr){
+    void visit_literal(Literal* expr){
     }
-    void visit(Unary* expr){
+    void visit_unary(Unary* expr){
+        if(expr.operator.type == TokenType.AMP)
+            analysis.vars_on_stack = true;
         analyze(expr.right);
     }
-    void visit(VarExpr* expr){
+    void visit_var(VarExpr* expr){
     }
-    void visit(Assign* expr){
+    void visit_assign(Assign* expr){
         analyze(expr.right);
     }
-    void visit(Logical* expr){
+    void visit_logical(Logical* expr){
         analyze(expr.left);
         analyze(expr.right);
     }
-    void visit(ExpressionStmt* stmt){
+    void visit_expression(ExpressionStmt* stmt){
         analyze(stmt.expr);
     }
-    void visit(LetStmt* stmt){
+    void visit_let(LetStmt* stmt){
         analyze(stmt.initializer);
         analysis.vars ~= stmt.name;
     }
-    void visit(IfStmt* stmt){
+    void visit_if(IfStmt* stmt){
         analyze(stmt.condition);
-        analyze(stmt.thenBranch);
-        if(stmt.elseBranch !is null)
-            analyze(stmt.elseBranch);
+        analyze(stmt.then_branch);
+        if(stmt.else_branch !is null)
+            analyze(stmt.else_branch);
     }
-    void visit(WhileStatement* stmt){
+    void visit_while(WhileStatement* stmt){
         analyze(stmt.condition);
         analyze(stmt.statement);
     }
-    void visit(ReturnStatement* stmt){
+    void visit_return(ReturnStatement* stmt){
         analyze(stmt.value);
     }
-    void visit(Block* stmt){
+    void visit_block(Block* stmt){
         foreach(s; stmt.statements)
             analyze(s);
     }
-    void visit(FuncStatement* stmt){
+    void visit_function(FuncStatement* stmt){
         analysis.vars.clear();
         analysis.has_goto = false;
         foreach(s; stmt.body)
             analyze(s);
     }
-    void visit(ImportStatement* stmt){
+    void visit_import(ImportStatement* stmt){
     }
-    void visit(DasmStatement* stmt){
+    void visit_dasm(DasmStatement* stmt){
     }
-    void visit(HaltStatement* stmt){
+    void visit_halt(HaltStatement* stmt){
     }
-    void visit(AbortStatement* stmt){
+    void visit_abort(AbortStatement* stmt){
     }
-    void visit(GotoStatement* stmt){
+    void visit_continue(ContinueStatement* stmt){
+    }
+    void visit_break(BreakStatement* stmt){
+    }
+    void visit_goto(GotoStatement* stmt){
         analysis.has_goto = true;
     }
-    void visit(LabelStatement* stmt){
+    void visit_label(LabelStatement* stmt){
     }
 
 }
-struct DasmWriter(SB, A){
-    A allocator;
-    SB* sb;
+struct DasmWriter{
+    Allocator allocator;
+    StringBuilder* sb;
     RegisterAllocator regallocator;
     StackAllocator stackallocator;
     LabelAllocator labelallocator;
+    int current_continue_target = -1;
+    int current_break_target = -1;
     Table!(str, int) locals;
     Table!(str, int) reglocals;
-    Analysis!A analysis;
+    Analysis analysis;
     void cleanup(){
         locals.cleanup;
         reglocals.cleanup;
@@ -216,39 +226,43 @@ struct DasmWriter(SB, A){
     bool ERROR_OCCURRED = false;
 
     @disable this();
-    this(SB* s, A a){
+    this(StringBuilder* s, Allocator a){
         allocator = a;
+        locals.data.allocator = a;
+        reglocals.data.allocator = a;
         sb = s;
     }
 
-    int gen(Expr* e, int target){
+    int gen_expression(Expr* e, int target){
         final switch(e.type)with(ExprType){
-            case ASSIGN:   return visit(cast(Assign*)e, target);
-            case BINARY:   return visit(cast(Binary*)e, target);
-            case GROUPING: return visit(cast(Grouping*)e, target);
-            case LITERAL:  return visit(cast(Literal*)e, target);
-            case UNARY:    return visit(cast(Unary*)e, target);
-            case VARIABLE: return visit(cast(VarExpr*)e, target);
-            case LOGICAL:  return visit(cast(Logical*)e, target);
-            case CALL:     return visit(cast(Call*)e, target);
+            case ASSIGN:   return visit_assign(cast(Assign*)e, target);
+            case BINARY:   return visit_binary(cast(Binary*)e, target);
+            case GROUPING: return visit_grouping(cast(Grouping*)e, target);
+            case LITERAL:  return visit_literal(cast(Literal*)e, target);
+            case UNARY:    return visit_unary(cast(Unary*)e, target);
+            case VARIABLE: return visit_var(cast(VarExpr*)e, target);
+            case LOGICAL:  return visit_logical(cast(Logical*)e, target);
+            case CALL:     return visit_call(cast(Call*)e, target);
         }
     }
 
-    int gen(Statement* s){
+    int gen_statement(Statement* s){
         final switch(s.type)with(StatementType){
-            case BLOCK:      return visit(cast(Block*)s);
-            case EXPRESSION: return visit(cast(ExpressionStmt*)s);
-            case LET:        return visit(cast(LetStmt*)s);
-            case IF:         return visit(cast(IfStmt*)s);
-            case WHILE:      return visit(cast(WhileStatement*)s);
-            case FUNCTION:   return visit(cast(FuncStatement*)s);
-            case IMPORT:     return visit(cast(ImportStatement*)s);
-            case RETURN:     return visit(cast(ReturnStatement*)s);
-            case GOTO:       return visit(cast(GotoStatement*)s);
-            case LABEL:      return visit(cast(LabelStatement*)s);
-            case HALT:       return visit(cast(HaltStatement*)s);
-            case ABORT:      return visit(cast(AbortStatement*)s);
-            case DASM:       return visit(cast(DasmStatement*)s);
+            case BLOCK:      return visit_block(cast(Block*)s);
+            case EXPRESSION: return visit_expression(cast(ExpressionStmt*)s);
+            case LET:        return visit_let(cast(LetStmt*)s);
+            case IF:         return visit_if(cast(IfStmt*)s);
+            case WHILE:      return visit_while(cast(WhileStatement*)s);
+            case FUNCTION:   return visit_function(cast(FuncStatement*)s);
+            case IMPORT:     return visit_import(cast(ImportStatement*)s);
+            case RETURN:     return visit_return(cast(ReturnStatement*)s);
+            case BREAK:      return visit_break(cast(BreakStatement*)s);
+            case CONTINUE:   return visit_continue(cast(ContinueStatement*)s);
+            case GOTO:       return visit_goto(cast(GotoStatement*)s);
+            case LABEL:      return visit_label(cast(LabelStatement*)s);
+            case HALT:       return visit_halt(cast(HaltStatement*)s);
+            case ABORT:      return visit_abort(cast(AbortStatement*)s);
+            case DASM:       return visit_dasm(cast(DasmStatement*)s);
         }
     }
 
@@ -256,7 +270,10 @@ struct DasmWriter(SB, A){
     error(Token token, str message){
         ERROR_OCCURRED = true;
         int line = token.line;
-        fprintf(stderr, "[line %d]: Write Error at '%.*s': %.*s\n", line, cast(int)token.lexeme.length, token.lexeme.ptr, cast(int)message.length, message.ptr);
+        fprintf(stderr, "[line %d]: Write Error at '%.*s': %.*s\n",
+                line, 
+                cast(int)token.lexeme.length, token.lexeme.ptr, 
+                cast(int)message.length, message.ptr);
     }
 
     void
@@ -287,53 +304,55 @@ struct DasmWriter(SB, A){
     int funcdepth;
     enum {TARGET_IS_CMP_FLAGS = -2};
     enum {TARGET_IS_NOTHING   = -1};
+
+    int maybe_reg_from_expr(Expr* e){
+        if(VarExpr* ve = e.is_variable()){
+            if(auto rlocal = ve.name.lexeme in reglocals)
+                return *rlocal;
+        }
+        return -1;
+    }
     int binary_cmp(Binary* expr){
         int before = regallocator.alloced;
         scope(exit) regallocator.reset_to(before);
-        int lhs;
-        if(expr.left.type == ExprType.VARIABLE && (cast(VarExpr*)expr.left).name.lexeme in reglocals){
-            lhs = *((cast(VarExpr*)expr.left).name.lexeme in reglocals);
-        }
-        else {
+        int lhs = maybe_reg_from_expr(expr.left);
+        if(lhs == -1){
             lhs = regallocator.allocate();
-            int res = gen(expr.left, lhs);
+            int res = gen_expression(expr.left, lhs);
             if(res != 0) return res;
         }
-        if(expr.right.type == ExprType.LITERAL && (cast(Literal*)expr.right).value.type == TokenType.NUMBER){
-            auto lit = cast(Literal*)expr.right;
-            auto rhs = cast(size_t)lit.value.number;
+        if(expr.right.is_literal() && expr.right.as_literal().value.type == TokenType.NUMBER){
+            Literal* lit = expr.right.as_literal();
+            str rhs = lit.value.lexeme;
             sb.writef("    scmp r% %\n", lhs, rhs);
             return 0;
         }
         else {
-            int rhs;
-            if(expr.right.type == ExprType.VARIABLE && (cast(VarExpr*)expr.right).name.lexeme in reglocals){
-                rhs = *((cast(VarExpr*)expr.right).name.lexeme in reglocals);
-            }
-            else {
+            int rhs = maybe_reg_from_expr(expr.right);
+            if(rhs == -1){
                 rhs = regallocator.allocate();
-                int res2 = gen(expr.right, rhs);
+                int res2 = gen_expression(expr.right, rhs);
                 if(res2 != 0) return res2;
             }
             sb.writef("    scmp r% r%\n", lhs, rhs);
             return 0;
         }
     }
-    int visit(Binary* expr, int target){
+    int visit_binary(Binary* expr, int target){
         // expr.dump; fprintf(stderr, "\n");
         if(target == TARGET_IS_CMP_FLAGS)
             return binary_cmp(expr);
         // std.stdio.writefln("HERE: %d", __LINE__);
         int before = regallocator.alloced;
         int lhs = target;
-        int res_ = gen(expr.left, lhs);
+        int res_ = gen_expression(expr.left, lhs);
         if(res_ != 0) return res_;
-        if(expr.right.type == ExprType.LITERAL){
+        if(Literal* lit = expr.right.is_literal()){
             if(target == TARGET_IS_NOTHING)
                 return 0;
-            auto lit = cast(Literal*)expr.right;
-            if(lit.value.type == TokenType.NUMBER){
-                auto rhs = cast(size_t) lit.value.number;
+            const vt = lit.value.type;
+            if(vt == TokenType.STRING || vt == TokenType.NUMBER|| vt == TokenType.HEX || vt == TokenType.PHEX || vt == TokenType.SNUM || vt == TokenType.BNUM){
+                str rhs = lit.value.lexeme;
                 switch(expr.operator.type)with(TokenType){
                     case MINUS:
                         sb.writef("    sub r% r% %\n", target, lhs, rhs);
@@ -349,6 +368,12 @@ struct DasmWriter(SB, A){
                         break;
                     case MOD:
                         sb.writef("    div rjunk r% r% %\n", target, lhs, rhs);
+                        break;
+                    case BAR:
+                        sb.writef("    or r% r% %\n", target, lhs, rhs);
+                        break;
+                    case AMP:
+                        sb.writef("    and r% r% %\n", target, lhs, rhs);
                         break;
                     case BANG_EQUAL:
                         sb.writef("    scmp r% %\n", lhs, rhs);
@@ -384,42 +409,22 @@ struct DasmWriter(SB, A){
                         error(expr.operator, "Unhandled binary op");
                         return -1;
                 }
+                return 0;
             }
-            if(lit.value.type == TokenType.STRING){
-                auto rhs = lit.value.string_;
-                switch(expr.operator.type)with(TokenType){
-                    case MINUS:
-                        sb.writef("    sub r% r% %\n", target, lhs, rhs);
-                        break;
-                    case PLUS:
-                        sb.writef("    add r% r% %\n", target, lhs, rhs);
-                        break;
-                    case STAR:
-                        sb.writef("    mul r% r% %\n", target, lhs, rhs);
-                        break;
-                    case SLASH:
-                        sb.writef("    div r% rjunk r% %\n", target, lhs, rhs);
-                        break;
-                    case MOD:
-                        sb.writef("    div rjunk r% r% %\n", target, lhs, rhs);
-                        break;
-                    default:
-                        error(expr.operator, "Unhandled binary op");
-                        return -1;
-                }
-            }
+            error(lit.value, "Unhandled literal type");
+            return -1;
         }
         else {
             if(target == TARGET_IS_NOTHING){
-                return gen(expr.right, target);
+                return gen_expression(expr.right, target);
             }
             int rhs;
-            if(expr.right.type == ExprType.VARIABLE && (cast(VarExpr*)expr.right).name.lexeme in reglocals){
-                rhs = reglocals[(cast(VarExpr*)expr.right).name.lexeme];
+            if(expr.right.is_variable() && expr.right.as_variable().name.lexeme in reglocals){
+                rhs = reglocals[expr.right.as_variable().name.lexeme];
             }
             else {
                 rhs = regallocator.allocate();
-                int res = gen(expr.right, rhs);
+                int res = gen_expression(expr.right, rhs);
                 if(res != 0) return res;
             }
             switch(expr.operator.type)with(TokenType){
@@ -468,6 +473,12 @@ struct DasmWriter(SB, A){
                     sb.writef("    move r% 0\n", target);
                     sb.writef("    cmov le r% 1\n", target);
                     break;
+                case BAR:
+                    sb.writef("    or r% r% r%\n", target, lhs, rhs);
+                    break;
+                case AMP:
+                    sb.writef("    and r% r% r%\n", target, lhs, rhs);
+                    break;
                 default:
                     error(expr.operator, "Unhandled binary op");
                     return -1;
@@ -476,10 +487,10 @@ struct DasmWriter(SB, A){
         regallocator.reset_to(before);
         return 0;
     }
-    int visit(Literal* expr, int target){
+    int visit_literal(Literal* expr, int target){
         if(target == TARGET_IS_NOTHING) return 0;
-        if(expr.value.type == TokenType.NUMBER){
-            sb.writef("    move r% %\n", target, cast(size_t)expr.value.number);
+        if(expr.value.type == TokenType.NUMBER || expr.value.type == TokenType.HEX || expr.value.type == TokenType.PHEX || expr.value.type == TokenType.SNUM || expr.value.type == TokenType.BNUM){
+            sb.writef("    move r% %\n", target, expr.value.lexeme);
             return 0;
         }
         if(expr.value.type == TokenType.NIL){
@@ -495,16 +506,37 @@ struct DasmWriter(SB, A){
             return 0;
         }
         if(expr.value.type == TokenType.STRING){
-            sb.writef("    move r% \"%\"\n", target, expr.value.string_);
+            sb.writef("    move r% %\n", target, expr.value.lexeme);
             return 0;
         }
         fprintf(stderr, "expr.value.type: %d\n", cast(int)expr.value.type);
         fprintf(stderr, "Label: %d\n", cast(int)TokenType.LABEL);
-        fprintf(stderr, "%d\n", __LINE__);
+        fprintf(stderr, "%s:%d\n", __FILE__.ptr, __LINE__);
         return -1;
     }
-    int visit(Unary* expr, int target){
-        int v = gen(expr.right, target);
+    int visit_unary(Unary* expr, int target){
+        if(expr.operator.type == TokenType.AMP){
+            if(VarExpr* ve = expr.right.is_variable()){
+                if(int* rlocal = ve.name.lexeme in reglocals){
+                    error(ve.name, "RHS of & is in registers");
+                    return -1;
+                }
+                if(target != TARGET_IS_NOTHING){
+                    if(int* local = ve.name.lexeme in locals){
+                        sb.writef("    add r% rbp %\n", target, P(*local));
+                        return 0;
+                    }
+                    sb.writef("    move r% var %\n", target, ve.name.lexeme);
+                    return 0;
+                }
+                return 0;
+            }
+            else {
+                error(expr.operator, "Unhandled rhs of &");
+                return -1;
+            }
+        }
+        int v = gen_expression(expr.right, target);
         if(v < 0) return v;
         if(target != TARGET_IS_NOTHING){
             switch(expr.operator.type)with(TokenType){
@@ -521,12 +553,12 @@ struct DasmWriter(SB, A){
         }
         return 0;
     }
-    int visit(Call* expr, int target){
+    int visit_call(Call* expr, int target){
         int rarg1 = RegisterNames.RARG1;
         for(int i = 0; i < expr.args.length; i++){
             auto arg = expr.args[i].ungroup;
             int before = regallocator.alloced;
-            int res = gen(arg, rarg1+i);
+            int res = gen_expression(arg, rarg1+i);
             if(res != 0) return res;
             if(i != expr.args.length-1){
                 //can elide the push/pop for last arg
@@ -539,14 +571,13 @@ struct DasmWriter(SB, A){
         }
         bool called = false;
         // this is wrong but whatever
-        if(expr.callee.type == ExprType.VARIABLE){
-            auto l = cast(Literal*)expr.callee;
-            if(l.value.type == TokenType.IDENTIFIER){
+        if(VarExpr* ve = expr.callee.is_variable()){
+            if(ve.name.type == TokenType.IDENTIFIER){
                 // HACK
                 bool hack = (target == regallocator.alloced-1);
                 if(hack) regallocator.alloced--;
                 save_reglocals();
-                sb.writef("    call function %\n", l.value.lexeme);
+                sb.writef("    call function %\n", ve.name.lexeme);
                 restore_reglocals();
                 if(hack) regallocator.alloced++;
                 called = true;
@@ -555,7 +586,7 @@ struct DasmWriter(SB, A){
         if(!called){
             int before = regallocator.alloced;
             auto func = regallocator.allocate();
-            int res = gen(expr.callee, func);
+            int res = gen_expression(expr.callee, func);
             if(res != 0) return res;
             regallocator.reset_to(before);
             save_reglocals();
@@ -571,25 +602,24 @@ struct DasmWriter(SB, A){
         for(int i = 0; i < expr.args.length; i++){
             auto arg = expr.args[i].ungroup;
             int before = regallocator.alloced;
-            int res = gen(arg, rarg1+i);
+            int res = gen_expression(arg, rarg1+i);
             if(res != 0) return res;
             regallocator.reset_to(before);
         }
         bool called = false;
         // this is wrong but whatever
-        if(expr.callee.type == ExprType.VARIABLE){
-            auto l = cast(Literal*)expr.callee;
-            if(l.value.type == TokenType.IDENTIFIER){
+        if(VarExpr* ve = expr.callee.is_variable()){
+            if(ve.name.type == TokenType.IDENTIFIER){
                 if(analysis.vars_on_stack)
                     restore_stack();
-                sb.writef("    tail_call function %\n", l.value.lexeme);
+                sb.writef("    tail_call function %\n", ve.name.lexeme);
                 called = true;
             }
         }
         if(!called){
             int before = regallocator.alloced;
-            auto func = regallocator.allocate();
-            int res = gen(expr.callee, func);
+            int func = regallocator.allocate();
+            int res = gen_expression(expr.callee, func);
             if(res != 0) return res;
             regallocator.reset_to(before);
             if(analysis.vars_on_stack)
@@ -598,14 +628,14 @@ struct DasmWriter(SB, A){
         }
         return 0;
     }
-    int visit(Grouping* expr, int target){
-        int res = gen(expr.expression, target);
+    int visit_grouping(Grouping* expr, int target){
+        int res = gen_expression(expr.expression, target);
         if(res != 0) return res;
         return 0;
     }
-    int visit(VarExpr* expr, int target){
+    int visit_var(VarExpr* expr, int target){
         if(target == TARGET_IS_NOTHING) return 0;
-        if(auto rlocal = expr.name.lexeme in reglocals){
+        if(int* rlocal = expr.name.lexeme in reglocals){
             if(target == *rlocal){
                 // loading into the same register
                 return 0;
@@ -613,7 +643,7 @@ struct DasmWriter(SB, A){
             sb.writef("    move r% r%\n", target, *rlocal);
             return 0;
         }
-        if(auto local = expr.name.lexeme in locals){
+        if(int* local = expr.name.lexeme in locals){
             sb.writef("    local_read r% %\n", target, P(*local));
             return 0;
         }
@@ -621,11 +651,10 @@ struct DasmWriter(SB, A){
         sb.writef("    read r% var %\n", target, expr.name.lexeme);
         return 0;
     }
-    int visit(Assign* expr, int target){
+    int visit_assign(Assign* expr, int target){
         // ignore target;
-        if(auto rlocal = expr.name.lexeme in reglocals){
-            if(expr.right.type == ExprType.LITERAL){
-                auto lit = cast(Literal*)expr.right;
+        if(int* rlocal = expr.name.lexeme in reglocals){
+            if(Literal* lit = expr.right.is_literal()){
                 switch(lit.value.type)with(TokenType){
                     case NIL:
                     case FALSE:
@@ -635,16 +664,16 @@ struct DasmWriter(SB, A){
                         sb.writef("    move r% 1\n", *rlocal);
                         break;
                     case STRING:
-                        sb.writef("    move r% \"%\"\n", *rlocal, lit.value.string_);
+                        sb.writef("    move r% %\n", *rlocal, lit.value.lexeme);
                         break;
                     case NUMBER:
-                        sb.writef("    move r% %\n", *rlocal, cast(size_t)lit.value.number);
+                        sb.writef("    move r% %\n", *rlocal, lit.value.lexeme);
                         break;
                     case BNUM:
                     case SNUM:
                     case PHEX:
                     case HEX:
-                        sb.writef("    move r% %\n", *rlocal, lit.value.string_);
+                        sb.writef("    move r% %\n", *rlocal, lit.value.lexeme);
                         break;
                     default:
                         error(lit.value, "Unhandled literal type in assign");
@@ -652,19 +681,38 @@ struct DasmWriter(SB, A){
                 }
             }
             else {
+                int temp = - 1;
+                // optimization for x = x + 1
+                if(Binary* bin = expr.right.is_binary()){
+                    Expr* l = bin.left;
+                    Expr* r = bin.right;
+                    if(l.is_variable && r.is_literal()){
+                        VarExpr* ve = l.as_variable();
+                        if(ve.name == expr.name){
+                            if(int* vr = ve.name.lexeme in reglocals)
+                                temp = *vr;
+                        }
+                    }
+                }
+                // temp = -1;
 
                 int before = regallocator.alloced;
-                int temp = regallocator.allocate();
-                int res = gen(expr.right, temp);
-                if(res != 0) return res;
-                regallocator.reset_to(before);
-                sb.writef("    move r% r%\n", *rlocal, temp);
+                scope(exit) regallocator.reset_to(before);
+                if(temp == -1){
+                    temp = regallocator.allocate();
+                    int res = gen_expression(expr.right, temp);
+                    if(res != 0) return res;
+                    sb.writef("    move r% r%\n", *rlocal, temp);
+                }
+                else {
+                    int res = gen_expression(expr.right, temp);
+                    if(res != 0) return res;
+                }
             }
             return 0;
         }
-        if(auto local  = expr.name.lexeme in locals){
-            if(expr.right.type == ExprType.LITERAL){
-                auto lit = cast(Literal*)expr.right;
+        if(auto local = expr.name.lexeme in locals){
+            if(Literal* lit = expr.right.is_literal()){
                 switch(lit.value.type)with(TokenType){
                     case NIL:
                     case FALSE:
@@ -674,10 +722,16 @@ struct DasmWriter(SB, A){
                         sb.writef("    local_write % 1\n", P(*local));
                         break;
                     case STRING:
-                        sb.writef("    local_write % \"%\"\n", P(*local), lit.value.string_);
+                        sb.writef("    local_write % %\n", P(*local), lit.value.lexeme);
                         break;
                     case NUMBER:
-                        sb.writef("    local_write % %\n", P(*local), cast(size_t)lit.value.number);
+                        sb.writef("    local_write % %\n", P(*local), lit.value.lexeme);
+                        break;
+                    case BNUM:
+                    case SNUM:
+                    case PHEX:
+                    case HEX:
+                        sb.writef("    local_write % %\n", P(*local), lit.value.lexeme);
                         break;
                     default:
                         error(lit.value, "Unhandled literal type in assign");
@@ -687,7 +741,7 @@ struct DasmWriter(SB, A){
             else {
                 int before = regallocator.alloced;
                 int temp = regallocator.allocate();
-                int res = gen(expr.right, temp);
+                int res = gen_expression(expr.right, temp);
                 if(res != 0) return res;
                 regallocator.reset_to(before);
                 sb.writef("    local_write % r%\n", P(*local), temp);
@@ -695,8 +749,7 @@ struct DasmWriter(SB, A){
             return 0;
         }
         // must be a global.
-        if(expr.right.type == ExprType.LITERAL){
-            auto lit = cast(Literal*)expr.right;
+        if(Literal* lit = expr.right.is_literal()){
             int before = regallocator.alloced;
             int temp = regallocator.allocate();
             sb.writef("    move r% var %\n", temp, expr.name.lexeme);
@@ -710,10 +763,16 @@ struct DasmWriter(SB, A){
                     sb.writef("    write r% 1\n", temp);
                     break;
                 case STRING:
-                    sb.writef("    write r% \"%\"\n", temp, lit.value.string_);
+                    sb.writef("    write r% %\n", temp, lit.value.lexeme);
                     break;
                 case NUMBER:
-                    sb.writef("    write r% %\n", temp, cast(size_t)lit.value.number);
+                    sb.writef("    write r% %\n", temp, lit.value.lexeme);
+                    break;
+                case BNUM:
+                case SNUM:
+                case PHEX:
+                case HEX:
+                    sb.writef("    write r% %\n", temp, lit.value.lexeme);
                     break;
                 default:
                     error(lit.value, "Unhandled literal type in assign");
@@ -724,7 +783,7 @@ struct DasmWriter(SB, A){
             int before = regallocator.alloced;
             int lhs = regallocator.allocate();
             int rhs = regallocator.allocate();
-            int res = gen(expr.right, rhs);
+            int res = gen_expression(expr.right, rhs);
             if(res != 0) return res;
             regallocator.reset_to(before);
             sb.writef("    move r% var %\n", lhs, expr.name.lexeme);
@@ -732,23 +791,77 @@ struct DasmWriter(SB, A){
         }
         return 0;
     }
-    int visit(Logical* expr, int target){
+    int visit_logical(Logical* expr, int target){
         if(target == TARGET_IS_NOTHING){
+            int before = regallocator.alloced;
+            int lhs = regallocator.allocate();
+            int res_ = gen_expression(expr.left, lhs);
+            int after = -1; 
+            after = labelallocator.allocate();
+            if(res_ != 0) return res_;
+            if(expr.operator.type == TokenType.AND){
+                sb.writef("    cmp r% 0\n", lhs);
+                sb.writef("    jump eq label L%\n", after);
+            }
+            else {
+                assert(expr.operator.type == TokenType.OR);
+                sb.writef("    cmp r% 0\n", lhs);
+                sb.writef("    jump ne label L%\n", after);
+            }
+            regallocator.reset_to(before);
+            res_ = gen_expression(expr.right, TARGET_IS_NOTHING);
+            if(res_ != 0) return res_;
+            sb.writef("  label L%\n", after);
+            return 0;
+        }
+        else {
+            int before = regallocator.alloced;
+            int lhs = regallocator.allocate();
+            int res_ = gen_expression(expr.left, lhs);
+            int after = -1; 
+            after = labelallocator.allocate();
+            if(res_ != 0) return res_;
+            if(expr.operator.type == TokenType.AND){
+                sb.writef("    move r% 0\n", target);
+                sb.writef("    cmp r% 0\n", lhs);
+                sb.writef("    jump eq label L%\n", after);
+            }
+            else {
+                assert(expr.operator.type == TokenType.OR);
+                sb.writef("    move r% 1\n", target);
+                sb.writef("    cmp r% 0\n", lhs);
+                sb.writef("    jump ne label L%\n", after);
+            }
+            int rhs = regallocator.allocate();
+            res_ = gen_expression(expr.right, rhs);
+            if(res_ != 0) return res_;
+            if(expr.operator.type == TokenType.AND){
+                sb.writef("    cmp r% 0\n", rhs);
+                sb.writef("    cmov ne r% 1\n", target);
+            }
+            else {
+                sb.writef("    cmp r% 0\n", rhs);
+                sb.writef("    cmov eq r% 0\n", target);
+            }
+
+            sb.writef("  label L%\n", after);
+            regallocator.reset_to(before);
+            return 0;
         }
         error(expr.operator, "Unhandled logical operator");
         return -1;
     }
-    int visit(ExpressionStmt* stmt){
+    int visit_expression(ExpressionStmt* stmt){
         if(!funcdepth){
             error(0, "Expression outside of function");
             return -1;
         }
         int before = regallocator.alloced;
-        int result = gen(stmt.expr, TARGET_IS_NOTHING);
+        int result = gen_expression(stmt.expr, TARGET_IS_NOTHING);
         regallocator.reset_to(before);
         return result;
     }
-    int visit(LetStmt* stmt){
+    int visit_let(LetStmt* stmt){
         if(!funcdepth) {
             // global variable;
             if(stmt.initializer.type != ExprType.LITERAL){
@@ -765,10 +878,10 @@ struct DasmWriter(SB, A){
                     sb.writef("var % 1\n", stmt.name.lexeme);
                     return 0;
                 case STRING:
-                    sb.writef("var % \"%\"\n", stmt.name.lexeme, lit.value.string_);
+                    sb.writef("var % %\n", stmt.name.lexeme, lit.value.lexeme);
                     return 0;
                 case NUMBER:
-                    sb.writef("var % %\n", stmt.name.lexeme, lit.value.number);
+                    sb.writef("var % %\n", stmt.name.lexeme, lit.value.lexeme);
                     return 0;
                 default:
                     error(lit.value, "Unhandled literal type");
@@ -779,18 +892,18 @@ struct DasmWriter(SB, A){
         // if(!stmt.initializer) return 0;
         // Turn the initializer into an assignment statement.
         Assign assign = Assign.make(stmt.name, stmt.initializer);
-        int res = visit(&assign, 0);
+        int res = visit_assign(&assign, 0);
         return res;
         static if(0){
         if(auto rlocal = stmt.name.lexeme in reglocals){
-            int res = gen(stmt.initializer, *rlocal);
+            int res = gen_statement(stmt.initializer, *rlocal);
             if(res != 0) return res;
             return 0;
         }
         if(auto local = stmt.name.lexeme in locals){
             int before = regallocator.alloced;
             int temp = regallocator.allocate();
-            int res = gen(stmt.initializer, temp);
+            int res = gen_statement(stmt.initializer, temp);
             if(res != 0) return res;
             regallocator.reset_to(before);
             sb.writef("    local_write % r%\n", P(*local), temp);
@@ -800,29 +913,28 @@ struct DasmWriter(SB, A){
         return -1;
         }
     }
-    int visit(DasmStatement* stmt){
-        sb.writef("    %\n", stmt.dasm.lexeme[1..$-1].stripped);
+    int visit_dasm(DasmStatement* stmt){
+        sb.writef("%\n", stmt.dasm.lexeme[1..$-1]);
         return 0;
     }
-    int visit(Block* stmt){
+    int visit_block(Block* stmt){
         if(!funcdepth) {
             error(0, "Block outside of function");
             return -1;
         }
         foreach(s; stmt.statements){
-            int res = gen(s);
+            int res = gen_statement(s);
             if(res != 0) return res;
         }
         return 0;
     }
-    int visit(IfStmt* stmt){
+    int visit_if(IfStmt* stmt){
         if(!funcdepth) {
             error(0, "If outside of function");
             return -1;
         }
         int label = labelallocator.allocate();
-        if(stmt.condition.type == ExprType.BINARY){
-            Binary* b = cast(Binary*)stmt.condition;
+        if(Binary* b = stmt.condition.is_binary()){
             switch(b.operator.type)with(TokenType){
                 case GREATER:
                 case EQUAL_EQUAL:
@@ -830,7 +942,7 @@ struct DasmWriter(SB, A){
                 case LESS_EQUAL:
                 case LESS:
                 case BANG_EQUAL:
-                    int res = gen(stmt.condition, TARGET_IS_CMP_FLAGS);
+                    int res = gen_expression(stmt.condition, TARGET_IS_CMP_FLAGS);
                     if(res != 0) return res;
                     break;
                 default:
@@ -863,23 +975,38 @@ struct DasmWriter(SB, A){
             }
             sb.writef("    jump % label L%\n", jmpmode, label);
         }
+        else if(Unary*u = stmt.condition.is_unary()){
+            switch(u.operator.type)with(TokenType){
+                case BANG:{
+                    int before = regallocator.alloced;
+                    int cond = regallocator.allocate();
+                    scope(exit) regallocator.reset_to(before);
+                    int res = gen_expression(u.right, cond);
+                    if(res != 0) return res;
+                    sb.writef("    cmp r% 0\n", cond);
+                    sb.writef("    jump ne label L%\n", label);
+                }break;
+                default:
+                    goto Lgeneric;
+            }
+        }
         else {
             Lgeneric:
             int before = regallocator.alloced;
             int cond = regallocator.allocate();
             scope(exit) regallocator.reset_to(before);
-            int res = gen(stmt.condition, cond);
+            int res = gen_expression(stmt.condition, cond);
             if(res != 0) return res;
             sb.writef("    cmp r% 0\n", cond);
             sb.writef("    jump eq label L%\n", label);
         }
-        int res = gen(stmt.thenBranch);
+        int res = gen_statement(stmt.then_branch);
         if(res != 0) return res;
-        if(stmt.elseBranch){
+        if(stmt.else_branch){
             int after_else_label = labelallocator.allocate();
             sb.writef("    move rip label L%\n", after_else_label);
             sb.writef("  label L%\n", label);
-            int r = gen(stmt.elseBranch);
+            int r = gen_statement(stmt.else_branch);
             if(r != 0) return r;
             sb.writef("  label L%\n", after_else_label);
         }
@@ -888,13 +1015,13 @@ struct DasmWriter(SB, A){
         }
         return 0;
     }
-    int visit(FuncStatement* stmt){
+    int visit_function(FuncStatement* stmt){
         if(funcdepth){
             error(stmt.name, "Nested function");
             return -1;
         }
-        auto analyzer = DasmAnalyzer!(typeof(allocator))(allocator);
-        analyzer.visit(stmt);
+        DasmAnalyzer analyzer = DasmAnalyzer(allocator);
+        analyzer.visit_function(stmt);
         analysis = analyzer.analysis;
         funcdepth++;
         scope(exit){
@@ -941,8 +1068,8 @@ struct DasmWriter(SB, A){
             }
             sb.writef("    add rsp rsp %\n", P(nvars));
         }
-        foreach(s; stmt.body){
-            int res = gen(s);
+        foreach(Statement* s; stmt.body){
+            int res = gen_statement(s);
             if(res != 0) return res;
         }
         if(!stmt.body.length || stmt.body[$-1].type != StatementType.RETURN){
@@ -953,31 +1080,30 @@ struct DasmWriter(SB, A){
         sb.write("end\n");
         return 0;
     }
-    int visit(ImportStatement* stmt){
+    int visit_import(ImportStatement* stmt){
         sb.writef("import %\n", stmt.name.lexeme);
         return 0;
     }
-    int visit(HaltStatement* stmt){
+    int visit_halt(HaltStatement* stmt){
         sb.writef("    halt\n");
         return 0;
     }
-    int visit(AbortStatement* stmt){
+    int visit_abort(AbortStatement* stmt){
         sb.writef("    abort\n");
         return 0;
     }
-    int visit(ReturnStatement* stmt){
+    int visit_return(ReturnStatement* stmt){
         if(!funcdepth) {
             error(stmt.keyword, "Return outside of function");
             return -1;
         }
-        if(stmt.value.type == ExprType.CALL){
-            return do_tail_call(cast(Call*)stmt.value);
-        }
+        if(Call* c = stmt.value.is_call())
+            return do_tail_call(c);
         if(stmt.value !is &NilExpr_.exp){
             int before = regallocator.alloced;
             int temp = regallocator.allocate();
             int rout = RegisterNames.ROUT1;
-            int res = gen(stmt.value, temp);
+            int res = gen_expression(stmt.value, temp);
             if(res != 0) return res;
             regallocator.reset_to(before);
             sb.writef("    move r% r%\n", rout, temp);
@@ -987,33 +1113,49 @@ struct DasmWriter(SB, A){
         sb.write("    ret\n");
         return 0;
     }
-    int visit(WhileStatement* stmt){
+    int visit_while(WhileStatement* stmt){
         if(!funcdepth) {
             error(0, "`while` outside of function");
             return -1;
         }
+        int prev_continue_target = current_continue_target;
+        int prev_break_target = current_continue_target;
+        scope(exit){
+            current_continue_target = prev_continue_target;
+            current_break_target = prev_break_target;
+        }
         int top = labelallocator.allocate();
         // after the loop
         int after = labelallocator.allocate();
+        current_continue_target = top;
+        current_break_target = after;
         // TODO: abstract over this instead of this
         // copy paste silliness?
-        if(stmt.condition.type == ExprType.LITERAL){
-            auto lit = cast(Literal*)stmt.condition;
+        if(Literal* lit = stmt.condition.is_literal()){
             switch(lit.value.type)with(TokenType){
                 case TRUE:
                     sb.writef("  label L%\n", top);
                     break;
                 case FALSE:
-                    labelallocator.nalloced = top-1;
-                    return 0;
+                    sb.writef("  label L%\n", top);
+                    sb.writef("  move rip label L%\n", after);
+                    // labelallocator.nalloced = top-1;
+                    break;
                 case NIL:
+                    goto case FALSE;
                     labelallocator.nalloced = top-1;
                     return 0;
                 case NUMBER:
-                    if(lit.value.number){
+                case BNUM:
+                case SNUM:
+                case PHEX:
+                case HEX:
+                    if(lit.as_number()){
+                        goto case TRUE;
                         sb.writef("  label L%\n", top);
                         break;
                     }
+                    goto case FALSE;
                     labelallocator.nalloced = top-1;
                     return 0;
                 default:
@@ -1021,9 +1163,8 @@ struct DasmWriter(SB, A){
                     return -1;
             }
         }
-        else if(stmt.condition.type == ExprType.BINARY){
+        else if(Binary* b = stmt.condition.is_binary()){
             sb.writef("  label L%\n", top);
-            Binary* b = cast(Binary*)stmt.condition;
             switch(b.operator.type)with(TokenType){
                 case GREATER:
                 case EQUAL_EQUAL:
@@ -1031,7 +1172,7 @@ struct DasmWriter(SB, A){
                 case LESS_EQUAL:
                 case LESS:
                 case BANG_EQUAL:
-                    int res = gen(stmt.condition, TARGET_IS_CMP_FLAGS);
+                    int res = gen_expression(stmt.condition, TARGET_IS_CMP_FLAGS);
                     if(res != 0) return res;
                     break;
                 default:
@@ -1065,34 +1206,51 @@ struct DasmWriter(SB, A){
             sb.writef("    jump % label L%\n", jmpmode, after);
         }
         else {
-            sb.writef("    label L%\n", top);
+            sb.writef("  label L%\n", top);
             Lgeneric:
             int before = regallocator.alloced;
-            int cond = regallocator.allocate();
             scope(exit) regallocator.reset_to(before);
-            int res = gen(stmt.condition, cond);
+            int cond = maybe_reg_from_expr(stmt.condition);
+            if(cond == -1) cond = regallocator.allocate();
+            int res = gen_expression(stmt.condition, cond);
             if(res != 0) return res;
             sb.writef("    cmp r% 0\n", cond);
             sb.writef("    jump eq label L%\n", after);
         }
-        int res = gen(stmt.statement);
+        int res = gen_statement(stmt.statement);
         if(res != 0) return res;
         sb.writef("    move rip label L%\n", top);
         sb.writef("  label L%\n", after);
         return 0;
     }
     int do_it(Statement*[] stmts){
-        foreach(s; stmts){
-            int res = gen(s);
+        foreach(Statement* s; stmts){
+            int res = gen_statement(s);
             if(res != 0) return res;
         }
         return 0;
     }
-    int visit(GotoStatement* stmt){
+    int visit_goto(GotoStatement* stmt){
         sb.writef("    move rip label L%\n", stmt.label.lexeme);
         return 0;
     }
-    int visit(LabelStatement* stmt){
+    int visit_continue(ContinueStatement* stmt){
+        if(current_continue_target == -1){
+            error(-1, "No continue target");
+            return 1;
+        }
+        sb.writef("    move rip label L%\n", current_continue_target);
+        return 0;
+    }
+    int visit_break(BreakStatement* stmt){
+        if(current_break_target == -1){
+            error(-1, "No break target");
+            return 1;
+        }
+        sb.writef("    move rip label L%\n", current_break_target);
+        return 0;
+    }
+    int visit_label(LabelStatement* stmt){
         sb.writef("  label L%\n", stmt.label.lexeme);
         return 0;
     }

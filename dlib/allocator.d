@@ -1,95 +1,139 @@
 /*
- * Copyright © 2021-2023, David Priver
+ * Copyright © 2021-2025, David Priver
  */
 module dlib.allocator;
 import dlib.zstring;
-import core.stdc.stdlib: realloc, free, malloc, calloc;
+static import core.stdc.stdlib;
 import core.stdc.string: memcpy, memset;
 
-version(darwin){
-extern(C) size_t malloc_good_size(size_t);
-// extern(C) size_t malloc_size(const void* ptr);
+enum AllocatorKind {
+    UNSET  = 0,
+    NULL   = 1,
+    MALLOC = 2,
+    LINKED = 3,
+    ARENA  = 4,
+}
+struct Allocator {
+    static assert(size_t.sizeof == (void*).sizeof);
+    size_t _p;
+    pragma(inline, true) AllocatorKind kind() const{ return cast(AllocatorKind)(_p & 0x7); }
+    pragma(inline, true) void* p() const { return cast(void*)(_p & ~cast(size_t)0x7);}
+    this(AllocatorKind kind, void* p=null){
+        assert(!(cast(size_t)p & 0x7));
+        _p = cast(size_t)kind | cast(size_t)p;
+    }
+
+    enum state_size = typeof(this).sizeof;
+
+    void[]
+    alloc(size_t size){
+        final switch(kind){
+            case AllocatorKind.UNSET:  assert(0);
+            case AllocatorKind.NULL:   return null;
+            case AllocatorKind.MALLOC: return Mallocator.alloc(size);
+            case AllocatorKind.LINKED: return (cast(LinkedAllocator*)p).alloc(size);
+            case AllocatorKind.ARENA:  return (cast(ArenaAllocator*)p).alloc(size);
+        }
+    }
+    void[]
+    zalloc(size_t size){
+        final switch(kind){
+            case AllocatorKind.UNSET:  assert(0);
+            case AllocatorKind.NULL:   return null;
+            case AllocatorKind.MALLOC: return Mallocator.zalloc(size);
+            case AllocatorKind.LINKED: return (cast(LinkedAllocator*)p).zalloc(size);
+            case AllocatorKind.ARENA:  return (cast(ArenaAllocator*)p).zalloc(size);
+        }
+    }
+
+    void[]
+    realloc(void*data, size_t orig_size, size_t new_size){
+        final switch(kind){
+            case AllocatorKind.UNSET:  assert(0);
+            case AllocatorKind.NULL:   return null;
+            case AllocatorKind.MALLOC: return Mallocator.realloc(data, orig_size, new_size);
+            case AllocatorKind.LINKED: return (cast(LinkedAllocator*)p).realloc(data, orig_size, new_size);
+            case AllocatorKind.ARENA:  return (cast(ArenaAllocator*)p).realloc(data, orig_size, new_size);
+        }
+    }
+
+    void
+    free(const(void)* ptr, size_t size){
+        final switch(kind){
+            case AllocatorKind.UNSET:  assert(0);
+            case AllocatorKind.NULL:   return;
+            case AllocatorKind.MALLOC: return Mallocator.free(ptr, size);
+            case AllocatorKind.LINKED: return (cast(LinkedAllocator*)p).free(ptr, size);
+            case AllocatorKind.ARENA:  return (cast(ArenaAllocator*)p).free(ptr, size);
+        }
+    }
+
+    void free_all(){ 
+        final switch(kind){
+            case AllocatorKind.UNSET:  assert(0);
+            case AllocatorKind.NULL:   return;
+            case AllocatorKind.MALLOC: return;
+            case AllocatorKind.LINKED: return (cast(LinkedAllocator*)p).free_all();
+            case AllocatorKind.ARENA:  return (cast(ArenaAllocator*)p).free_all();
+        }
+    }
+    bool supports_free_all(){
+        final switch(kind){
+            case AllocatorKind.UNSET:  assert(0);
+            case AllocatorKind.NULL:   return false;
+            case AllocatorKind.MALLOC: return false;
+            case AllocatorKind.LINKED: return true;
+            case AllocatorKind.ARENA:  return true;
+        }
+    }
 }
 //
 // Mallocator
 //
-struct MallocAllocator {
+struct Mallocator {
     enum state_size = 0;
+
+    static
+    Allocator allocator(){
+        return Allocator(kind: AllocatorKind.MALLOC);
+    }
 
     static
     void[]
     alloc(size_t size){
-        void* result = .malloc(size);
+        void* result = core.stdc.stdlib.malloc(size);
         return result[0..size];
     }
     static
     void[]
     zalloc(size_t size){
-        void* result = .calloc(size, 1);
+        void* result = core.stdc.stdlib.calloc(size, 1);
         return result[0..size];
     }
 
     static
     void[]
     realloc(void*data, size_t orig_size, size_t new_size){
-        void* result = .realloc(cast(void*)data, new_size);
+        if(!data || !orig_size)
+            return alloc(new_size);
+        if(!new_size){
+            free(data, orig_size);
+            return null;
+        }
+        void* result = core.stdc.stdlib.realloc(cast(void*)data, new_size);
         return result[0..new_size];
     }
 
     static
     void
     free(const(void)* ptr, size_t size){
-        .free(cast(void*)ptr);
+        core.stdc.stdlib.free(cast(void*)ptr);
     }
 
-    static
-    size_t
-    good_size(size_t size){
-        version(darwin){
-            size_t result = malloc_good_size(size);
-        }
-        else {
-            size_t result = size;
-        }
-        return result;
-    }
+    static void free_all(){ }
+    static bool supports_free_all(){return false;}
 }
-
-static if(1){
-alias Mallocator = MallocAllocator;
-void report_leaks(){}
-}
-else static if(1){
-    __gshared LinkAllocator!(MallocAllocator) LINKALLOCATOR;
-    void report_leaks(){
-        import core.stdc.stdio: fprintf, stderr;
-        auto link = LINKALLOCATOR.last_allocation;
-        if(!link)
-            fprintf(stderr, "report_leaks: No Leaks\n");
-        while(link){
-            fprintf(stderr, "report_leaks: Leak: %p (%zu bytes)\n", link.buff.ptr, link.buffsize);
-            link = link.next;
-        }
-    }
-    alias Mallocator = GlobalAllocator!(LINKALLOCATOR);
-}
-else {
-    __gshared LinkAllocator!(LoggingAllocator!MallocAllocator) LINKALLOCATOR;
-    void report_leaks(){
-        import core.stdc.stdio: fprintf, stderr;
-        auto link = LINKALLOCATOR.last_allocation;
-        if(!link)
-            fprintf(stderr, "report_leaks: No Leaks\n");
-        while(link){
-            fprintf(stderr, "report_leaks: Leak: %p (%zu bytes)\n", link.buff.ptr, link.buffsize);
-            link = link.next;
-        }
-    }
-    alias Mallocator = GlobalAllocator!(LINKALLOCATOR);
-}
-
-__gshared Mallocator TheMallocator;
-
+enum MALLOCATOR = Mallocator.allocator();
 
 struct LinkAllocation {
     LinkAllocation* next;
@@ -109,50 +153,49 @@ struct LinkAllocation {
 // As a side effect, this also helps to freeing with the wrong
 // size.
 //
-struct LinkAllocator(Allocator){
-    static if(Allocator.state_size){
-        Allocator allocator;
-        size_t
-        good_size(size_t size){
-            return allocator.good_size(size+LinkAllocation.sizeof)-LinkAllocation.sizeof;
-        }
+struct LinkedAllocator{
+    Allocator allocator(){
+        return Allocator(kind: AllocatorKind.LINKED, p:&this);
     }
-    else {
-        alias allocator = Allocator;
-        // good_size can be static if the allocator is stateless.
-        static
-        size_t
-        good_size(size_t size){
-            return allocator.good_size(size+LinkAllocation.sizeof)-LinkAllocation.sizeof;
-        }
-    }
-    enum state_size = typeof(this).sizeof;
+    Allocator base_allocator;
     LinkAllocation* last_allocation;
+    enum state_size = typeof(this).sizeof;
+
+    void link(LinkAllocation* l){
+        l.next = last_allocation;
+        if(l.next) l.next.prev = l;
+        l.prev = null;
+        last_allocation = l;
+    }
+
+    void unlink(LinkAllocation* l){
+        if(l.prev) l.prev.next = l.next;
+        if(l.next) l.next.prev = l.prev;
+        if(l == last_allocation){
+            assert(l.prev is null);
+            last_allocation = l.next;
+        }
+    }
 
     void[]
     alloc(size_t size){
         size_t real_size = size + LinkAllocation.sizeof;
-        void[] result = allocator.alloc(real_size);
-        auto link = cast(LinkAllocation*)result.ptr;
-        link.next = last_allocation;
-        if(link.next) link.next.prev = link;
-        link.prev = null;
-        link.buffsize = size;
-        last_allocation = link;
-        return link.buff.ptr[0..result.length-LinkAllocation.sizeof];
+        void[] result = base_allocator.alloc(real_size);
+        LinkAllocation* l = cast(LinkAllocation*)result.ptr;
+        l.buffsize = size;
+        link(l);
+        return l.buff.ptr[0..result.length-LinkAllocation.sizeof];
     }
+
 
     void[]
     zalloc(size_t size){
         size_t real_size = size + LinkAllocation.sizeof;
-        void[] result = allocator.zalloc(real_size);
-        auto link = cast(LinkAllocation*)result.ptr;
-        link.next = last_allocation;
-        if(link.next) link.next.prev = link;
-        link.prev = null;
-        link.buffsize = size;
-        last_allocation = link;
-        return link.buff.ptr[0..result.length-LinkAllocation.sizeof];
+        void[] result = base_allocator.zalloc(real_size);
+        LinkAllocation* l = cast(LinkAllocation*)result.ptr;
+        l.buffsize = size;
+        link(l);
+        return l.buff.ptr[0..result.length-LinkAllocation.sizeof];
     }
 
     void[]
@@ -163,175 +206,43 @@ struct LinkAllocator(Allocator){
             free(data, orig_size);
             return null;
         }
-        auto link = (cast(LinkAllocation*)data)-1;
-        assert(link.buffsize == orig_size);
-        auto prev = link.prev;
-        if(prev) assert(prev.next is link);
-        auto next = link.next;
-        if(next) assert(next.prev is link);
-        void[] changed = allocator.realloc(link, orig_size + LinkAllocation.sizeof, new_size+LinkAllocation.sizeof);
-        void[] result = changed[LinkAllocation.sizeof .. $];
-        auto newlink = cast(LinkAllocation*)changed.ptr;
-        newlink.buffsize = new_size;
-        if(newlink.buff.ptr is data)
-            return result;
-        if(link is last_allocation){
-            last_allocation = newlink;
-        }
-        if(prev)
-            prev.next = newlink;
-        if(next)
-            next.prev = newlink;
-        return result;
+        LinkAllocation* l = (cast(LinkAllocation*)data)-1;
+        unlink(l);
+        void[] result = base_allocator.realloc(l, orig_size + LinkAllocation.sizeof, new_size+LinkAllocation.sizeof);
+        l = cast(LinkAllocation*)result.ptr;
+        l.buffsize = new_size;
+        link(l);
+        return l.buff.ptr[0..result.length-LinkAllocation.sizeof];
     }
 
     void
     free(const(void)*ptr, size_t size){
         if(!ptr) return;
-        auto link = (cast(LinkAllocation*)ptr)-1;
-        assert(link.buffsize == size);
-        if(link is last_allocation){
-            assert(!link.prev);
-            last_allocation = link.next;
-        }
-        auto prev = link.prev;
-        auto next = link.next;
-        if(prev){
-            assert(prev.next == link);
-            prev.next = next;
-        }
-        if(next){
-            assert(next.prev == link);
-            next.prev = prev;
-        }
-        allocator.free(link, size + LinkAllocation.sizeof);
+        LinkAllocation* l = (cast(LinkAllocation*)ptr)-1;
+        assert(l.buffsize == size);
+        unlink(l);
+        base_allocator.free(l, size + LinkAllocation.sizeof);
     }
 
     void
     free_all(){
-        auto link = last_allocation;
-        if(link)
-            assert(!link.prev);
+        LinkAllocation* link = last_allocation;
+        if(link) assert(!link.prev);
         while(link){
-            auto next = link.next;
-            allocator.free(link, link.buffsize + LinkAllocation.sizeof);
+            LinkAllocation* next = link.next;
+            base_allocator.free(link, link.buffsize + LinkAllocation.sizeof);
             link = next;
         }
         last_allocation = null;
     }
 }
 
-//
-// Recorded Allocator
-//
-// This is similar to LinkAllocator, but it stores the
-// allocations in a dynamic array instead of a linked list.
-// This means the allocations themselves don't need to be
-// intruded and you don't have to do pointer chasing.
-// However, it means realloc is slower as the allocation
-// has to be found in an array.
-//
-// This also helps diagnose double free errors.
-//
-struct RecordingAllocator(Allocator){
-    static if(Allocator.state_size){
-        Allocator* allocator;
-        size_t
-        good_size(size_t size){
-            return allocator.good_size(size+(void[]).sizeof)-(void[]).sizeof;
-        }
-    }
-    else {
-        alias allocator = Allocator;
-        // good_size can be static if the allocator is stateless.
-        static
-        size_t
-        good_size(size_t size){
-            return allocator.good_size(size+(void[]).sizeof)-(void[]).sizeof;
-        }
-    }
-    enum state_size = typeof(this).sizeof;
-    void[][] allocations;
-    size_t count;
-
-    void[]
-    alloc(size_t size){
-        if(count >= allocations.length){
-            size_t new_length = allocations.length?allocations.length*2:8;
-            void[] p = allocator.realloc(allocations.ptr, allocations.length*(void[]).sizeof, new_length*(void[]).sizeof);
-            allocations = (cast(void[]*)p.ptr)[0..new_length];
-        }
-        void[] result = allocator.alloc(size);
-        allocations[count++] = result;
-        return result;
-    }
-    void[]
-    zalloc(size_t size){
-        if(count >= allocations.length){
-            size_t new_length = allocations.length?allocations.length*2:8;
-            void[] p = allocator.realloc(allocations.ptr, allocations.length*(void[]).sizeof, new_length*(void[]).sizeof);
-            allocations = (cast(void[]*)p.ptr)[0..new_length];
-        }
-        void[] result = allocator.zalloc(size);
-        allocations[count++] = result;
-        return result;
-    }
-    void[]
-    realloc(void*data, size_t orig_size, size_t new_size){
-        if(!data || !orig_size)
-            return alloc(new_size);
-        if(!new_size){
-            free(data, orig_size);
-            return null;
-        }
-        assert(count);
-        if(allocations[count -1].ptr == data){
-            auto allocation = &allocations[count-1];
-            assert(allocation.length == orig_size);
-            *allocation = allocator.realloc(allocation.ptr, allocation.length, new_size);
-            return *allocation;
-        }
-        foreach(ref allocation; allocations[0 .. count-1]){
-            if(allocation.ptr == data){
-                assert(allocation.length == orig_size);
-                allocation = allocator.realloc(data, orig_size, new_size);
-                return allocation;
-            }
-        }
-        // double free or reallocing wild pointer?
-        assert(0);
-    }
-    void
-    free(const(void)*ptr, size_t size){
-        if(!ptr) return;
-        // check the last one first.
-        assert(count);
-        if(allocations[count - 1].ptr == ptr){
-            assert(allocations[count-1].length == size);
-            allocator.free(allocations[count-1].ptr, allocations[count-1].length);
-            count--;
-            return;
-        }
-        foreach(i, ref allocation; allocations[0 .. count-1]){
-            if(allocation.ptr == ptr){
-                assert(allocation.length == size);
-                allocator.free(allocation.ptr, allocation.length);
-                allocation = allocations[--count];
-                return;
-            }
-        }
-        // double free or freeing wild pointer?
-        assert(0);
-    }
-    void
-    free_all(){
-        foreach(allocation; allocations[0..count]){
-            allocator.free(allocation.ptr, allocation.length);
-        }
-        allocator.free(allocations.ptr, allocations.length*(void[]).sizeof);
-        allocations = null;
-        count = 0;
-    }
+size_t
+round_size_up(size_t size){
+    size_t remainder = size & 7;
+    if(remainder)
+        size += 8 - remainder;
+    return size;
 }
 
 //
@@ -340,15 +251,142 @@ struct RecordingAllocator(Allocator){
 struct Arena {
     enum ARENA_PAGE_SIZE = 4096;
     enum ARENA_SIZE = ARENA_PAGE_SIZE*64;
-    enum ARENA_BUFFER_SIZE = ARENA_SIZE - (void*).sizeof - size_t.sizeof;
+    enum ARENA_BUFFER_SIZE = ARENA_SIZE - (void*).sizeof - size_t.sizeof - LinkAllocation.sizeof;
     Arena* prev;
     size_t used;
-    ubyte[ARENA_BUFFER_SIZE] buff;
+    void[ARENA_BUFFER_SIZE] buff;
+}
+struct ArenaAllocator{
+    Allocator allocator(){
+        return Allocator(kind: AllocatorKind.ARENA, p:&this);
+    }
+    this(Allocator a){
+        base_allocator.base_allocator = a;
+    }
+    LinkedAllocator base_allocator;
+    Arena* arena;
+    enum state_size = typeof(this).sizeof;
+
+    Arena* make_arena(){
+        Arena* a = cast(Arena*)base_allocator.alloc(Arena.sizeof).ptr;
+        if(a){
+            a.prev = arena;
+            a.used = 0;
+            arena = a;
+        }
+        return a;
+    }
+
+    void[]
+    alloc(size_t size){
+        size = round_size_up(size);
+        if(size > Arena.ARENA_BUFFER_SIZE)
+            return base_allocator.alloc(size);
+        if(!arena){
+            arena = make_arena();
+            if(!arena) return null;
+        }
+        if(size > Arena.ARENA_BUFFER_SIZE - arena.used){
+            Arena* a = make_arena();
+            if(!a) return null;
+            arena = a;
+        }
+        void[] result = arena.buff[arena.used..arena.used+size];
+        arena.used += size;
+        return result;
+    }
+
+    void[]
+    zalloc(size_t size){
+        size = round_size_up(size);
+        if(size > Arena.ARENA_BUFFER_SIZE)
+            return base_allocator.zalloc(size);
+        if(!arena){
+            arena = make_arena();
+            if(!arena) return null;
+        }
+        if(size > Arena.ARENA_BUFFER_SIZE - arena.used){
+            Arena* a = make_arena();
+            if(!a) return null;
+            arena = a;
+        }
+        void[] result = arena.buff[arena.used..arena.used+size];
+        arena.used += size;
+        memset(result.ptr, 0, result.length);
+        return result;
+    }
+
+    void[]
+    realloc(void* ptr, size_t old_size, size_t new_size){
+        if(!old_size || !ptr)
+            return alloc(new_size);
+        if(!new_size){
+            free(ptr, old_size);
+            return null;
+        }
+        old_size = round_size_up(old_size);
+        new_size = round_size_up(new_size);
+        if(new_size > Arena.ARENA_BUFFER_SIZE && old_size > Arena.ARENA_BUFFER_SIZE){
+            return base_allocator.realloc(ptr, old_size, new_size);
+        }
+        if(old_size > Arena.ARENA_BUFFER_SIZE){
+            void[] result = base_allocator.alloc(new_size);
+            if(old_size < new_size)
+                memcpy(result.ptr, ptr, old_size);
+            else
+                memcpy(result.ptr, ptr, new_size);
+            base_allocator.free(ptr, old_size);
+            return result;
+        }
+        assert(arena);
+        // 'free' the old allocation.
+        if(arena.used + arena.buff.ptr == ptr + old_size)
+            arena.used -= old_size;
+        if(new_size > Arena.ARENA_BUFFER_SIZE){
+            void[] result = base_allocator.alloc(new_size);
+            if(old_size < new_size)
+                memcpy(result.ptr, ptr, old_size);
+            else
+                memcpy(result.ptr, ptr, new_size);
+            return result;
+        }
+
+        void[] result = alloc(new_size);
+        if(arena.used + arena.buff.ptr == result.ptr){
+            // allocation was in-place.
+        }
+        else {
+            if(old_size < new_size)
+                memcpy(result.ptr, ptr, old_size);
+            else
+                memcpy(result.ptr, ptr, new_size);
+        }
+        return result;
+    }
+
+    void
+    free(const(void)*ptr, size_t size){
+        if(!ptr || !size)
+            return;
+        size = round_size_up(size);
+        if(size > Arena.ARENA_BUFFER_SIZE)
+            return base_allocator.free(ptr, size);
+        assert(arena);
+        if(arena.used + arena.buff.ptr == ptr + size)
+            arena.used -= size;
+    }
+
+    void
+    free_all(){
+        base_allocator.free_all();
+        arena = null;
+    }
 }
 
 //
 // An allocator that has an inline buffer that it manages.
 //
+/+
 struct BufferAllocator(size_t N=4096*64){
     enum DEFAULT_N = 4096*64;
     size_t used;
@@ -422,284 +460,11 @@ struct BufferAllocator(size_t N=4096*64){
         used = 0;
     }
 }
++/
 
-size_t
-round_size_up(size_t size){
-    size_t remainder = size & 7;
-    if(remainder)
-        size += 8 - remainder;
-    return size;
-}
 
-struct ArenaAllocator(BaseAllocator){
-    static if(BaseAllocator.state_size){
-        BaseAllocator base_allocator;
-    }
-    else {
-        alias base_allocator = BaseAllocator;
-    }
-    enum state_size = typeof(this).sizeof;
-    Arena* arena;
-    LinkAllocator!BaseAllocator big_allocator;
 
-    static
-    size_t
-    good_size(size_t size){
-        return round_size_up(size);
-    }
-
-    void[]
-    alloc(size_t size){
-        size = round_size_up(size);
-        if(size > Arena.ARENA_BUFFER_SIZE){
-            return big_allocator.alloc(size);
-        }
-        if(!arena){
-            auto a = cast(Arena*)base_allocator.alloc(Arena.sizeof).ptr;
-            a.prev = null;
-            a.used = 0;
-            arena = a;
-        }
-        if(size > Arena.ARENA_BUFFER_SIZE - arena.used){
-            auto a = cast(Arena*)base_allocator.alloc(Arena.sizeof).ptr;
-            a.prev = arena;
-            a.used = size;
-            arena = a;
-            return (cast(void*)a.buff.ptr)[0 .. size];
-        }
-        void[] result = (cast(void*)arena.buff.ptr+arena.used)[0..size];
-        arena.used += size;
-        return result;
-    }
-
-    void[]
-    zalloc(size_t size){
-        size = round_size_up(size);
-        if(size > Arena.ARENA_BUFFER_SIZE){
-            return big_allocator.zalloc(size);
-        }
-        if(!arena){
-            auto a = cast(Arena*)base_allocator.zalloc(Arena.sizeof).ptr;
-            a.prev = null;
-            a.used = 0;
-            arena = a;
-        }
-        if(size > Arena.ARENA_BUFFER_SIZE - arena.used){
-            auto a = cast(Arena*)base_allocator.zalloc(Arena.sizeof).ptr;
-            a.prev = arena;
-            a.used = size;
-            arena = a;
-            return (cast(void*)a.buff.ptr)[0 .. size];
-        }
-        void[] result = (cast(void*)arena.buff.ptr+arena.used)[0..size];
-        arena.used += size;
-        memset(result.ptr, 0, result.length);
-        return result;
-    }
-
-    void[]
-    realloc(void* ptr, size_t old_size, size_t new_size){
-        if(!old_size || !ptr)
-            return alloc(new_size);
-        if(!new_size){
-            free(ptr, old_size);
-            return null;
-        }
-        old_size = round_size_up(old_size);
-        new_size = round_size_up(new_size);
-        if(new_size > Arena.ARENA_BUFFER_SIZE && old_size > Arena.ARENA_BUFFER_SIZE){
-            return big_allocator.realloc(ptr, old_size, new_size);
-        }
-        if(old_size > Arena.ARENA_BUFFER_SIZE){
-            void[] result = alloc(new_size);
-            if(old_size < new_size)
-                memcpy(result.ptr, ptr, old_size);
-            else
-                memcpy(result.ptr, ptr, new_size);
-            big_allocator.free(ptr, old_size);
-            return result;
-        }
-        assert(arena);
-        // 'free' the old allocation.
-        if(arena.used + arena.buff.ptr == ptr + old_size)
-            arena.used -= old_size;
-        if(new_size > Arena.ARENA_BUFFER_SIZE){
-            void[] result = big_allocator.alloc(new_size);
-            if(old_size < new_size)
-                memcpy(result.ptr, ptr, old_size);
-            else
-                memcpy(result.ptr, ptr, new_size);
-            return result;
-        }
-
-        void[] result = alloc(new_size);
-        if(arena.used + arena.buff.ptr == result.ptr){
-            // allocation was in-place.
-        }
-        else {
-            if(old_size < new_size)
-                memcpy(result.ptr, ptr, old_size);
-            else
-                memcpy(result.ptr, ptr, new_size);
-        }
-        return result;
-    }
-
-    void
-    free(const(void)*ptr, size_t size){
-        if(!ptr || !size)
-            return;
-        size = round_size_up(size);
-        if(size > Arena.ARENA_BUFFER_SIZE)
-            return big_allocator.free(ptr, size);
-        assert(arena);
-        if(arena.used + arena.buff.ptr == ptr + size)
-            arena.used -= size;
-    }
-
-    void
-    free_all(){
-        Arena* a = arena;
-        while(a){
-            Arena* to_free = a;
-            a = a.prev;
-            base_allocator.free(to_free, Arena.sizeof);
-        }
-        arena = null;
-        big_allocator.free_all();
-    }
-}
-
-//
-// The VAllocator is an escape hatch from template hell.
-// It allows you to move the polymorphism from compile time to
-// runtime, so you can implement APIs with a uniform interface.
-//
-struct VAllocator {
-    void* pointer;
-    static struct AllocatorVTable{
-        size_t function(void*, size_t) good_size_proc;
-        void[] function(void*, size_t) alloc_proc;
-        void[] function(void*, size_t) zalloc_proc;
-        void[] function(void*, void*, size_t, size_t) realloc_proc;
-        void function(void*, const(void)*, size_t) free_proc;
-        void function(void*) free_all_proc;
-        string name;
-    }
-    immutable(AllocatorVTable)* vtable;
-    enum state_size = typeof(this).sizeof;
-    size_t
-    good_size(size_t size){
-        return vtable.good_size_proc(pointer, size);
-    }
-    void[] alloc(size_t size){
-        return vtable.alloc_proc(pointer, size);
-    }
-    void[] zalloc(size_t size){
-        return vtable.zalloc_proc(pointer, size);
-    }
-    void[] realloc(void* ptr, size_t old, size_t new_){
-        return vtable.realloc_proc(pointer, ptr, old, new_);
-    }
-    void free(const(void)*ptr, size_t size){
-        return vtable.free_proc(pointer, ptr, size);
-    }
-    void free_all(){
-        assert(vtable.free_all_proc);
-        return vtable.free_all_proc(pointer);
-    }
-    static
-    VAllocator
-    from(Allocator)(Allocator*a) if(Allocator.state_size){
-        alias A = Allocator;
-        static if(__traits(hasMember, A, "free_all"))
-            static immutable void function(void*) free_all_proc = (void*p){ (cast(A*)p).free_all();};
-        else
-            static immutable void function(void*) free_all_proc = null;
-        static immutable AllocatorVTable vt = {
-            good_size_proc:(void*p, size_t s){return (cast(A*)p).good_size(s);},
-            alloc_proc:(void*p, size_t s){return (cast(A*)p).alloc(s);},
-            zalloc_proc:(void*p, size_t s){return (cast(A*)p).zalloc(s);},
-            realloc_proc:(void*p, void* r, size_t o, size_t n){return (cast(A*)p).realloc(r, o, n);},
-            free_proc:(void*p, const(void)*f, size_t s){return (cast(A*)p).free(f, s);},
-            free_all_proc: free_all_proc,
-            name: Allocator.stringof,
-        };
-        return VAllocator(a, &vt);
-    }
-    static
-    VAllocator
-    from(Allocator)()if(!Allocator.state_size){
-        alias A = Allocator;
-        static if(__traits(hasMember, A, "free_all"))
-            static immutable void function(void*) free_all_proc = (void*p){A.free_all();};
-        else
-            static immutable void function(void*) free_all_proc = null;
-        static immutable AllocatorVTable vt = {
-            good_size_proc:(void*p, size_t s){return A.good_size(s);},
-            alloc_proc:(void*p, size_t s){return A.alloc(s);},
-            zalloc_proc:(void*p, size_t s){return A.zalloc(s);},
-            realloc_proc:(void*p, void* r, size_t o, size_t n){return A.realloc(r, o, n);},
-            free_proc:(void*p, const(void)*f, size_t s){return A.free(f, s);},
-            free_all_proc: free_all_proc,
-            name: Allocator.stringof,
-        };
-        return VAllocator(null, &vt);
-    }
-}
-// VAllocator, but the wrapped Allocator is stateless.
-struct VAllocator0 {
-
-    static struct AllocatorVTable{
-        size_t function(size_t) good_size_proc;
-        void[] function(size_t) alloc_proc;
-        void[] function(size_t) zalloc_proc;
-        void[] function(void*, size_t, size_t) realloc_proc;
-        void function(const(void)*, size_t) free_proc;
-        void function() free_all_proc;
-    }
-    immutable(AllocatorVTable)* vtable;
-    enum state_size = typeof(this).sizeof;
-    size_t
-    good_size(size_t size){
-        return vtable.good_size_proc(size);
-    }
-    void[] alloc(size_t size){
-        return vtable.alloc_proc(size);
-    }
-    void[] zalloc(size_t size){
-        return vtable.zalloc_proc(size);
-    }
-    void[] realloc(void* ptr, size_t old, size_t new_){
-        return vtable.realloc_proc(ptr, old, new_);
-    }
-    void free(const(void)*ptr, size_t size){
-        return vtable.free_proc(ptr, size);
-    }
-    void free_all(){
-        assert(vtable.free_all_proc);
-        return vtable.free_all_proc();
-    }
-    static
-    VAllocator0
-    from(Allocator)()if(!Allocator.state_size){
-        alias A = Allocator;
-        static if(__traits(hasMember, A, "free_all"))
-            static immutable void function() free_all_proc = &A.free_all;
-        else
-            static immutable void function() free_all_proc = null;
-        static immutable AllocatorVTable vt = {
-            good_size_proc:&A.good_size,
-            alloc_proc:&A.alloc,
-            zalloc_proc:&A.zalloc,
-            realloc_proc:&A.realloc,
-            free_proc:&A.free,
-            free_all_proc: free_all_proc,
-        };
-        return VAllocator0(&vt);
-    }
-}
-
+/+
 struct RcAllocator(Allocator){
     static if(Allocator.state_size){
         Allocator allocator;
@@ -992,70 +757,5 @@ struct LoggingAllocator(Allocator){
     }
 
 }
++/
 
-//
-// Turns a stateful allocator into a
-// "stateless" allocator by making it a
-// global.
-//
-// Useful for things like Box, which can
-// save a pointer this way.
-struct GlobalAllocator(alias a){
-    // pointers are scalars. Idk if there is a better way.
-    static if(__traits(isScalar, typeof(a)))
-        static auto The(){
-            return a;
-        }
-    else
-        static auto The(){
-            return &a;
-        }
-    enum state_size = 0;
-    static if(__traits(hasMember, a, "free_all"))
-        static
-        void
-        free_all(){
-            The.free_all;
-        }
-    static
-    void[]
-    alloc(size_t size){
-        return The.alloc(size);
-    }
-    static
-    void[]
-    zalloc(size_t size){
-        return The.zalloc(size);
-    }
-
-    static
-    void[]
-    realloc(void*data, size_t orig_size, size_t new_size){
-        return The.realloc(data, orig_size, new_size);
-    }
-
-    static
-    void
-    free(const(void)* ptr, size_t size){
-        return The.free(ptr, size);
-    }
-
-    static
-    size_t
-    good_size(size_t size){
-        return The.good_size(size);
-    }
-
-}
-
-// I don't remember the point of this?
-struct OneAllocator(Allocator)if(!Allocator.state_size){
-    enum state_size = 1;
-    static void[] alloc(size_t size){ return Allocator.alloc(size);}
-    static void[] zalloc(size_t size){ return Allocator.zalloc(size);}
-    static void[] realloc(void*data, size_t orig_size, size_t new_size){ return Allocator.realloc(data, orig_size, new_size);}
-    static void free(const(void)* ptr, size_t size){ return Allocator.free(ptr, size);}
-    static size_t good_size(size_t size){ return Allocator.good_size(size);}
-    static if(__traits(hasMember, Allocator, "free_all"))
-        static void free_all(){Allocator.free_all();}
-}

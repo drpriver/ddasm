@@ -2,7 +2,6 @@
  * Copyright © 2021-2023, David Priver
  */
 module dvm.dvm_unlinked;
-import dlib.allocator;
 import dlib.barray;
 
 import dvm.dvm_defs;
@@ -22,7 +21,7 @@ struct AbstractFunction {
     const(char)* first_char;
     str name;
     int n_args;
-    Barray!(AbstractInstruction, VAllocator*) instructions;
+    Barray!(AbstractInstruction) instructions;
     bool finished;
 }
 
@@ -34,14 +33,14 @@ struct AbstractVariable {
 
 struct AbstractArray {
     uintptr_t id;
-    Barray!(Argument, VAllocator*) array;
+    Barray!(Argument) array;
 }
 
 struct UnlinkedModule{
     str name;
-    Barray!(AbstractFunction, VAllocator*) functions;
-    Barray!(AbstractVariable, VAllocator*) variables;
-    Barray!(AbstractArray,    VAllocator*) arrays;
-    Barray!(str,    VAllocator*) imports;
+    Barray!(AbstractFunction) functions;
+    Barray!(AbstractVariable) variables;
+    Barray!(AbstractArray) arrays;
+    Barray!(str) imports;
 }
 

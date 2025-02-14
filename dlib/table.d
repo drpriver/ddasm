@@ -1,3 +1,6 @@
+/*
+ * Copyright © 2021-2025, David Priver
+ */
 module dlib.table;
 import dlib.allocator: Mallocator;
 import dlib.box: Box;
@@ -19,9 +22,9 @@ next_p2(size_t n){
     return 1LU << (1+bsr(n));
 }
 
-struct Table(K, V, A=Mallocator){
+struct Table(K, V){
     alias It = Item!(K, V);
-    Box!(void[], A) data;
+    Box!(void[]) data;
     size_t count = 0;
 
     size_t capacity(){

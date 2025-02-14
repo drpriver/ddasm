@@ -1,5 +1,5 @@
 /*
- * Copyright © 2021-2023, David Priver
+ * Copyright © 2021-2025, David Priver
  */
 module dlib.stringbuilder;
 
@@ -8,6 +8,7 @@ import core.simd;
 import ldc.simd;
 
 import dlib.aliases;
+import dlib.allocator: Allocator;
 import dlib.box: Box;
 import dlib.zstring;
 import dlib.fpconv_ctfe: fpconv_dtoa;
@@ -21,13 +22,8 @@ static __gshared immutable hextable = {
     assert(result.length == 256);
     return result;
 }();
-struct StringBuilder(Allocator){
-    static if(Allocator.state_size){
-        Allocator allocator;
-    }
-    else {
-        alias allocator = Allocator;
-    }
+struct StringBuilder{
+    Allocator allocator;
     size_t cursor;
     size_t capacity;
     char* data;
@@ -65,7 +61,7 @@ struct StringBuilder(Allocator){
         return result;
     }
 
-    Box!(char[], Allocator)
+    Box!(char[])
     detach(){
         typeof(return) result;
         static if(Allocator.state_size)
@@ -96,7 +92,7 @@ struct StringBuilder(Allocator){
 
     void
     _resize(size_t size){
-        size = allocator.good_size(size);
+        // size = allocator.good_size(size);
         void[] new_data = allocator.realloc(data, capacity, size);
         assert(new_data.ptr);
         assert(new_data.length == size);

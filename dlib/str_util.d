@@ -1,8 +1,7 @@
 /*
- * Copyright © 2021-2023, David Priver
+ * Copyright © 2021-2025, David Priver
  */
 module dlib.str_util;
-import std.typecons: Tuple;
 import dlib.aliases;
 @safe @nogc pure nothrow
 str
@@ -40,7 +39,18 @@ stripped(str str_){
     return  str_.rstripped.lstripped;
 }
 
-alias Split = Tuple!(str, "head", str, "tail");
+//
+// XXX: This slows down compile time a lot for some reason.
+// import std.typecons: Tuple;
+// alias Split = Tuple!(str, "head", str, "tail");
+alias AliasSeq(A...) = A;
+struct Split {
+    AliasSeq!(str, str) _fields;
+    alias this = _fields;
+    alias head = _fields[0];
+    alias tail = _fields[1];
+
+};
 
 @trusted @nogc pure nothrow
 Split
@@ -48,10 +58,10 @@ split(str str_, char c){
     import core.stdc.string: memchr;
     auto s = cast(const char*)memchr( str_.ptr, c,  str_.length);
     if(!s){
-        return Split( str_, null);
+        return Split(str_, null);
     }
     else {
-        return Split( str_[0..(s- str_.ptr)],  str_[(s- str_.ptr)+1..$]);
+        return Split(str_[0..(s- str_.ptr)],  str_[(s- str_.ptr)+1..$]);
     }
 }
 @trusted @nogc pure nothrow
@@ -60,10 +70,10 @@ stripped_split(str str_, char c){
     import core.stdc.string: memchr;
     auto s = cast(const char*)memchr( str_.ptr, c,  str_.length);
     if(!s){
-        return Split( str_.stripped, null);
+        return Split(str_.stripped, null);
     }
     else {
-        return Split( str_[0..(s- str_.ptr)].stripped,  str_[(s- str_.ptr)+1..$].stripped);
+        return Split(str_[0..(s- str_.ptr)].stripped,  str_[(s- str_.ptr)+1..$].stripped);
     }
 }
 
@@ -75,10 +85,10 @@ Split
 split(str str_, str c){
     auto s = cast(const char*)memmem( str_.ptr,  str_.length, c.ptr, c.length);
     if(!s){
-        return Split( str_, null);
+        return Split(str_, null);
     }
     else {
-        return Split( str_[0..(s- str_.ptr)],  str_[(s- str_.ptr)+c.length..$]);
+        return Split(str_[0..(s- str_.ptr)],  str_[(s- str_.ptr)+c.length..$]);
     }
 }
 
@@ -87,10 +97,10 @@ Split
 stripped_split(str str_, str c){
     auto s = cast(const char*)memmem( str_.ptr,  str_.length, c.ptr, c.length);
     if(!s){
-        return Split( str_, null);
+        return Split(str_, null);
     }
     else {
-        return Split( str_[0..(s- str_.ptr)].stripped,  str_[(s- str_.ptr)+c.length..$].stripped);
+        return Split(str_[0..(s- str_.ptr)].stripped,  str_[(s- str_.ptr)+c.length..$].stripped);
     }
 }
 

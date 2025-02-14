@@ -27,8 +27,8 @@ struct Machine {
         ZERO = 1 << 0,
         CARRY = 1 << 1,
     }
-    VAllocator allocator;
-    Box!(void[], VAllocator) stack;
+    Allocator allocator;
+    Box!(void[]) stack;
     uintptr_t[RegisterNames.max+1] registers;
     LinkedModule* current_program;
     uintptr_t[256] call_stack;
@@ -37,7 +37,7 @@ struct Machine {
     bool paused;
     bool badend;
     bool debugging;
-    LineHistory!VAllocator debugger_history;
+    LineHistory debugger_history;
     bool[RegisterNames.max+1] watches;
 
     int
@@ -54,7 +54,7 @@ struct Machine {
         registers[RegisterNames.RIP] = cast(uintptr_t)current_program.start.instructions_;
         registers[RegisterNames.RSP] = cast(uintptr_t)stack.data.ptr;
         call_depth = 0;
-        debugger_history.allocator = &allocator;
+        debugger_history.allocator = allocator;
         if(debug_history_file) debugger_history.load_history(debug_history_file);
         int result = run_interpreter!flags;
         static if(flags & RunFlags.DEBUG){
@@ -103,6 +103,9 @@ struct Machine {
                     return 0;
                 case 4:
                     registers[ROUT1] = func.native_function_raaaa(registers[RARG1], registers[RARG2], registers[RARG3], registers[RARG4]);
+                    return 0;
+                case 5:
+                    registers[ROUT1] = func.native_function_raaaaa(registers[RARG1], registers[RARG2], registers[RARG3], registers[RARG4], registers[RARG5]);
                     return 0;
                 default:
                     return 1;
@@ -157,8 +160,7 @@ struct Machine {
         for(size_t i = 0; i < 4; i++){
             if(!Fuzzing)fprintf(stderr, "ip[%zu] = %#zx\n", i, (cast(uintptr_t*)registers[RegisterNames.RIP])[i]);
         }
-        StringBuilder!VAllocator temp;
-        temp.allocator = allocator;
+        StringBuilder temp = {allocator:allocator};
         scope(exit) temp.cleanup;
         uintptr_t* ip = cast(uintptr_t*)registers[RegisterNames.RIP];
         ip += off;
@@ -185,7 +187,7 @@ struct Machine {
         FunctionInfo func = current_program.addr_to_function(ip);
         size_t i = 0;
         uintptr_t[] insts = func.func.instructions;
-        StringBuilder!Mallocator sb;
+        StringBuilder sb = {allocator:MALLOCATOR};
         scope(exit) sb.cleanup;
         sb.FORMAT("function ", func.name, "\n");
         while(insts.length){
@@ -224,7 +226,7 @@ struct Machine {
         insts = func.func.instructions;
         ptrdiff_t n_lines = i;
         i = 0;
-        StringBuilder!Mallocator sb;
+        StringBuilder sb = {allocator:MALLOCATOR};
         scope(exit) sb.cleanup;
         sb.FORMAT("function ", func.name, "\n");
         if(current > 6){
@@ -328,7 +330,7 @@ struct Machine {
             static if(flags & RunFlags.DISASSEMBLE_EACH){{
                 uintptr_t* ip = cast(uintptr_t*)registers[RIP];
                 ip--;
-                StringBuilder!Mallocator sb;
+                StringBuilder sb = {allocator:MALLOCATOR};
                 scope(exit) sb.cleanup;
                 disassemble_one_instruction(current_program, &sb, ip);
                 str text = sb.borrow;
@@ -945,20 +947,20 @@ struct Machine {
                     int result = debugger();
                     if(paused || badend || result || halted)
                         return result;
-                    }break;
+                }break;
                 case BACKTRACE:
                     if(int b = begin(BACKTRACE)) return b;
                     backtrace();
                     break;
                 case LEA:{
                     if(int b = begin(LEA)) return b;
-                        uintptr_t* dst = get_reg();
-                        uintptr_t* x = get_reg();
-                        uintptr_t a = get_unsigned();
-                        uintptr_t* y = get_reg();
-                        uintptr_t z = get_unsigned();
-                        *dst = *x + a*(*y) + z;
-                    }break;
+                    uintptr_t* dst = get_reg();
+                    uintptr_t* x = get_reg();
+                    uintptr_t a = get_unsigned();
+                    uintptr_t* y = get_reg();
+                    uintptr_t z = get_unsigned();
+                    *dst = *x + a*(*y) + z;
+                }break;
             }
         }
     }

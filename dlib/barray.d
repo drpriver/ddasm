@@ -1,14 +1,14 @@
 /*
- * Copyright © 2021-2023, David Priver
+ * Copyright © 2021-2025, David Priver
  */
 module dlib.barray;
-import dlib.allocator: Mallocator;
+import dlib.allocator: Allocator;
 import dlib.box: Box;
 import core.stdc.string: memmove, memcpy;
 
-struct Barray(T, Allocator){
+struct Barray(T){
     size_t count;
-    Box!(T[], Allocator) bdata;
+    Box!(T[]) bdata;
 
     void
     clear(){ count = 0; }
@@ -37,7 +37,8 @@ struct Barray(T, Allocator){
         size_t new_capacity = bdata.data.length? bdata.data.length*2: 4;
         while(new_capacity < needed)
             new_capacity *=2;
-        bdata.good_resize(new_capacity);
+        bdata.resize(new_capacity);
+        // bdata.good_resize(new_capacity);
     }
 
     void
@@ -174,20 +175,16 @@ struct Barray(T, Allocator){
     }
 }
 
-Barray!(T, A)
-make_barray(T, A)(A allocator){
-    Barray!(T, A) result;
-    result.bdata.allocator = allocator;
+Barray!(T)
+make_barray(T)(Allocator a){
+    Barray!(T) result;
+    result.bdata.allocator = a;
     return result;
 }
 
-struct Array(T){
-    Barray!(T, Mallocator) array;
-    alias array this;
-}
 
 struct Deque(T){
-    Box!(T[], Mallocator) bdata;
+    Box!(T[]) bdata;
     size_t front;
     size_t back;
     size_t count(){

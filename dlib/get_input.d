@@ -1,5 +1,5 @@
 /*
- * Copyright © 2021-2023, David Priver
+ * Copyright © 2021-2025, David Priver
  */
 module dlib.get_input;
 import dlib.allocator;
@@ -16,11 +16,9 @@ import dlib.stringbuilder;
 
 // BUG: doesn't handle multibyte characters
 
-struct LineHistory(Allocator=Mallocator, size_t LINE_HISTORY_MAX=100){
-    static if(Allocator.state_size)
-        Allocator* allocator;
-    else
-        alias allocator = Allocator;
+struct LineHistory{
+    enum LINE_HISTORY_MAX = 100;
+    Allocator allocator;
     int count;
     int cursor;
     char[][LINE_HISTORY_MAX] history;
@@ -28,7 +26,7 @@ struct LineHistory(Allocator=Mallocator, size_t LINE_HISTORY_MAX=100){
     // must be a C string.
     int
     dump(const char* filename){
-        StringBuilder!Mallocator sb;
+        StringBuilder sb = {allocator:allocator};
         scope(exit) sb.cleanup;
         for(int i = 0; i < count; i++){
             sb.write(history[i]);
@@ -41,7 +39,7 @@ struct LineHistory(Allocator=Mallocator, size_t LINE_HISTORY_MAX=100){
     // must be a C string.
     int
     load_history(const char* filename){
-        auto r = read_file!Mallocator(filename);
+        auto r = read_file(filename);
         if(r.errored) return r.errored;
         auto bdata = r.value;
         scope(exit) bdata.dealloc;

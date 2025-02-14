@@ -10,8 +10,8 @@ import dlib.barray;
 
 import dvm.dvm_defs;
 
-alias IntegerArray = Barray!(uintptr_t, VAllocator*);
-alias FunctionTable = Table!(str, FunctionInfo, VAllocator*);
+alias IntegerArray = Barray!(uintptr_t);
+alias FunctionTable = Table!(str, FunctionInfo);
 
 struct Variable {
     str name;
@@ -39,6 +39,7 @@ struct Function {
         uintptr_t function(uintptr_t, uintptr_t) native_function_raa;
         uintptr_t function(uintptr_t, uintptr_t, uintptr_t) native_function_raaa;
         uintptr_t function(uintptr_t, uintptr_t, uintptr_t, uintptr_t) native_function_raaaa;
+        uintptr_t function(uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t) native_function_raaaaa;
     }
     FunctionType type;
     ubyte n_args;
@@ -61,16 +62,16 @@ struct FunctionInfo {
 
 struct LinkedModule {
     str name;
-    Box!(str, VAllocator*) source_text;
-    Box!(uintptr_t[], VAllocator*) bytecode;
-    Barray!(ZString, VAllocator*) strings;
-    Barray!(IntegerArray, VAllocator*) arrays;
+    Box!(str) source_text;
+    Box!(uintptr_t[]) bytecode;
+    Barray!(ZString) strings;
+    Barray!(IntegerArray) arrays;
     FunctionTable functions;
-    Box!(Function[], VAllocator*) function_store;
+    Box!(Function[]) function_store;
     // storage for the variables
-    Box!(uintptr_t[], VAllocator*) variables;
+    Box!(uintptr_t[]) variables;
     // table to look variables up by name
-    Table!(str, uintptr_t*, VAllocator*) variable_table;
+    Table!(str, uintptr_t*) variable_table;
     Function* start;
 
     FunctionInfo

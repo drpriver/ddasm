@@ -19,19 +19,19 @@ import dvm.dvm_args;
 import dvm.dvm_instructions;
 
 struct LinkContext {
-    VAllocator* allocator;
-    VAllocator* temp_allocator;
+    Allocator allocator;
+    Allocator temp_allocator;
     FunctionTable* builtins;
     UnlinkedModule* unlinked;
-    Table!(str, LinkedModule*, VAllocator*)* modules;
+    Table!(str, LinkedModule*)* modules;
 
     LinkedModule prog;
     void delegate(const char*, out str, out int, out int) find_loc;
-    Box!(char[], Mallocator) errmess;
+    Box!(char[]) errmess;
 
     void
     err_print(A...)(const char* first_char, A args){
-        StringBuilder!Mallocator sb;
+        StringBuilder sb = {allocator:MALLOCATOR};
         int line, column;
         str fn;
         find_loc(first_char, fn, line, column);
@@ -104,8 +104,8 @@ struct LinkContext {
     // Records the ZString in the string table.
     ZString
     make_string(const char[] text){
-        StringBuilder!VAllocator sb;
-        sb.allocator = *allocator;
+        StringBuilder sb;
+        sb.allocator = allocator;
         // This is slow and we should use simd to scan for
         // escape codes.
         for(size_t i = 0; i < text.length; i++){
@@ -289,7 +289,7 @@ struct LinkContext {
 
     AsmError
     link_function(AbstractFunction* afunc, Function* func){
-        Table!(str, uintptr_t, VAllocator*) labels;
+        Table!(str, uintptr_t) labels;
         labels.data.allocator = temp_allocator;
         scope(exit) labels.cleanup;
         // look for labels
@@ -399,13 +399,13 @@ calculate_function_size(AbstractFunction* func){
 
 AsmError
 link_module(
-    VAllocator* allocator,
-    VAllocator* temp_allocator,
+    Allocator allocator,
+    Allocator temp_allocator,
     FunctionTable* builtins,
     UnlinkedModule* unlinked,
     LinkedModule* prog,
     scope void delegate(const char*, out str, out int, out int) find_loc,
-    Table!(str, LinkedModule*, VAllocator*)* modules,
+    Table!(str, LinkedModule*)* modules,
 ){
     LinkContext ctx;
     ctx.allocator = allocator;

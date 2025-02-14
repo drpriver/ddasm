@@ -1,5 +1,5 @@
 /*
- * Copyright © 2021-2023, David Priver
+ * Copyright © 2021-2025, David Priver
  */
 module dlib.term_util;
 version(Posix){

@@ -1,0 +1,200 @@
+
+
+
+import SDL
+import mem
+function start
+    move rarg1 0x20
+    call function SDL.Init
+    move rarg1 "Hello dasm"
+    move rarg2 640
+    move rarg3 480
+    move rarg4 0x2024
+    call function SDL.CreateWindow
+    push rout1
+    move rarg1 rout1
+    move rarg2 -1
+    move rarg3 0
+    call function SDL.CreateRenderer
+    push rout1
+    move rarg2 rout1
+    call function main_loop
+    pop rarg1
+    call function SDL.DestroyRenderer
+    pop rarg1
+    call function SDL.DestroyWindow
+    call function SDL.Quit
+    ret
+end
+
+function main_loop
+    push rbp
+    push r0
+    push r1
+    push r2
+    push r3
+    push r4
+    push r5
+    move rbp rsp
+    move r3 rarg1
+    move r4 rarg2
+    move r0 rsp
+    add rsp rsp 128
+    move r1 rsp
+    add rsp rsp 0p1
+    move r2 0
+  label wait
+    move rarg1 r0
+    call function SDL.WaitEvent
+    write r1 0
+    memcpy r1 r0 4
+    read r5 r1
+
+    scmp r5 0x100
+    cmov eq rip label finish
+
+  # check mousedown
+    scmp r5 0x401
+    cmov ne rip label check_keydown
+    sub r2 r2 1
+
+  label check_keydown
+    scmp r5 0x300
+    cmov ne rip label render
+    # add r2 r2 1
+    add rarg1 rarg1 20
+    read rarg1 rarg1
+    and rarg1 rarg1 0xffffffff
+    move rarg2 0
+    move rarg3 0
+    cmp rarg1 0ss
+    cmov eq rarg3 1
+    cmp rarg1 0sa
+    cmov eq rarg2 -1
+    cmp rarg1 0sw
+    cmov eq rarg3 -1
+    cmp rarg1 0sd
+    cmov eq rarg2 1
+    add r2 r2 rarg2
+
+  label render
+    move rarg1 r3
+    move rarg2 r4
+    move rarg3 r2
+    call function render_and_present
+    move rip label wait
+  label finish
+    move rsp rbp
+    pop r5
+    pop r4
+    pop r3
+    pop r2
+    pop r1
+    pop r0
+    pop rbp
+    ret
+end
+
+function draw_rect
+# rarg1: renderer
+# rarg2: x
+# rarg3: y
+# rarg4: w
+# rarg5: h
+# assumes you can write to top 16 bytes of stack
+    shl rarg3 rarg3 32
+    or rarg2 rarg2 rarg3
+    write rsp rarg2
+    shl rarg5 rarg5 32
+    or rarg4 rarg4 rarg5
+    add rarg2 rsp 8
+    write rarg2 rarg4 
+    move rarg2 rsp
+    call function SDL.RenderFillRect
+    ret
+end
+
+function render_and_present
+# rarg1 window
+# rarg2 renderer
+# rarg3 n
+# rarg4 x
+# rarg5 y
+    push rbp
+    push r6
+    push r5
+    push r4
+    push r3
+    push r2
+    push r1
+    push r0
+    move rbp rsp
+    move r3 rsp # rect
+    add rsp rsp 16
+    move r4 rsp # w
+    add rsp rsp 8
+    move r5 rsp # h
+    add rsp rsp 8
+    move r0 rarg1
+    move r1 rarg2
+    move r2 rarg3
+    move r6 0 # i
+
+    move rarg2 r4
+    move rarg3 r5
+    write r4 0
+    write r5 0
+    call function SDL.GetWindowSize
+    read r4 r4
+    read r5 r5
+
+    move rarg1 r1
+    move rarg2 0
+    move rarg3 0
+    move rarg4 0
+    move rarg5 0xff
+    call function SDL.SetRenderDrawColor
+    call function SDL.RenderClear
+    move rarg2 0xff
+    move rarg3 0xff
+    call function SDL.SetRenderDrawColor
+    shr rarg2 r4 2
+    shr rarg3 r5 2
+    shr rarg4 r4 1
+    shr rarg5 r5 1
+    call function draw_rect
+
+    move rarg2 0xff
+    move rarg3 0
+    move rarg4 0
+    move rarg5 0xff
+    call function SDL.SetRenderDrawColor
+
+    label loop
+    add r6 r6 1
+    scmp r6 r2
+    cmov gt rip label present
+    mul rarg2 r6 5
+    mul rarg3 r6 5
+    sub rarg4 r6 1
+    mul rarg2 rarg2 rarg4
+    mul rarg3 rarg3 rarg4
+    mul rarg4 r6 20
+    mul rarg5 r6 20
+    call function draw_rect
+    move rip label loop
+
+
+    label present
+    call function SDL.RenderPresent
+    move rsp rbp
+    pop r0
+    pop r1
+    pop r2
+    pop r3
+    pop r4
+    pop r5
+    pop r6
+    pop rbp
+    ret
+end
