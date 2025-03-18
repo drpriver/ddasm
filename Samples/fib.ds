@@ -1,14 +1,14 @@
-import io;
+import io
 function fib(n){
-    return fib_inner(0, 1, n);
+    return fib_inner(0, 1, n)
 }
 
 function fib_inner(a, b, n){
-    if(n <= 0) return a;
-    return fib_inner(b, a+b, n-1);
+    if(n <= 0) return a
+    return fib_inner(b, a+b, n-1)
 }
 
 function start(){
    for(let i = 0; i < 20; i = i + 1)
-       io.printf2("fib(%zu) = %zu\n", i, fib(i));
+       io.printf2("fib(%zu) = %zu\n", i, fib(i))
 }

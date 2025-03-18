@@ -1,23 +1,23 @@
-import io;
-import mem;
+import io
+import mem
 function start(in, out){
-    let infp;
-    if(in) infp = io.fopen(in, "r");
-    else infp = io.stdin();
-    let outfp;
-    if(out) outfp = io.fopen(out, "w");
-    else outfp = io.stdout();
-    fcopy(infp, outfp);
-    if(in) io.fclose(infp);
-    if(out) io.fclose(outfp);
+    let infp
+    if(in) infp = io.fopen(in, "r")
+    else infp = io.stdin()
+    let outfp
+    if(out) outfp = io.fopen(out, "w")
+    else outfp = io.stdout()
+    fcopy(infp, outfp)
+    if(in) io.fclose(infp)
+    if(out) io.fclose(outfp)
 }
 function fcopy(in, out){
-    let ptr = mem.malloc(32768);
-    let nread = 1;
+    let ptr = mem.malloc(32768)
+    let nread = 1
     for(;nread;){
-        nread = io.fread(ptr, 1, 32768, in);
-        io.fwrite(ptr, 1, nread, out);
+        nread = io.fread(ptr, 1, 32768, in)
+        io.fwrite(ptr, 1, nread, out)
     }
-    io.fflush(out);
-    mem.free(ptr);
+    io.fflush(out)
+    mem.free(ptr)
 }

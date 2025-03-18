@@ -1,16 +1,16 @@
-import io;
-let x = 0;
+import io
+let x = 0
 function start(){
-    label s;
+    label s
     dasm '
-    call function foo
-    read r0 var x
-    cmp r0 10
-    cmov ne rip label Ls
-    ';
+        call function foo
+        read r0 var x
+        cmp r0 10
+        cmov ne rip label Ls
+    '
 }
 
 function foo(){
-    x = x + 1;
-    io.puts("hello from foo");
+    x = x + 1
+    io.printf2("hello from foo, x = %d\n", x)
 }

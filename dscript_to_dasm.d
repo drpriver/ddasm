@@ -1,5 +1,5 @@
 /*
- * Copyright © 2021-2023, David Priver
+ * Copyright © 2021-2025, David Priver
  */
 module dscript_to_dasm;
 
@@ -23,16 +23,16 @@ compile_to_dasm(const ubyte[] source, Box!(char[])* progtext){
     ArenaAllocator arena = ArenaAllocator(MALLOCATOR);
     scope(exit) arena.free_all;
     Barray!Token tokens = make_barray!Token(arena.allocator());
-    Tokenizer!(Barray!Token) tokenizer = Tokenizer!(Barray!Token)(source, &tokens);
+    Tokenizer tokenizer = Tokenizer(source, &tokens);
     int err = tokenizer.tokenize_tokens();
     if(err) return 1;
     tokens.bdata.resize(tokens.count);
-    auto parser = Parser(arena.allocator(), tokens[]);
-    auto statements = make_barray!(Statement*)(arena.allocator());
+    Parser parser = Parser(arena.allocator(), tokens[]);
+    Barray!(Statement*) statements = make_barray!(Statement*)(arena.allocator());
     err = parser.parse(&statements);
     if(err) return 1;
     StringBuilder sb = {allocator:progtext.allocator};
-    auto writer = DasmWriter(&sb, arena.allocator());
+    DasmWriter writer = DasmWriter(&sb, arena.allocator());
     err = writer.do_it(statements[]);
     writer.cleanup;
     if(err){
@@ -307,7 +307,7 @@ struct DasmWriter{
 
     int maybe_reg_from_expr(Expr* e){
         if(VarExpr* ve = e.is_variable()){
-            if(auto rlocal = ve.name.lexeme in reglocals)
+            if(int* rlocal = ve.name.lexeme in reglocals)
                 return *rlocal;
         }
         return -1;
@@ -556,7 +556,7 @@ struct DasmWriter{
     int visit_call(Call* expr, int target){
         int rarg1 = RegisterNames.RARG1;
         for(int i = 0; i < expr.args.length; i++){
-            auto arg = expr.args[i].ungroup;
+            Expr* arg = expr.args[i].ungroup;
             int before = regallocator.alloced;
             int res = gen_expression(arg, rarg1+i);
             if(res != 0) return res;
@@ -585,7 +585,7 @@ struct DasmWriter{
         }
         if(!called){
             int before = regallocator.alloced;
-            auto func = regallocator.allocate();
+            int func = regallocator.allocate();
             int res = gen_expression(expr.callee, func);
             if(res != 0) return res;
             regallocator.reset_to(before);
@@ -600,7 +600,7 @@ struct DasmWriter{
     int do_tail_call(Call* expr){
         int rarg1 = RegisterNames.RARG1;
         for(int i = 0; i < expr.args.length; i++){
-            auto arg = expr.args[i].ungroup;
+            Expr* arg = expr.args[i].ungroup;
             int before = regallocator.alloced;
             int res = gen_expression(arg, rarg1+i);
             if(res != 0) return res;
@@ -711,7 +711,7 @@ struct DasmWriter{
             }
             return 0;
         }
-        if(auto local = expr.name.lexeme in locals){
+        if(int* local = expr.name.lexeme in locals){
             if(Literal* lit = expr.right.is_literal()){
                 switch(lit.value.type)with(TokenType){
                     case NIL:
@@ -868,7 +868,7 @@ struct DasmWriter{
                 error(stmt.name, "Non constant initializer for global variable");
                 return -1;
             }
-            auto lit = cast(Literal*)stmt.initializer;
+            Literal* lit = cast(Literal*)stmt.initializer;
             switch(lit.value.type) with(TokenType){
                 case FALSE:
                 case NIL:
@@ -895,12 +895,12 @@ struct DasmWriter{
         int res = visit_assign(&assign, 0);
         return res;
         static if(0){
-        if(auto rlocal = stmt.name.lexeme in reglocals){
+        if(int* rlocal = stmt.name.lexeme in reglocals){
             int res = gen_statement(stmt.initializer, *rlocal);
             if(res != 0) return res;
             return 0;
         }
-        if(auto local = stmt.name.lexeme in locals){
+        if(int* local = stmt.name.lexeme in locals){
             int before = regallocator.alloced;
             int temp = regallocator.allocate();
             int res = gen_statement(stmt.initializer, temp);
@@ -1036,7 +1036,7 @@ struct DasmWriter{
         sb.writef("function % %\n", stmt.name.lexeme, stmt.params.length);
         int rarg = 10;
         foreach(p; stmt.params){
-            auto r = regallocator.allocate();
+            int r = regallocator.allocate();
             reglocals[p.lexeme] = r;
             sb.writef("    move r% r%\n", r, rarg++);
         }
@@ -1050,7 +1050,7 @@ struct DasmWriter{
                     error(v, "duplicate var");
                     return 1;
                 }
-                auto r = regallocator.allocate();
+                int r = regallocator.allocate();
                 reglocals[v.lexeme] = r;
             }
         }
@@ -1062,7 +1062,7 @@ struct DasmWriter{
                     error(v, "duplicate var");
                     return 1;
                 }
-                auto s = stackallocator.allocate();
+                size_t s = stackallocator.allocate();
                 locals[v.lexeme] = cast(int)s;
                 nvars++;
             }

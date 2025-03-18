@@ -1,19 +1,19 @@
-import io;
+import io
 function loops(n){
     for(let x = 0; x < n; x = x + 1){
-        io.printf2("x: %zu\n", x);
+        io.printf2("x: %zu\n", x)
     }
-    let y = 3;
+    let y = 3
     while(y < n){
-        y = y * 2;
+        y = y * 2
     }
     if(y > 10){
-         return 3;
+         return 3
     }
-    return 4;
+    return 4
 }
 
 function start(){
-    let x = loops(4);
-    io.printf2("loops(4) = %zu\n", x);
+    let x = loops(4)
+    io.printf2("loops(4) = %zu\n", x)
 }

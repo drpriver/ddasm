@@ -41,9 +41,9 @@ struct Token {
     int line;
 }
 
-struct Tokenizer(B) {
+struct Tokenizer {
     const ubyte[] source;
-    B* tokens;
+    Barray!Token* tokens;
     int start = 0, current = 0, line = 1;
 
     bool ERROR_OCCURRED = false;
@@ -864,7 +864,7 @@ struct Parser {
     import_statement(){with(TokenType){
         Token name = consume(IDENTIFIER, "Expected import name");
         if(ERROR_OCCURRED) return null;
-        consume(SEMICOLON, "Expected semicolon");
+        consume_or_nl(SEMICOLON, "Expected semicolon");
         if(ERROR_OCCURRED) return null;
         return ImportStatement.make(allocator, name);
     }
@@ -873,7 +873,7 @@ struct Parser {
     dasm_statement(){with(TokenType){
         Token dasm = consume(STRING, "Expected dasm string");
         if(ERROR_OCCURRED) return null;
-        consume(SEMICOLON, "Expected semicolon");
+        consume_or_nl(SEMICOLON, "Expected semicolon");
         if(ERROR_OCCURRED) return null;
         return DasmStatement.make(allocator, dasm);
     }
@@ -917,19 +917,19 @@ struct Parser {
             initializer = expression();
             if(!initializer) return null;
         }
-        consume(TokenType.SEMICOLON, "Expect ';' after var decl");
+        consume_or_nl(TokenType.SEMICOLON, "Expect ';' after var decl");
         return LetStmt.make(allocator, name, initializer);
 
     }
     Statement*
     statement(){
         if(match(TokenType.HALT)){
-            consume(TokenType.SEMICOLON, "Expect ';' after halt");
+            consume_or_nl(TokenType.SEMICOLON, "Expect ';' after halt");
             if(ERROR_OCCURRED) return null;
             return HaltStatement.get();
         }
         if(match(TokenType.ABORT)){
-            consume(TokenType.SEMICOLON, "Expect ';' after abort");
+            consume_or_nl(TokenType.SEMICOLON, "Expect ';' after abort");
             if(ERROR_OCCURRED) return null;
             return AbortStatement.get();
         }
@@ -949,7 +949,7 @@ struct Parser {
     label(){
         Token target = consume(TokenType.IDENTIFIER, "Expect label name");
         if(ERROR_OCCURRED) return null;
-        consume(TokenType.SEMICOLON, "Expect ';' after label decl");
+        consume_or_nl(TokenType.SEMICOLON, "Expect ';' after label decl");
         return LabelStatement.make(allocator, target);
     }
 
@@ -957,7 +957,7 @@ struct Parser {
     goto_(){
         Token target = consume(TokenType.IDENTIFIER, "Expect goto target");
         if(ERROR_OCCURRED) return null;
-        consume(TokenType.SEMICOLON, "Expect ';' after goto target");
+        consume_or_nl(TokenType.SEMICOLON, "Expect ';' after goto target");
         return GotoStatement.make(allocator, target);
     }
 
@@ -967,7 +967,7 @@ struct Parser {
             error(previous, "Can't continue outside of a loop");
             return null;
         }
-        consume(TokenType.SEMICOLON, "Expect ';' after continue");
+        consume_or_nl(TokenType.SEMICOLON, "Expect ';' after continue");
         return ContinueStatement.get();
     }
     Statement*
@@ -976,7 +976,7 @@ struct Parser {
             error(previous, "Can't break outside of a loop");
             return null;
         }
-        consume(TokenType.SEMICOLON, "Expect ';' after continue");
+        consume_or_nl(TokenType.SEMICOLON, "Expect ';' after continue");
         return BreakStatement.get();
     }
 
@@ -988,11 +988,11 @@ struct Parser {
         }
         Token keyword = previous;
         Expr* value = &NilExpr_.exp;
-        if(!check(TokenType.SEMICOLON)){
+        if(!check(TokenType.SEMICOLON) && previous().line == peek().line){
             value = expression();
             if(value is null) return null;
         }
-        consume(TokenType.SEMICOLON, "Expect ';' after return");
+        consume_or_nl(TokenType.SEMICOLON, "Expect ';' after return");
         if(ERROR_OCCURRED) return null;
         return ReturnStatement.make(allocator, keyword, value);
     }
@@ -1103,7 +1103,7 @@ struct Parser {
     Statement*
     expressionStatement(){
         auto value = expression();
-        consume(TokenType.SEMICOLON, "Expected ';' after value");
+        consume_or_nl(TokenType.SEMICOLON, "Expected ';' after value");
         return ExpressionStmt.make(allocator, value);
     }
 
@@ -1284,6 +1284,14 @@ struct Parser {
 
     Token
     consume(TokenType type, str message){
+        if(check(type)) return advance();
+        error(peek(), message);
+        return advance();
+    }
+
+    Token
+    consume_or_nl(TokenType type, str message){
+        if(previous.line != peek.line) return peek();
         if(check(type)) return advance();
         error(peek(), message);
         return advance();

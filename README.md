@@ -95,9 +95,9 @@ Davescript is basically c-like.
 Davescript has functions:
 
 ```
-import io;
+import io
 function hello(){
-    io.puts("hello");
+    io.puts("hello")
 }
 ```
 Functions are called in the usual manner, as shown above.
@@ -106,50 +106,50 @@ It has declarations, at both file and function scope. Arguments to functions
 are like declarations.
 
 ```
-let x = 3;
+let x = 3
 
 function foo(a){
-    let b = a + x;
-    return b;
+    let b = a + x
+    return b
 }
 ```
 
 It has control flow:
 ```
-import io;
+import io
 function loops(n){
     for(let x = 0; x < n; x = x + 1){
-        io.printf2("x: %zu\n", x);
+        io.printf2("x: %zu\n", x)
     }
-    let y = 3;
+    let y = 3
     while(y < n){
-        y = y * 2;
+        y = y * 2
     }
     if(y > 10){
-         return 3;
+         return 3
     }
-    return 4;
+    return 4
 }
 
 function start(){
-    let x = loops(4);
-    io.printf2("loops(4) = %zu\n", x);
+    let x = loops(4)
+    io.printf2("loops(4) = %zu\n", x)
 }
 ```
 It has guaranteed tail calls:
 ```
 function fib(n){
-    return fib_inner(0, 1, n);
+    return fib_inner(0, 1, n)
 }
 
 function fib_inner(a, b, n){
-    if(n <= 0) return a;
-    return fib_inner(b, a+b, n-1);
+    if(n <= 0) return a
+    return fib_inner(b, a+b, n-1)
 }
-import io;
+import io
 function start(){
     for(let i = 0; i < 20; i = i + 1)
-        io.printf2("fib(%zu) = %zu\n", i, fib(i));
+        io.printf2("fib(%zu) = %zu\n", i, fib(i))
 }
 ```
 Which compiles to:
