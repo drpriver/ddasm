@@ -6,14 +6,16 @@ import dlib.barray: Barray, make_barray;
 import dlib.parse_numbers: parse_unsigned_human;
 import dlib.table: Table;
 
-enum TokenType: ubyte{
+enum TokenType: uint{
     // Single character tokens
     LEFT_PAREN = '(', RIGHT_PAREN =')', LEFT_BRACE='{', RIGHT_BRACE = '}',
-    COMMA = ',', DOT = '.', MINUS ='-', PLUS = '+', SEMICOLON = ';', SLASH = '/', STAR = '*', MOD = '%', AMP = '&', BAR = '|', POUND = '#',
+    COMMA = ',', DOT = '.', MINUS ='-', PLUS = '+', SEMICOLON = ';', SLASH = '/', STAR = '*', MOD = '%', AMP = '&', BAR = '|', POUND = '#', HAT = '^',
 
     // One or two character tokens
     BANG = '!', BANG_EQUAL = BANG + 127, EQUAL = '=', EQUAL_EQUAL = EQUAL+127,
     GREATER = '>', GREATER_EQUAL = GREATER + 127, LESS = '<', LESS_EQUAL = LESS + 127,
+    LESS_LESS = LESS+256,
+    GREATER_GREATER = GREATER+256,
 
     MINUS_EQUAL = MINUS + 127,
     PLUS_EQUAL  = PLUS + 127,
@@ -22,6 +24,9 @@ enum TokenType: ubyte{
     MOD_EQUAL   = MOD + 127,
     AMP_EQUAL   = AMP + 127,
     BAR_EQUAL   = BAR + 127,
+    HAT_EQUAL   = HAT + 127,
+    LESS_LESS_EQUAL = LESS_LESS + 127,
+    GREATER_GREATER_EQUAL = GREATER_GREATER+127,
 
     // Literals
     IDENTIFIER = 127, STRING = 128, NUMBER = 129, HEX=130, PHEX=131, SNUM=132, BNUM=133,
@@ -80,28 +85,41 @@ struct Tokenizer {
             case ';':
                 add_token(cast(TokenType)c);
                 break;
+            case '^':
+                add_token(cast(TokenType)(match('=')?127+c:c));
+                break;
             case '-':
             case '+':
             case '*':
             case '%':
+                goto case '^';
             case '&':
-                if(match('&')){
+                if(c == '&' && match('&')){
                     add_token(TokenType.AND);
                     break;
                 }
-                goto case;
+                goto case '^';
             case '|':
-                if(match('|')){
+                if(c == '|' && match('|')){
                     add_token(TokenType.OR);
                     break;
                 }
-                goto case;
+                goto case '^';
             case '!':
             case '=':
+                goto case '^';
             case '<':
+                if(match('<')){
+                    add_token(TokenType.LESS_LESS);
+                    break;
+                }
+                goto case '^';
             case '>':
-                add_token(cast(TokenType)(match('=')?127+c:c));
-                break;
+                if(match('>')){
+                    add_token(TokenType.GREATER_GREATER);
+                    break;
+                }
+                goto case '^';
             case '#':
                 while(peek != '\n' && !at_end) current++;
                 break;
@@ -1180,16 +1198,27 @@ struct Parser {
 
     Expr*
     comparison(){with(TokenType){
-        Expr* expr = term();
+        Expr* expr = shift();
         while(match(GREATER, GREATER_EQUAL, LESS, LESS_EQUAL)){
             Token operator = previous;
-            Expr* right = term();
+            Expr* right = shift();
             expr = Binary.make(allocator, expr, operator, right);
         }
         return expr;
     }}
     Expr*
-    term(){with(TokenType){
+    shift(){with(TokenType){
+        Expr* expr = add_sub();
+        while(match(LESS_LESS, GREATER_GREATER)){
+            Token operator = previous;
+            Expr* right = add_sub();
+            expr = Binary.make(allocator, expr, operator, right);
+        }
+        return expr;
+    }}
+
+    Expr*
+    add_sub(){with(TokenType){
         Expr* expr = factor();
         while(match(MINUS, PLUS)){
             Token operator = previous;
@@ -1201,8 +1230,7 @@ struct Parser {
     Expr*
     bitops(){with(TokenType){
         Expr* expr = unary();
-        while(match(BAR, AMP)){
-            import core.stdc.stdio;
+        while(match(BAR, AMP, HAT)){
             Token operator = previous;
             Expr* right = unary();
             expr = Binary.make(allocator, expr, operator, right);

@@ -33,10 +33,11 @@ function start 0
     move rarg2 0b1010
     move rarg3 0b0011
     xor rarg2 rarg2 rarg3
-    move r3 function io.puts
+    call function io.printf2
+    move r3 function io.printf2
 
-    xor r4 r3 function io.printf2
-    xor r0 r4 function io.printf2
+    xor r4 r3 function io.puts
+    xor r0 r4 function io.puts
     call r0
 
     halt

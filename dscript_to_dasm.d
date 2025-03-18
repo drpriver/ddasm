@@ -375,6 +375,15 @@ struct DasmWriter{
                     case AMP:
                         sb.writef("    and r% r% %\n", target, lhs, rhs);
                         break;
+                    case HAT:
+                        sb.writef("    xor r% r% %\n", target, lhs, rhs);
+                        break;
+                    case LESS_LESS:
+                        sb.writef("    shl r% r% %\n", target, lhs, rhs);
+                        break;
+                    case GREATER_GREATER:
+                        sb.writef("    shr r% r% %\n", target, lhs, rhs);
+                        break;
                     case BANG_EQUAL:
                         sb.writef("    scmp r% %\n", lhs, rhs);
                         sb.writef("    move r% 0\n", target);
@@ -443,6 +452,21 @@ struct DasmWriter{
                 case MOD:
                     sb.writef("    div rjunk r% r% r%\n", target, lhs, rhs);
                     break;
+                case BAR:
+                    sb.writef("    or r% r% r%\n", target, lhs, rhs);
+                    break;
+                case AMP:
+                    sb.writef("    and r% r% r%\n", target, lhs, rhs);
+                    break;
+                case HAT:
+                    sb.writef("    xor r% r% r%\n", target, lhs, rhs);
+                    break;
+                case LESS_LESS:
+                    sb.writef("    shl r% r% r%\n", target, lhs, rhs);
+                    break;
+                case GREATER_GREATER:
+                    sb.writef("    shr r% r% r%\n", target, lhs, rhs);
+                    break;
                 case BANG_EQUAL:
                     sb.writef("    scmp r% r%\n", lhs, rhs);
                     sb.writef("    move r% 0\n", target);
@@ -472,12 +496,6 @@ struct DasmWriter{
                     sb.writef("    scmp r% r%\n", lhs, rhs);
                     sb.writef("    move r% 0\n", target);
                     sb.writef("    cmov le r% 1\n", target);
-                    break;
-                case BAR:
-                    sb.writef("    or r% r% r%\n", target, lhs, rhs);
-                    break;
-                case AMP:
-                    sb.writef("    and r% r% r%\n", target, lhs, rhs);
                     break;
                 default:
                     error(expr.operator, "Unhandled binary op");
