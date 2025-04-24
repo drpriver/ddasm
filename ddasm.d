@@ -2,7 +2,7 @@
  * Copyright © 2021-2023, David Priver
  */
 import core.stdc.string: strlen, strerror, memcpy, memset;
-import core.stdc.stdio: fprintf, stdout, stderr, fread, stdin, FILE, fwrite, fflush, fopen, fputs, fgets, fclose;
+import core.stdc.stdio: fprintf, stdout, stderr, fread, stdin, FILE, fwrite, fflush, fopen, fputs, fgets, fclose, getchar;
 import core.stdc.stdlib: calloc, malloc, free, atoi;
 
 import dlib.stringbuilder: StringBuilder;
@@ -27,9 +27,6 @@ import dvm.dvm_regs: RegisterNames;
 
 import dasm.dasm_parser: parse_asm_string;
 import dvm_modules.builtins;
-import c;
-
-
 
 static if(Fuzzing){
     __gshared RecordingAllocator!Mallocator recorder;
@@ -299,6 +296,8 @@ int main(int argc, char** argv){
     machine.registers[RegisterNames.RARG1 .. RegisterNames.RARGMAX] = rargs[];
     if(no_run)
         return 0;
+    do {
+        machine.paused = 0;
     if(debugger && disassemble)
         err = machine.run!(RunFlags.DEBUG|RunFlags.DISASSEMBLE_EACH)(&linked_prog, 1024*1024);
     else if(debugger)
@@ -307,6 +306,11 @@ int main(int argc, char** argv){
         err = machine.run!(RunFlags.DISASSEMBLE_EACH)(&linked_prog, 1024*1024);
     else
         err = machine.run!(RunFlags.NONE)(&linked_prog, 1024*1024);
+        if(machine.paused){
+            fprintf(stderr, "Running paused\n");
+            getchar();
+        }
+    }while(machine.paused);
 
     if(err){
         fprintf(stderr, "Running failed\n");

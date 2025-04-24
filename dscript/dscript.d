@@ -35,7 +35,7 @@ enum TokenType: uint{
     AND = 1, ELSE = 2, FALSE = 3, FUN = 4, FOR = 5, 
     IF = 6, NIL = 7, OR = 8, RETURN = 9, TRUE = 10, LET = 11,
     WHILE = 12, GOTO = 13, LABEL = 14, BREAK = 15, CONTINUE = 16, 
-    IMPORT = 17, HALT = 18, ABORT = 19, DASM = 20,
+    IMPORT = 17, HALT = 18, ABORT = 19, DASM = 20, PAUSE = 21,
 
     EOF = 0,
 }
@@ -269,7 +269,7 @@ void powerup(){
     if(KEYWORDSPOWERED) return;
     KEYWORDSPOWERED = true;
     with(TokenType){
-        immutable string[20] keys = [
+        immutable string[21] keys = [
             "and",
             "else",
             "false",
@@ -290,8 +290,9 @@ void powerup(){
             "halt",
             "abort",
             "dasm",
+            "pause",
         ];
-        immutable TokenType[20] values = [
+        immutable TokenType[21] values = [
             AND,
             ELSE,
             FALSE,
@@ -312,6 +313,7 @@ void powerup(){
             HALT,
             ABORT,
             DASM,
+            PAUSE,
         ];
         static assert(keys.length == values.length);
         for(size_t i = 0; i < keys.length; i++){
@@ -615,6 +617,7 @@ enum StatementType {
     DASM,
     BREAK,
     CONTINUE,
+    PAUSE,
 }
 
 struct Statement {
@@ -658,8 +661,18 @@ struct HaltStatement {
         return cast(Statement*)&hlt_stmt;
     }
 }
-
 immutable HaltStatement hlt_stmt = HaltStatement(Statement(StatementType.HALT));
+struct PauseStatement {
+    Statement stmt;
+
+    static
+    Statement*
+    get(){
+        return cast(Statement*)&pause_stmt;
+    }
+}
+immutable PauseStatement pause_stmt = PauseStatement(Statement(StatementType.PAUSE));
+
 
 struct AbortStatement {
     Statement stmt;
@@ -871,6 +884,8 @@ struct Parser {
 
     Statement*
     declaration(){
+        while(match(TokenType.SEMICOLON)){
+        }
         if(match(TokenType.FUN)) return function_();
         if(match(TokenType.LET)) return varDeclaration();
         if(match(TokenType.IMPORT)) return import_statement;
@@ -950,6 +965,11 @@ struct Parser {
             consume_or_nl(TokenType.SEMICOLON, "Expect ';' after abort");
             if(ERROR_OCCURRED) return null;
             return AbortStatement.get();
+        }
+        if(match(TokenType.PAUSE)){
+            consume_or_nl(TokenType.SEMICOLON, "Expect ';' after pause");
+            if(ERROR_OCCURRED) return null;
+            return PauseStatement.get();
         }
         if(match(TokenType.RETURN)) return returnStatement();
         if(match(TokenType.FOR)) return forStatement();
@@ -1280,14 +1300,14 @@ struct Parser {
         Barray!(Expr*) args = make_barray!(Expr*)(allocator);
         if(!check(TokenType.RIGHT_PAREN)){
             do {
-                Expr* e = expression;
+                Expr* e = expression();
                 if(e is null) return null;
                 args ~= e;
                 if(args.count >= 255){
                     error(peek, "Can't have more than 255 args");
                     return null;
                 }
-            }while(match(TokenType.COMMA));
+            }while(match(TokenType.COMMA) && !check(TokenType.RIGHT_PAREN));
         }
         if(args.count) args.bdata.resize(args.count);
         Token paren = consume(TokenType.RIGHT_PAREN, "Expect a ')' after args");

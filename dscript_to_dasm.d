@@ -127,6 +127,7 @@ struct DasmAnalyzer{
             case HALT:       return visit_halt(cast(HaltStatement*)s);
             case ABORT:      return visit_abort(cast(AbortStatement*)s);
             case DASM:       return visit_dasm(cast(DasmStatement*)s);
+            case PAUSE:       return visit_pause(cast(DasmStatement*)s);
         }
     }
 
@@ -191,6 +192,8 @@ struct DasmAnalyzer{
     void visit_import(ImportStatement* stmt){
     }
     void visit_dasm(DasmStatement* stmt){
+    }
+    void visit_pause(DasmStatement* stmt){
     }
     void visit_halt(HaltStatement* stmt){
     }
@@ -261,6 +264,7 @@ struct DasmWriter{
             case GOTO:       return visit_goto(cast(GotoStatement*)s);
             case LABEL:      return visit_label(cast(LabelStatement*)s);
             case HALT:       return visit_halt(cast(HaltStatement*)s);
+            case PAUSE:       return visit_pause(cast(PauseStatement*)s);
             case ABORT:      return visit_abort(cast(AbortStatement*)s);
             case DASM:       return visit_dasm(cast(DasmStatement*)s);
         }
@@ -1104,6 +1108,10 @@ struct DasmWriter{
     }
     int visit_halt(HaltStatement* stmt){
         sb.writef("    halt\n");
+        return 0;
+    }
+    int visit_pause(PauseStatement* stmt){
+        sb.writef("    pause\n");
         return 0;
     }
     int visit_abort(AbortStatement* stmt){

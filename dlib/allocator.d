@@ -12,6 +12,7 @@ enum AllocatorKind {
     MALLOC = 2,
     LINKED = 3,
     ARENA  = 4,
+    FIXED  = 5,
 }
 struct Allocator {
     static assert(size_t.sizeof == (void*).sizeof);
@@ -33,8 +34,12 @@ struct Allocator {
             case AllocatorKind.MALLOC: return Mallocator.alloc(size);
             case AllocatorKind.LINKED: return (cast(LinkedAllocator*)p).alloc(size);
             case AllocatorKind.ARENA:  return (cast(ArenaAllocator*)p).alloc(size);
+            case AllocatorKind.FIXED:  return (cast(FixedAllocator*)p).alloc(size);
         }
     }
+
+    T[] alloc(T)(size_t count){ return alloc(count * T.sizeof); }
+
     void[]
     zalloc(size_t size){
         final switch(kind){
@@ -43,18 +48,26 @@ struct Allocator {
             case AllocatorKind.MALLOC: return Mallocator.zalloc(size);
             case AllocatorKind.LINKED: return (cast(LinkedAllocator*)p).zalloc(size);
             case AllocatorKind.ARENA:  return (cast(ArenaAllocator*)p).zalloc(size);
+            case AllocatorKind.FIXED:  return (cast(FixedAllocator*)p).zalloc(size);
         }
     }
 
+    T[] zalloc(T)(size_t count){return zalloc(count * T.sizeof);}
+
     void[]
-    realloc(void*data, size_t orig_size, size_t new_size){
+    realloc(void*data, size_t old_size, size_t new_size){
         final switch(kind){
             case AllocatorKind.UNSET:  assert(0);
             case AllocatorKind.NULL:   return null;
-            case AllocatorKind.MALLOC: return Mallocator.realloc(data, orig_size, new_size);
-            case AllocatorKind.LINKED: return (cast(LinkedAllocator*)p).realloc(data, orig_size, new_size);
-            case AllocatorKind.ARENA:  return (cast(ArenaAllocator*)p).realloc(data, orig_size, new_size);
+            case AllocatorKind.MALLOC: return Mallocator.realloc(data, old_size, new_size);
+            case AllocatorKind.LINKED: return (cast(LinkedAllocator*)p).realloc(data, old_size, new_size);
+            case AllocatorKind.ARENA:  return (cast(ArenaAllocator*)p).realloc(data, old_size, new_size);
+            case AllocatorKind.FIXED:  return (cast(FixedAllocator*)p).realloc(data, old_size, new_size);
         }
+    }
+
+    T[] realloc(T)(T[] data, size_t new_count){
+        return realloc(data, new_count * T.sizeof);
     }
 
     void
@@ -65,7 +78,13 @@ struct Allocator {
             case AllocatorKind.MALLOC: return Mallocator.free(ptr, size);
             case AllocatorKind.LINKED: return (cast(LinkedAllocator*)p).free(ptr, size);
             case AllocatorKind.ARENA:  return (cast(ArenaAllocator*)p).free(ptr, size);
+            case AllocatorKind.FIXED:  return (cast(FixedAllocator*)p).free(ptr, size);
         }
+    }
+
+    void
+    free(const(void)[] data){
+        return free(data.ptr, data.length);
     }
 
     void free_all(){ 
@@ -75,6 +94,7 @@ struct Allocator {
             case AllocatorKind.MALLOC: return;
             case AllocatorKind.LINKED: return (cast(LinkedAllocator*)p).free_all();
             case AllocatorKind.ARENA:  return (cast(ArenaAllocator*)p).free_all();
+            case AllocatorKind.FIXED:  return (cast(FixedAllocator*)p).free_all();
         }
     }
     bool supports_free_all(){
@@ -84,6 +104,7 @@ struct Allocator {
             case AllocatorKind.MALLOC: return false;
             case AllocatorKind.LINKED: return true;
             case AllocatorKind.ARENA:  return true;
+            case AllocatorKind.FIXED:  return true;
         }
     }
 }
@@ -113,11 +134,11 @@ struct Mallocator {
 
     static
     void[]
-    realloc(void*data, size_t orig_size, size_t new_size){
-        if(!data || !orig_size)
+    realloc(void*data, size_t old_size, size_t new_size){
+        if(!data || !old_size)
             return alloc(new_size);
         if(!new_size){
-            free(data, orig_size);
+            free(data, old_size);
             return null;
         }
         void* result = core.stdc.stdlib.realloc(cast(void*)data, new_size);
@@ -199,16 +220,16 @@ struct LinkedAllocator{
     }
 
     void[]
-    realloc(void *data, size_t orig_size, size_t new_size){
-        if(!data || !orig_size)
+    realloc(void *data, size_t old_size, size_t new_size){
+        if(!data || !old_size)
             return alloc(new_size);
         if(!new_size){
-            free(data, orig_size);
+            free(data, old_size);
             return null;
         }
         LinkAllocation* l = (cast(LinkAllocation*)data)-1;
         unlink(l);
-        void[] result = base_allocator.realloc(l, orig_size + LinkAllocation.sizeof, new_size+LinkAllocation.sizeof);
+        void[] result = base_allocator.realloc(l, old_size + LinkAllocation.sizeof, new_size+LinkAllocation.sizeof);
         l = cast(LinkAllocation*)result.ptr;
         l.buffsize = new_size;
         link(l);
@@ -278,10 +299,10 @@ struct ArenaAllocator{
     }
 
     void[]
-    alloc(size_t size){
+    _alloc(size_t size, bool zero){
         size = round_size_up(size);
         if(size > Arena.ARENA_BUFFER_SIZE)
-            return base_allocator.alloc(size);
+            return zero?base_allocator.alloc(size):base_allocator.zalloc(size);
         if(!arena){
             arena = make_arena();
             if(!arena) return null;
@@ -293,27 +314,18 @@ struct ArenaAllocator{
         }
         void[] result = arena.buff[arena.used..arena.used+size];
         arena.used += size;
+        if(zero) memset(result.ptr, 0, result.length);
         return result;
     }
 
     void[]
+    alloc(size_t size){
+        return _alloc(size, zero:false);
+    }
+
+    void[]
     zalloc(size_t size){
-        size = round_size_up(size);
-        if(size > Arena.ARENA_BUFFER_SIZE)
-            return base_allocator.zalloc(size);
-        if(!arena){
-            arena = make_arena();
-            if(!arena) return null;
-        }
-        if(size > Arena.ARENA_BUFFER_SIZE - arena.used){
-            Arena* a = make_arena();
-            if(!a) return null;
-            arena = a;
-        }
-        void[] result = arena.buff[arena.used..arena.used+size];
-        arena.used += size;
-        memset(result.ptr, 0, result.length);
-        return result;
+        return _alloc(size, zero:true);
     }
 
     void[]
@@ -380,6 +392,66 @@ struct ArenaAllocator{
     free_all(){
         base_allocator.free_all();
         arena = null;
+    }
+}
+
+
+struct FixedAllocator {
+    ubyte[] buffer;
+    size_t cursor = 0;
+
+    static
+    typeof(this) 
+    fixed(size_t size)(void* p = imported!"core.stdc.stdlib".alloca(size)){
+        return typeof(this)(p[0..size]);
+    }
+    this(void[] p){
+        buffer = cast(ubyte[])p;
+    }
+
+    Allocator allocator(){
+        return Allocator(kind: AllocatorKind.FIXED, &this);
+    }
+
+    void[] alloc(size_t size){
+        if(cursor + size > buffer.length) return null;
+        void[] result = buffer[cursor .. cursor + size];
+        cursor += size;
+        return result;
+    }
+    void[] zalloc(size_t size){
+        void[] result = alloc(size);
+        memset(result.ptr, 0, result.length);
+        return result;
+    }
+    void[] realloc(void* data, size_t old_size, size_t new_size){
+        if(old_size == new_size) return data[0..new_size];
+        if(!old_size)
+            return alloc(new_size);
+        if(!new_size){
+            free(data, old_size);
+            return null;
+        }
+        if(buffer.ptr + cursor == data + old_size){
+            if(cursor + new_size - old_size > buffer.length) return null;
+            cursor += new_size - old_size;
+            return buffer[0..new_size];
+        }
+        void[] result = alloc(new_size);
+        if(result is null) return null;
+        if(old_size < new_size)
+            memcpy(result.ptr, data, old_size);
+        else
+            memcpy(result.ptr, data, new_size);
+        return result;
+    }
+    void free(const(void)* ptr, size_t size){
+        if(buffer.ptr + cursor == ptr + size){
+            cursor -= size;
+        }
+    }
+    void free_all(){
+        cursor = 0;
     }
 }
 
@@ -685,9 +757,9 @@ struct LoggingAllocator(Allocator){
         }
 
         void[]
-        realloc(void*data, size_t orig_size, size_t new_size){
-            fprintf(stderr, "realloc: %p, %zu, %zu requested\n", data, orig_size, new_size);
-            void[] result = allocator.realloc(data, orig_size, new_size);
+        realloc(void*data, size_t old_size, size_t new_size){
+            fprintf(stderr, "realloc: %p, %zu, %zu requested\n", data, old_size, new_size);
+            void[] result = allocator.realloc(data, old_size, new_size);
             fprintf(stderr, "realloc: %p, %zu returned\n", result.ptr, result.length);
             return result;
         }
@@ -734,9 +806,9 @@ struct LoggingAllocator(Allocator){
 
         static
         void[]
-        realloc(void*data, size_t orig_size, size_t new_size){
-            fprintf(stderr, "realloc: %p, %zu, %zu requested\n", data, orig_size, new_size);
-            void[] result = allocator.realloc(data, orig_size, new_size);
+        realloc(void*data, size_t old_size, size_t new_size){
+            fprintf(stderr, "realloc: %p, %zu, %zu requested\n", data, old_size, new_size);
+            void[] result = allocator.realloc(data, old_size, new_size);
             fprintf(stderr, "realloc: %p, %zu returned\n", result.ptr, result.length);
             return result;
         }

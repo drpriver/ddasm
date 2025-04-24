@@ -1,7 +1,7 @@
 /*
- * Copyright © 2021-2023, David Priver
+ * Copyright © 2021-2025, David Priver
  */
-import dlib.allocator: Mallocator, Allocator, MALLOCATOR;
+import dlib.allocator: Mallocator, Allocator, MALLOCATOR, FixedAllocator;
 import dlib.box: Box;
 import dlib.stringbuilder: StringBuilder;
 static import dscript.dscript;
@@ -90,7 +90,9 @@ int main(int argc, char** argv){
         bscript = fe.value.as!(const(ubyte)[]);
     }
     else if(force_interactive || stdin_is_interactive){
-        StringBuilder sb = {allocator:Mallocator.allocator()};
+        StringBuilder sb = {
+            allocator:Mallocator.allocator(),
+        };
         LineHistory history = {allocator:MALLOCATOR};
         const char* HISTORYFILE = "dscript.history";
         history.load_history(HISTORYFILE);
@@ -127,7 +129,11 @@ int main(int argc, char** argv){
         bscript = sb.detach.as!(const(ubyte)[]);
     }
     // fprintf(stderr, "%.*s\n", cast(int)bscript.data.length, bscript.data.ptr);
-    Box!(char[]) progtext = {allocator:MALLOCATOR};
+    FixedAllocator f = FixedAllocator.fixed!(1024*1024);
+    Box!(char[]) progtext = {
+        f.allocator(),
+        // allocator:MALLOCATOR
+    };
     scope(exit) progtext.dealloc;
     int err = dscript_to_dasm.compile_to_dasm(bscript.data, &progtext);
     if(err) return err;
