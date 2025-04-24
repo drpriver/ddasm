@@ -134,6 +134,7 @@ get_module(){
         extern(C) int function(SDL_Renderer*, int*, int*) SDL_GetRendererOutputSize;
         extern(C) int function(SDL_Renderer*, float, float) SDL_RenderSetScale;
         extern(C) ulong function() SDL_GetTicks64;
+        extern(C) uint function() SDL_GetTicks;
     }
     __gshared SDL sdl;
     foreach(memb; __traits(allMembers, SDL)){
@@ -207,7 +208,7 @@ get_module(){
         sdl.SDL_Delay(cast(uint)tm);
     });
     reg("GetTicks", (){
-        return sdl.SDL_GetTicks64();
+        return sdl.SDL_GetTicks64? sdl.SDL_GetTicks64() : sdl.SDL_GetTicks();
     });
     is_init = true;
     return &sdl_module;
