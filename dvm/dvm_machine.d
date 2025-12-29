@@ -107,6 +107,9 @@ struct Machine {
                 case 5:
                     registers[ROUT1] = func.native_function_raaaaa(registers[RARG1], registers[RARG2], registers[RARG3], registers[RARG4], registers[RARG5]);
                     return 0;
+                case 6:
+                    registers[ROUT1] = func.native_function_raaaaaa(registers[RARG1], registers[RARG2], registers[RARG3], registers[RARG4], registers[RARG5], registers[RARG6]);
+                    return 0;
                 default:
                     return 1;
             }
@@ -130,6 +133,9 @@ struct Machine {
                     return 0;
                 case 5:
                     func.native_function_aaaaa(registers[RARG1], registers[RARG2], registers[RARG3], registers[RARG4], registers[RARG5]);
+                    return 0;
+                case 6:
+                    func.native_function_aaaaaa(registers[RARG1], registers[RARG2], registers[RARG3], registers[RARG4], registers[RARG5], registers[RARG6]);
                     return 0;
                 default:
                     return 1;

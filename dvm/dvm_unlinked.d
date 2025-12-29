@@ -36,11 +36,24 @@ struct AbstractArray {
     Barray!(Argument) array;
 }
 
+struct DlimportFuncSpec {
+    str name;
+    ubyte n_args;
+    ubyte n_ret;
+}
+
+struct DlimportDecl {
+    str library_path;
+    str alias_name;
+    Barray!DlimportFuncSpec funcs;
+}
+
 struct UnlinkedModule{
     str name;
     Barray!(AbstractFunction) functions;
     Barray!(AbstractVariable) variables;
     Barray!(AbstractArray) arrays;
     Barray!(str) imports;
+    Barray!(DlimportDecl) dlimports;
 }
 

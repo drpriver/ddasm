@@ -12,6 +12,7 @@ enum RegisterNames:uintptr_t {
     RARG3   = R12,
     RARG4   = R13,
     RARG5   = R14,
+    RARG6   = R9, // For 6-arg native calls
     RARGMAX = R14+1,
     ROUT1   = R15,
     ROUT2   = R16,

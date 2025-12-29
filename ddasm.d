@@ -269,16 +269,24 @@ int main(int argc, char** argv){
                 case "misc":
                     loaded["misc"] = get_misc_module();
                     break;
-                case "SDL":
-                    static import dvm_modules.sdl;
-                    LinkedModule* sdl_module = dvm_modules.sdl.get_module();
-                    if(!sdl_module) goto default;
-                    loaded["SDL"] = sdl_module;
-                    break;
                 default:
                     fprintf(stderr, "Unknown module: '%.*s'\n", cast(int)imp.length, imp.ptr);
                     return 1;
             }
+        }
+        // Load dynamic libraries from dlimport declarations
+        import dvm_modules.dynload;
+        foreach(ref dlimport; prog.dlimports[]){
+            LinkedModule* dyn_mod = cast(LinkedModule*)MALLOCATOR.alloc(LinkedModule.sizeof).ptr;
+            *dyn_mod = LinkedModule.init;
+            auto dl_err = load_dynamic_module(MALLOCATOR, dlimport, dyn_mod);
+            if(dl_err.errored){
+                fprintf(stderr, "Failed to load '%.*s': %.*s\n",
+                    cast(int)dlimport.library_path.length, dlimport.library_path.ptr,
+                    cast(int)dl_err.message.length, dl_err.message.ptr);
+                return 1;
+            }
+            loaded[dlimport.alias_name] = dyn_mod;
         }
         err = link_module(MALLOCATOR, temp, BUILTINS, &prog, &linked_prog, &find_loc, &loaded);
     }

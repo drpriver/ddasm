@@ -35,7 +35,7 @@ enum TokenType: uint{
     AND = 1, ELSE = 2, FALSE = 3, FUN = 4, FOR = 5, 
     IF = 6, NIL = 7, OR = 8, RETURN = 9, TRUE = 10, LET = 11,
     WHILE = 12, GOTO = 13, LABEL = 14, BREAK = 15, CONTINUE = 16, 
-    IMPORT = 17, HALT = 18, ABORT = 19, DASM = 20, PAUSE = 21,
+    IMPORT = 17, HALT = 18, ABORT = 19, DASM = 20, PAUSE = 21, DLIMPORT = 22,
 
     EOF = 0,
 }
@@ -269,7 +269,7 @@ void powerup(){
     if(KEYWORDSPOWERED) return;
     KEYWORDSPOWERED = true;
     with(TokenType){
-        immutable string[21] keys = [
+        immutable string[22] keys = [
             "and",
             "else",
             "false",
@@ -291,8 +291,9 @@ void powerup(){
             "abort",
             "dasm",
             "pause",
+            "dlimport",
         ];
-        immutable TokenType[21] values = [
+        immutable TokenType[22] values = [
             AND,
             ELSE,
             FALSE,
@@ -314,6 +315,7 @@ void powerup(){
             ABORT,
             DASM,
             PAUSE,
+            DLIMPORT,
         ];
         static assert(keys.length == values.length);
         for(size_t i = 0; i < keys.length; i++){
@@ -618,6 +620,7 @@ enum StatementType {
     BREAK,
     CONTINUE,
     PAUSE,
+    DLIMPORT,
 }
 
 struct Statement {
@@ -715,6 +718,30 @@ struct ImportStatement {
         auto p = cast(typeof(this)*)data.ptr;
         p.stmt.type = StatementType.IMPORT;
         p.name = n;
+        return &p.stmt;
+    }
+}
+
+struct DlimportFuncDecl {
+    Token name;
+    Token return_type;
+    ubyte n_args;
+}
+
+struct DlimportStatement {
+    Statement stmt;
+    Token library_path;
+    Token alias_name;
+    DlimportFuncDecl[] funcs;
+    static
+    Statement*
+    make(Allocator allocator, Token lib, Token alias_, DlimportFuncDecl[] funcs){
+        auto data = allocator.alloc(typeof(this).sizeof);
+        auto p = cast(typeof(this)*)data.ptr;
+        p.stmt.type = StatementType.DLIMPORT;
+        p.library_path = lib;
+        p.alias_name = alias_;
+        p.funcs = funcs;
         return &p.stmt;
     }
 }
@@ -890,6 +917,7 @@ struct Parser {
         if(match(TokenType.LET)) return varDeclaration();
         if(match(TokenType.IMPORT)) return import_statement;
         if(match(TokenType.DASM)) return dasm_statement;
+        if(match(TokenType.DLIMPORT)) return dlimport_statement;
         return statement();
     }
 
@@ -909,6 +937,61 @@ struct Parser {
         consume_or_nl(SEMICOLON, "Expected semicolon");
         if(ERROR_OCCURRED) return null;
         return DasmStatement.make(allocator, dasm);
+    }
+    }
+
+    Statement*
+    dlimport_statement(){with(TokenType){
+        // dlimport "libfoo.dylib" as foo { int add(int, int); ... }
+        Token lib = consume(STRING, "Expected library path string");
+        if(ERROR_OCCURRED) return null;
+        Token as_kw = consume(IDENTIFIER, "Expected 'as' keyword");
+        if(ERROR_OCCURRED) return null;
+        if(as_kw.lexeme != "as"){
+            error(as_kw, "Expected 'as' keyword");
+            return null;
+        }
+        Token alias_ = consume(IDENTIFIER, "Expected alias name");
+        if(ERROR_OCCURRED) return null;
+        consume(LEFT_BRACE, "Expected '{'");
+        if(ERROR_OCCURRED) return null;
+
+        auto funcs = make_barray!DlimportFuncDecl(allocator);
+        while(!check(RIGHT_BRACE) && !at_end){
+            DlimportFuncDecl decl;
+            // return_type name(params...);
+            decl.return_type = consume(IDENTIFIER, "Expected return type");
+            if(ERROR_OCCURRED) return null;
+            decl.name = consume(IDENTIFIER, "Expected function name");
+            if(ERROR_OCCURRED) return null;
+            consume(LEFT_PAREN, "Expected '('");
+            if(ERROR_OCCURRED) return null;
+            // Count arguments - we just count identifiers separated by commas
+            ubyte n_args = 0;
+            if(!check(RIGHT_PAREN)){
+                do {
+                    // type name (name is optional)
+                    consume(IDENTIFIER, "Expected parameter type");
+                    if(ERROR_OCCURRED) return null;
+                    if(check(IDENTIFIER) && !check(RIGHT_PAREN) && !check(COMMA)){
+                        advance(); // skip optional param name
+                    }
+                    n_args++;
+                    if(n_args > 6){
+                        error(peek(), "Too many parameters, max is 6");
+                        return null;
+                    }
+                } while(match(COMMA));
+            }
+            decl.n_args = n_args;
+            consume(RIGHT_PAREN, "Expected ')'");
+            if(ERROR_OCCURRED) return null;
+            match(SEMICOLON); // optional semicolon
+            funcs ~= decl;
+        }
+        consume(RIGHT_BRACE, "Expected '}'");
+        if(ERROR_OCCURRED) return null;
+        return DlimportStatement.make(allocator, lib, alias_, funcs[]);
     }
     }
 

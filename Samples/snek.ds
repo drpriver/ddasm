@@ -1,8 +1,30 @@
 #!Bin/ddasm
-import SDL
+// Snek game using dlimport
+
+dlimport "SDL2" as SDL {
+    int SDL_Init(uint flags);
+    ptr SDL_CreateWindow(ptr title, int x, int y, int w, int h, uint flags);
+    ptr SDL_CreateRenderer(ptr window, int idx, uint flags);
+    void SDL_Quit();
+    int SDL_PollEvent(ptr event);
+    int SDL_WaitEvent(ptr event);
+    int SDL_SetRenderDrawColor(ptr renderer, int r, int g, int b, int a);
+    int SDL_RenderClear(ptr renderer);
+    int SDL_RenderFillRect(ptr renderer, ptr rect);
+    void SDL_RenderPresent(ptr renderer);
+    void SDL_DestroyRenderer(ptr renderer);
+    void SDL_DestroyWindow(ptr window);
+    void SDL_GetWindowSize(ptr window, ptr pw, ptr ph);
+    void SDL_SetWindowSize(ptr window, int w, int h);
+    void SDL_Delay(uint ms);
+    uint SDL_GetTicks();
+    int SDL_SetRenderDrawBlendMode(ptr renderer, int mode);
+}
+
 import mem
 import io
 import misc
+
 let gwindow
 let grenderer
 let gboard
@@ -18,17 +40,21 @@ function start(width, height){
   if(!height) height = 400
   if(height > 1200) height = 1200
   let INIT_VIDEO = 0x20
-  SDL.Init(INIT_VIDEO)
+  SDL.SDL_Init(INIT_VIDEO)
   //           WINDOW_SHOWN | HIGHDPI    | RESIZABLE
   let flags = 0x00000004 | 0x00002000 | 0x00000020
-  window = SDL.CreateWindow(
-    "Snek!", 
+  let WINDOWPOS_UNDEFINED = 0x1FFF0000
+  window = SDL.SDL_CreateWindow(
+    "Snek!",
+    WINDOWPOS_UNDEFINED, WINDOWPOS_UNDEFINED,
     width, height,
     flags,
   )
   if(!window) abort
-  renderer = SDL.CreateRenderer(window, -1, 0)
+  renderer = SDL.SDL_CreateRenderer(window, -1, 0)
   if(!renderer) abort
+  // Set blend mode (SDL_BLENDMODE_BLEND = 1)
+  SDL.SDL_SetRenderDrawBlendMode(renderer, 1)
   gwindow = window
   grenderer = renderer
   let board = mem.calloc(10*10, 0p1)
@@ -39,28 +65,28 @@ function start(width, height){
   main_loop()
   mem.free(board)
   mem.free(snake)
-  SDL.DestroyRenderer(renderer)
-  SDL.DestroyWindow(window)
-  SDL.Quit()
+  SDL.SDL_DestroyRenderer(renderer)
+  SDL.SDL_DestroyWindow(window)
+  SDL.SDL_Quit()
 }
 
 function grow_window(){
   let w; let h
-  SDL.GetWindowSize(gwindow, &w, &h)
+  SDL.SDL_GetWindowSize(gwindow, &w, &h)
   w = w + 50
   h = h + 50
   if(w > 1200) w = 1200
   if(h > 1200) h = 1200
-  SDL.SetWindowSize(gwindow, w, h);
+  SDL.SDL_SetWindowSize(gwindow, w, h);
 }
 function shrink_window(){
   let w; let h
-  SDL.GetWindowSize(gwindow, &w, &h)
+  SDL.SDL_GetWindowSize(gwindow, &w, &h)
   w = w - 50
   h = h - 50
   if(w < 100) w = 100
   if(h < 100) h = 100
-  SDL.SetWindowSize(gwindow, w, h);
+  SDL.SDL_SetWindowSize(gwindow, w, h);
 }
 
 function has_apple(board){
@@ -123,7 +149,7 @@ function main_loop(){
   let board = gboard
   let event = mem.calloc(1, 0p10)
   let poll = true
-  let t = SDL.GetTicks()
+  let t = SDL.SDL_GetTicks()
   let trigger = 10
   let tick = trigger-1
   poke(board+5*10*0p1+5*0p1, 1)
@@ -136,7 +162,7 @@ function main_loop(){
   for(;;){
     let got_event = false
     if(poll){
-      if(!SDL.PollEvent(event)){
+      if(!SDL.SDL_PollEvent(event)){
         tick = tick + 1
         if(tick >= trigger){
           tick = 0
@@ -154,16 +180,16 @@ function main_loop(){
           }
         }
         // render_and_present(x, y, dx, dy)
-        let t2 = SDL.GetTicks()
+        let t2 = SDL.SDL_GetTicks()
         let diff = t2-t
-        if(diff < 16) SDL.Delay(16-diff)
-        t = SDL.GetTicks()
+        if(diff < 16) SDL.SDL_Delay(16-diff)
+        t = SDL.SDL_GetTicks()
         poll = true
         continue
       }
     }
     else {
-      SDL.WaitEvent(event)
+      SDL.SDL_WaitEvent(event)
       poll = true
     }
     let type = peek4(event)
@@ -317,9 +343,9 @@ function draw_rect
     shl rarg5 rarg5 32
     or rarg4 rarg4 rarg5
     add rarg2 rsp 8
-    write rarg2 rarg4 
+    write rarg2 rarg4
     move rarg2 rsp
-    call function SDL.RenderFillRect
+    call function SDL.SDL_RenderFillRect
     ret
 end
 "
@@ -331,14 +357,14 @@ function render_and_present(sx, sy, dx, dy){
   let renderer = grenderer
   let board = gboard
   let winlose = gwinlose
-  SDL.GetWindowSize(window, &w, &h)
-  SDL.SetRenderDrawColor(renderer, 0, 0, 0, 0xff)
-  SDL.RenderClear(renderer)
-  SDL.SetRenderDrawColor(renderer, 0xff, 0xff, 0, 0xff)
+  SDL.SDL_GetWindowSize(window, &w, &h)
+  SDL.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0xff)
+  SDL.SDL_RenderClear(renderer)
+  SDL.SDL_SetRenderDrawColor(renderer, 0xff, 0xff, 0, 0xff)
   let ww = w/20
   let hh = h/20
   if(winlose == 1){
-    SDL.SetRenderDrawColor(renderer, 0, 0xff, 0, 0xff)
+    SDL.SDL_SetRenderDrawColor(renderer, 0, 0xff, 0, 0xff)
     draw_rect(renderer, 3*ww, 1*hh, ww, hh)
     draw_rect(renderer, 3*ww, 2*hh, ww, hh)
     draw_rect(renderer, 3*ww, 3*hh, ww, hh)
@@ -418,7 +444,7 @@ function render_and_present(sx, sy, dx, dy){
 
   }
   else if(winlose == 2){
-    SDL.SetRenderDrawColor(renderer, 0xff, 0, 0, 0xff)
+    SDL.SDL_SetRenderDrawColor(renderer, 0xff, 0, 0, 0xff)
     //....................
     //...#.#.###.#.#......
     //...#.#.#.#.#.#......
@@ -528,20 +554,20 @@ function render_and_present(sx, sy, dx, dy){
         let p = y*10*0p1+x*0p1+board
         let val = peek(p)
         if((x == sx) & (y == sy)){
-          SDL.SetRenderDrawColor(renderer, 0x0, 0xff, 0xff, 0xff)
+          SDL.SDL_SetRenderDrawColor(renderer, 0x0, 0xff, 0xff, 0xff)
         }
         else if(!val) {
-            SDL.SetRenderDrawColor(renderer, 0x0, 0x0, 0xff, 0xff)
+            SDL.SDL_SetRenderDrawColor(renderer, 0x0, 0x0, 0xff, 0xff)
         }
         else if(val == -1){
-          SDL.SetRenderDrawColor(renderer, 0xff, 0x0, 0x0, 0xff)
+          SDL.SDL_SetRenderDrawColor(renderer, 0xff, 0x0, 0x0, 0xff)
         }
         else {
-          SDL.SetRenderDrawColor(renderer, 0x0, 0xff, 0x0, 0xff)
+          SDL.SDL_SetRenderDrawColor(renderer, 0x0, 0xff, 0x0, 0xff)
         }
         draw_rect(renderer, x*rw, y*rh, rw, rh)
       }
     }
   }
-  SDL.RenderPresent(renderer)
+  SDL.SDL_RenderPresent(renderer)
 }

@@ -128,6 +128,7 @@ struct DasmAnalyzer{
             case ABORT:      return visit_abort(cast(AbortStatement*)s);
             case DASM:       return visit_dasm(cast(DasmStatement*)s);
             case PAUSE:       return visit_pause(cast(DasmStatement*)s);
+            case DLIMPORT:   return visit_dlimport(cast(DlimportStatement*)s);
         }
     }
 
@@ -194,6 +195,8 @@ struct DasmAnalyzer{
     void visit_dasm(DasmStatement* stmt){
     }
     void visit_pause(DasmStatement* stmt){
+    }
+    void visit_dlimport(DlimportStatement* stmt){
     }
     void visit_halt(HaltStatement* stmt){
     }
@@ -267,6 +270,7 @@ struct DasmWriter{
             case PAUSE:       return visit_pause(cast(PauseStatement*)s);
             case ABORT:      return visit_abort(cast(AbortStatement*)s);
             case DASM:       return visit_dasm(cast(DasmStatement*)s);
+            case DLIMPORT:   return visit_dlimport(cast(DlimportStatement*)s);
         }
     }
 
@@ -584,12 +588,12 @@ struct DasmWriter{
             if(res != 0) return res;
             if(i != expr.args.length-1){
                 //can elide the push/pop for last arg
-                sb.writef("    push r%\n", rarg1+i);
+                sb.writef("    push rarg%\n", 1+i);
             }
             regallocator.reset_to(before);
         }
         for(int i = 1; i < expr.args.length; i++){
-            sb.writef("    pop r%\n", rarg1+expr.args.length-1-i);
+            sb.writef("    pop rarg%\n", 1+expr.args.length-1-i);
         }
         bool called = false;
         // this is wrong but whatever
@@ -1104,6 +1108,19 @@ struct DasmWriter{
     }
     int visit_import(ImportStatement* stmt){
         sb.writef("import %\n", stmt.name.lexeme);
+        return 0;
+    }
+    int visit_dlimport(DlimportStatement* stmt){
+        // Strip quotes from library path
+        str lib = stmt.library_path.lexeme;
+        if(lib.length >= 2 && lib[0] == '"' && lib[$-1] == '"')
+            lib = lib[1..$-1];
+        sb.writef("dlimport \"%\" %\n", lib, stmt.alias_name.lexeme);
+        foreach(func; stmt.funcs){
+            ubyte n_ret = func.return_type.lexeme == "void" ? 0 : 1;
+            sb.writef("  % % %\n", func.name.lexeme, func.n_args, n_ret);
+        }
+        sb.write("end\n");
         return 0;
     }
     int visit_halt(HaltStatement* stmt){

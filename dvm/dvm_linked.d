@@ -34,12 +34,14 @@ struct Function {
         void function(uintptr_t, uintptr_t, uintptr_t) native_function_aaa;
         void function(uintptr_t, uintptr_t, uintptr_t, uintptr_t) native_function_aaaa;
         void function(uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t) native_function_aaaaa;
+        void function(uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t) native_function_aaaaaa;
         uintptr_t function() native_function_r;
         uintptr_t function(uintptr_t) native_function_ra;
         uintptr_t function(uintptr_t, uintptr_t) native_function_raa;
         uintptr_t function(uintptr_t, uintptr_t, uintptr_t) native_function_raaa;
         uintptr_t function(uintptr_t, uintptr_t, uintptr_t, uintptr_t) native_function_raaaa;
         uintptr_t function(uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t) native_function_raaaaa;
+        uintptr_t function(uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t) native_function_raaaaaa;
     }
     FunctionType type;
     ubyte n_args;

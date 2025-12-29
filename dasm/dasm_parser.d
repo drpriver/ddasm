@@ -29,6 +29,7 @@ parse_asm_string(Allocator allocator, str text, UnlinkedModule* prog){
     ctx.prog.variables.bdata.allocator = ctx.allocator;
     ctx.prog.arrays.bdata.allocator = ctx.allocator;
     ctx.prog.imports.bdata.allocator = ctx.allocator;
+    ctx.prog.dlimports.bdata.allocator = ctx.allocator;
     int err = ctx.parse_asm();
     if(err){
         if(!Fuzzing)fprintf(stderr, "%.*s\n", cast(int)ctx.errmess.length, ctx.errmess.ptr);
@@ -122,6 +123,101 @@ struct ParseContext{
                             return PARSE_ERROR;
                         }
                         prog.imports.push(tok.text);
+                    }
+                    else if(tok.text == "dlimport"){
+                        // dlimport "libpath" alias
+                        //   funcname n_args n_ret
+                        //   ...
+                        // end
+                        DlimportDecl decl;
+                        decl.funcs.bdata.allocator = allocator;
+                        tok = tokenizer.current_token_and_advance;
+                        if(tok.type != SPACE){
+                            err_print(tok, "dlimport must be followed by a space");
+                            return PARSE_ERROR;
+                        }
+                        tok = tokenizer.current_token_and_advance;
+                        if(tok.type != QUOTATION){
+                            err_print(tok, "expected library path string starting with '\"'");
+                            return PARSE_ERROR;
+                        }
+                        // Parse quoted string for library path
+                        const(char)* lib_start = tok._text + 1; // skip opening quote
+                        tok = tokenizer.current_token_and_advance;
+                        while(tok.type != QUOTATION && tok.type != NEWLINE && tok.type != EOF){
+                            tok = tokenizer.current_token_and_advance;
+                        }
+                        if(tok.type != QUOTATION){
+                            err_print(tok, "unterminated library path string");
+                            return PARSE_ERROR;
+                        }
+                        decl.library_path = lib_start[0 .. tok._text - lib_start];
+                        tok = tokenizer.current_token_and_advance;
+                        while(tok.type == SPACE || tok.type == TAB)
+                            tok = tokenizer.current_token_and_advance;
+                        if(tok.type != IDENTIFIER){
+                            err_print(tok, "expected alias name");
+                            return PARSE_ERROR;
+                        }
+                        decl.alias_name = tok.text;
+                        // Skip to next line
+                        tok = tokenizer.current_token_and_advance;
+                        while(tok.type == SPACE || tok.type == TAB)
+                            tok = tokenizer.current_token_and_advance;
+                        tok = tokenizer.skip_comment(tok);
+                        if(tok.type != NEWLINE && tok.type != EOF){
+                            err_print(tok, "expected newline after dlimport header");
+                            return PARSE_ERROR;
+                        }
+                        // Parse function specs until "end"
+                        for(;;){
+                            tok = tokenizer.current_token_and_advance;
+                            while(tok.type == SPACE || tok.type == TAB || tok.type == NEWLINE)
+                                tok = tokenizer.current_token_and_advance;
+                            tok = tokenizer.skip_comment(tok);
+                            if(tok.type == NEWLINE)
+                                continue;
+                            if(tok.type == EOF){
+                                err_print(tok, "unexpected EOF in dlimport block");
+                                return PARSE_ERROR;
+                            }
+                            if(tok.type != IDENTIFIER){
+                                err_print(tok, "expected function name or 'end'");
+                                return PARSE_ERROR;
+                            }
+                            if(tok.text == "end")
+                                break;
+                            DlimportFuncSpec spec;
+                            spec.name = tok.text;
+                            tok = tokenizer.current_token_and_advance;
+                            while(tok.type == SPACE || tok.type == TAB)
+                                tok = tokenizer.current_token_and_advance;
+                            if(tok.type != NUMBER){
+                                err_print(tok, "expected argument count");
+                                return PARSE_ERROR;
+                            }
+                            IntegerResult!ulong n_args_res = parse_unsigned_human(tok.text);
+                            if(n_args_res.errored || n_args_res.value > 6){
+                                err_print(tok, "invalid argument count (must be 0-6)");
+                                return PARSE_ERROR;
+                            }
+                            spec.n_args = cast(ubyte)n_args_res.value;
+                            tok = tokenizer.current_token_and_advance;
+                            while(tok.type == SPACE || tok.type == TAB)
+                                tok = tokenizer.current_token_and_advance;
+                            if(tok.type != NUMBER){
+                                err_print(tok, "expected return count (0 or 1)");
+                                return PARSE_ERROR;
+                            }
+                            IntegerResult!ulong n_ret_res = parse_unsigned_human(tok.text);
+                            if(n_ret_res.errored || n_ret_res.value > 1){
+                                err_print(tok, "invalid return count (must be 0 or 1)");
+                                return PARSE_ERROR;
+                            }
+                            spec.n_ret = cast(ubyte)n_ret_res.value;
+                            decl.funcs.push(spec);
+                        }
+                        prog.dlimports.push(decl);
                     }
                     else if (tok.text == "module"){
                         if(prog.name.length){
