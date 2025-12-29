@@ -222,6 +222,15 @@ int main(int argc, char** argv){
         btext = Box!str(btext.allocator, dasmtext.data);
         dscript.dscript.powerdown;
     }
+    else if(sourcefile[].endswith(".c")){
+        static import cfront.cfront;
+        Box!(char[]) dasmtext = {allocator:MALLOCATOR};
+        ubyte[] data = btext.as!(ubyte[]).data;
+        int err = cfront.cfront.compile_c_to_dasm(data, &dasmtext);
+        if(err) return err;
+        btext.dealloc();
+        btext = Box!str(btext.allocator, dasmtext.data);
+    }
     UnlinkedModule prog;
     int err = parse_asm_string(MALLOCATOR, btext.data, &prog);
     if(err){

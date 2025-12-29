@@ -15,8 +15,11 @@ ddasm: Bin/ddasm
 .PHONY: ds2dasm
 ds2dasm: Bin/ds2dasm
 
+.PHONY: c2dasm
+c2dasm: Bin/c2dasm
+
 .PHONY: all
-all: ds2dasm ddasm
+all: ds2dasm ddasm c2dasm
 
 .PHONY: clean
 clean:
