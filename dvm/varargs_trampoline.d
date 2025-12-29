@@ -148,6 +148,76 @@ else version(X86_64) {
             );
         }
     }
+    else version(Windows) {
+        import ldc.llvmasm;
+
+        // Microsoft x64 ABI:
+        // - First 4 integer/pointer args in: rcx, rdx, r8, r9
+        // - Additional args on stack
+        // - 32 bytes "shadow space" always allocated before call
+        // - For varargs: register args must ALSO be copied to shadow space
+        // - Stack must be 16-byte aligned before call
+        uintptr_t call_varargs(
+            void* func_ptr,
+            uintptr_t* args,
+            size_t n_fixed,
+            size_t n_total
+        ) {
+            // Copy args to local storage for stable asm access
+            uintptr_t[16] local_args = void;
+            for (size_t i = 0; i < n_total && i < 16; i++) {
+                local_args[i] = args[i];
+            }
+
+            // Load register args (up to 4)
+            uintptr_t a0 = n_total > 0 ? local_args[0] : 0;
+            uintptr_t a1 = n_total > 1 ? local_args[1] : 0;
+            uintptr_t a2 = n_total > 2 ? local_args[2] : 0;
+            uintptr_t a3 = n_total > 3 ? local_args[3] : 0;
+
+            // Args beyond 4 go on stack (after shadow space)
+            size_t n_stack_args = n_total > 4 ? n_total - 4 : 0;
+            uintptr_t* stack_args = local_args.ptr + 4;
+
+            // Calculate stack space: 32 bytes shadow + stack args (16-byte aligned)
+            size_t stack_bytes = 32 + n_stack_args * 8;
+            stack_bytes = (stack_bytes + 15) & ~cast(size_t)15;
+
+            // r10 = func_ptr, r11 = stack_args ptr, r12 = n_stack_args, r13 = stack_bytes
+            // rbx used to save original rsp (callee-saved on Windows)
+            return __asm!uintptr_t(
+                // Save original rsp in callee-saved register
+                "movq %rsp, %rbx\n" ~
+                // Allocate stack space (shadow + extra args)
+                "subq %r13, %rsp\n" ~
+                // Copy register args to shadow space (required for varargs)
+                "movq %rcx, 0(%rsp)\n" ~
+                "movq %rdx, 8(%rsp)\n" ~
+                "movq %r8, 16(%rsp)\n" ~
+                "movq %r9, 24(%rsp)\n" ~
+                // Copy extra args to stack (after shadow space)
+                "testq %r12, %r12\n" ~
+                "jz 2f\n" ~                         // skip if no stack args
+                // r14 = index (start at n_stack_args - 1)
+                "leaq -1(%r12), %r14\n" ~
+                // r15 = dest on stack (after shadow space)
+                "leaq 32(%rsp), %r15\n" ~
+                "1:\n" ~
+                "movq (%r11, %r14, 8), %rax\n" ~    // load arg[index]
+                "movq %rax, (%r15)\n" ~             // store to stack
+                "addq $$8, %r15\n" ~                // advance dest
+                "subq $$1, %r14\n" ~
+                "jns 1b\n" ~                        // loop while index >= 0
+                "2:\n" ~
+                // Call the function
+                "callq *%r10\n" ~
+                // Restore stack
+                "movq %rbx, %rsp",
+                "={rax},{rcx},{rdx},{r8},{r9},{r10},{r11},{r12},{r13},~{rbx},~{r14},~{r15},~{memory}",
+                a0, a1, a2, a3, func_ptr, stack_args, n_stack_args, stack_bytes
+            );
+        }
+    }
     else {
         uintptr_t call_varargs(
             void* func_ptr,
