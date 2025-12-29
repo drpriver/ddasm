@@ -4,6 +4,7 @@
 module dscript_to_dasm;
 
 import core.stdc.stdio: fprintf, stderr;
+import core.stdc.string: memcpy;
 
 import dlib.aliases;
 import dlib.allocator: MALLOCATOR, ArenaAllocator, Allocator, Mallocator;
@@ -213,6 +214,7 @@ struct DasmAnalyzer{
     }
 
 }
+
 struct DasmWriter{
     Allocator allocator;
     StringBuilder* sb;
@@ -580,6 +582,7 @@ struct DasmWriter{
         return 0;
     }
     int visit_call(Call* expr, int target){
+        // All calls use the same convention now
         int rarg1 = RegisterNames.RARG1;
         for(int i = 0; i < expr.args.length; i++){
             Expr* arg = expr.args[i].ungroup;
@@ -603,7 +606,7 @@ struct DasmWriter{
                 bool hack = (target == regallocator.alloced-1);
                 if(hack) regallocator.alloced--;
                 save_reglocals();
-                sb.writef("    call function %\n", ve.name.lexeme);
+                sb.writef("    call function % %\n", ve.name.lexeme, expr.args.length);
                 restore_reglocals();
                 if(hack) regallocator.alloced++;
                 called = true;
@@ -616,13 +619,14 @@ struct DasmWriter{
             if(res != 0) return res;
             regallocator.reset_to(before);
             save_reglocals();
-            sb.writef("    call r%\n", func);
+            sb.writef("    call r% %\n", func, expr.args.length);
             restore_reglocals();
         }
         if(target != TARGET_IS_NOTHING)
             sb.writef(  "    move r% rout1\n", target);
         return 0;
     }
+
     int do_tail_call(Call* expr){
         int rarg1 = RegisterNames.RARG1;
         for(int i = 0; i < expr.args.length; i++){
@@ -1118,7 +1122,11 @@ struct DasmWriter{
         sb.writef("dlimport \"%\" %\n", lib, stmt.alias_name.lexeme);
         foreach(func; stmt.funcs){
             ubyte n_ret = func.return_type.lexeme == "void" ? 0 : 1;
-            sb.writef("  % % %\n", func.name.lexeme, func.n_args, n_ret);
+            if(func.is_varargs){
+                sb.writef("  % % % varargs\n", func.name.lexeme, func.n_args, n_ret);
+            } else {
+                sb.writef("  % % %\n", func.name.lexeme, func.n_args, n_ret);
+            }
         }
         sb.write("end\n");
         return 0;

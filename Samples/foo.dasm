@@ -41,7 +41,7 @@ function start 0
     call function test
     move rarg2 rout1
     move rarg1 "start returned %llu\n"
-    call function io.printf2
+    call function io.printf 2
     halt
 end
 

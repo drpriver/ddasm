@@ -11,10 +11,10 @@ function start 0
     move rarg1 r0
     move rarg2 80
     move rarg3 "N (for fizzbuzz): "
-    call function io.getline
+    call function io.getline 3
 
     move rarg1 r0
-    call function misc.atoi
+    call function misc.atoi 1
 
     label validate
 
@@ -23,21 +23,21 @@ function start 0
     cmp r1 1
     jump ge label notsmall
     move rarg1 "Too Small!"
-    call function io.puts
+    call function io.puts 1
     halt
 
     label notsmall
     cmp r1 100000
     jump le label notbig
     move rarg1 "Too big!"
-    call function io.puts
+    call function io.puts 1
     halt
 
     label notbig
     move rarg1 r1
     add rarg1 rarg1 1
     move rarg2 1
-    call function fizzbuzz
+    call function fizzbuzz 1
     halt
 end
 
@@ -54,30 +54,31 @@ function fizzbuzz 1
         move    rarg1 ""
         cmov eq rarg1 "\e[91mfizz"
         cmov eq r3 1
-        call function io.printf1
+        call function io.printf 1
 
         div     rjunk r1 r0 5
         cmp     r1 0
         move    rarg1 ""
         cmov eq rarg1 "\e[92mbuzz"
         cmov eq r3 1
-        call function io.printf1
+        call function io.printf 1
         cmp     r3 1
-        jump eq 8
+        jump eq label skip_number
 
         move    rarg1 "\e[94m%u"
         move    rarg2 r0
-        call function io.printf2
+        call function io.printf 2
 
+    label skip_number
         move    rarg1 " "
-        call function io.printf1
+        call function io.printf 1
 
         add     r0 r0 1
         cmp     r0 r7
         jump ne label begin_loop
 
         move rarg1 "\e[39m" # reset
-        call function io.puts
+        call function io.puts 1
         ret
 end
 
@@ -94,23 +95,24 @@ function recursive_fizzbuzz 1
     move    rarg1 ""
     cmov eq rarg1 "\e[91mfizz"
     cmov eq r3 1
-    call function io.printf1
+    call function io.printf 1
 
     div     rjunk r1 r0 5
     cmp     r1 0
     move    rarg1 ""
     cmov eq rarg1 "\e[92mbuzz"
     cmov eq r3 1
-    call function io.printf1
+    call function io.printf 1
     cmp     r3 1
-    jump eq 8
+    jump eq label skip_number2
 
     move    rarg1 "\e[94m%u"
     move    rarg2 r0
-    call function io.printf2
+    call function io.printf 2
 
+label skip_number2
     move    rarg1 " "
-    call function io.printf1
+    call function io.printf 1
     pop rarg2
     pop rarg1
     add rarg2 rarg2 1
@@ -118,7 +120,7 @@ function recursive_fizzbuzz 1
 
     label end
     move rarg1 "\e[39m" # reset
-    call function io.puts
+    call function io.puts 1
     bt
     ret
 end

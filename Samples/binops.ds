@@ -2,25 +2,25 @@
 import io
 function start(){
   let fmt = "%-16s | %zd\n"
-  io.printf3(fmt, "1 + 2", 1 + 2)
-  io.printf3(fmt, "8 - 3", 8 - 3)
-  io.printf3(fmt, "3 * 3", 3 * 3)
-  io.printf3(fmt, "8 / 2", 8 / 2)
-  io.printf3(fmt, "8 % 3", 8 % 3)
-  io.printf3(fmt, "1 < 2", 1 < 2)
-  io.printf3(fmt, "1 > 2", 1 > 2)
-  io.printf3(fmt, "1 <= 2", 1 <= 2)
-  io.printf3(fmt, "1 >= 2", 1 >= 2)
-  io.printf3(fmt, "1 == 2", 1 == 2)
-  io.printf3(fmt, "1 != 2", 1 != 2)
+  io.printf(fmt, "1 + 2", 1 + 2)
+  io.printf(fmt, "8 - 3", 8 - 3)
+  io.printf(fmt, "3 * 3", 3 * 3)
+  io.printf(fmt, "8 / 2", 8 / 2)
+  io.printf(fmt, "8 % 3", 8 % 3)
+  io.printf(fmt, "1 < 2", 1 < 2)
+  io.printf(fmt, "1 > 2", 1 > 2)
+  io.printf(fmt, "1 <= 2", 1 <= 2)
+  io.printf(fmt, "1 >= 2", 1 >= 2)
+  io.printf(fmt, "1 == 2", 1 == 2)
+  io.printf(fmt, "1 != 2", 1 != 2)
   fmt = "%-16s | 0x%.2zx\n"
-  io.printf3(fmt, "0xff & 0xff", 0xff & 0x0f)
-  io.printf3(fmt, "0xf0 | 0x0f", 0xf0 | 0x0f)
-  io.printf3(fmt, "0b1010 ^ 0b0011", 0b1010 ^ 0b0011)
-  io.printf3(fmt, "0xf0 && 0x0f", 0xf0 && 0x0f)
-  io.printf3(fmt, "0 || 1", 0 || 1)
-  io.printf3(fmt, "0 || 0", 0 || 0)
-  io.printf3(fmt, "-1 << 56", -1 << 56);
-  io.printf3(fmt, "-1 >> 56", -1 >> 56);
-  io.printf3(fmt, "(-1 << 16) >> 56", (-1 << 16) >> 56)
+  io.printf(fmt, "0xff & 0xff", 0xff & 0x0f)
+  io.printf(fmt, "0xf0 | 0x0f", 0xf0 | 0x0f)
+  io.printf(fmt, "0b1010 ^ 0b0011", 0b1010 ^ 0b0011)
+  io.printf(fmt, "0xf0 && 0x0f", 0xf0 && 0x0f)
+  io.printf(fmt, "0 || 1", 0 || 1)
+  io.printf(fmt, "0 || 0", 0 || 0)
+  io.printf(fmt, "-1 << 56", -1 << 56);
+  io.printf(fmt, "-1 >> 56", -1 >> 56);
+  io.printf(fmt, "(-1 << 16) >> 56", (-1 << 16) >> 56)
 }

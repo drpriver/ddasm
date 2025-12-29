@@ -30,7 +30,7 @@ function foobar 0
     read rarg2 var foo
     move rarg1 ""
     move rarg1 "foo: %lld\n"
-    call function io.printf2
+    call function io.printf 2
     # add 1 to foo every time we call this function to show it works
     add rarg2 rarg2 1
     move r0 var foo

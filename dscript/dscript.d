@@ -725,7 +725,8 @@ struct ImportStatement {
 struct DlimportFuncDecl {
     Token name;
     Token return_type;
-    ubyte n_args;
+    ubyte n_args;  // For varargs: count of fixed (named) args before ...
+    bool is_varargs;
 }
 
 struct DlimportStatement {
@@ -968,8 +969,25 @@ struct Parser {
             if(ERROR_OCCURRED) return null;
             // Count arguments - we just count identifiers separated by commas
             ubyte n_args = 0;
+            bool is_varargs = false;
             if(!check(RIGHT_PAREN)){
                 do {
+                    // Check for ... (varargs marker)
+                    if(check(DOT)){
+                        advance(); // first dot
+                        if(!check(DOT)){
+                            error(peek(), "Expected '...' for varargs");
+                            return null;
+                        }
+                        advance(); // second dot
+                        if(!check(DOT)){
+                            error(peek(), "Expected '...' for varargs");
+                            return null;
+                        }
+                        advance(); // third dot
+                        is_varargs = true;
+                        break; // ... must be last
+                    }
                     // type name (name is optional)
                     consume(IDENTIFIER, "Expected parameter type");
                     if(ERROR_OCCURRED) return null;
@@ -977,13 +995,14 @@ struct Parser {
                         advance(); // skip optional param name
                     }
                     n_args++;
-                    if(n_args > 6){
-                        error(peek(), "Too many parameters, max is 6");
+                    if(n_args > 8){
+                        error(peek(), "Too many fixed parameters, max is 8");
                         return null;
                     }
                 } while(match(COMMA));
             }
             decl.n_args = n_args;
+            decl.is_varargs = is_varargs;
             consume(RIGHT_PAREN, "Expected ')'");
             if(ERROR_OCCURRED) return null;
             match(SEMICOLON); // optional semicolon

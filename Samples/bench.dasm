@@ -76,7 +76,7 @@ function fizzother 1
         jump ne label buzz
         move r1 0
         move rarg2 "fizz"
-        call function io.fprintf1
+        call function io.fprintf 2
         move r4 1
 
     label buzz
@@ -84,7 +84,7 @@ function fizzother 1
         jump ne label numeric
         move r2 0
         move rarg2 "buzz"
-        call function io.fprintf1
+        call function io.fprintf 2
         move r4 1
 
     label numeric
@@ -92,12 +92,12 @@ function fizzother 1
         jump eq label continue
         move rarg2 "%llu"
         move rarg3 r0
-        call function io.fprintf2
+        call function io.fprintf 3
 
 
     label continue
         move rarg2 "\n"
-        call function io.fprintf1
+        call function io.fprintf 2
 
         add r0 r0 1
         add r1 r1 1

@@ -69,7 +69,7 @@ struct Machine {
     }
 
     int
-    call_function(Function* func){with(RegisterNames){
+    do_call(Function* func, size_t n_args){with(RegisterNames){
         switch(func.type) with(FunctionType){
             default:
                 return 1;
@@ -82,7 +82,39 @@ struct Machine {
             case NATIVE:{
                 return call_native(func);
             }
+            case NATIVE_VARARGS:{
+                return call_native_varargs(func, n_args);
+            }
         }
+    }}
+
+    int
+    call_native_varargs(Function* func, size_t n_total){with(RegisterNames){
+        enum N_REG_ARGS = 5;
+        uintptr_t[16] args = void;
+        // Copy from RARG registers
+        size_t n_from_regs = n_total < N_REG_ARGS ? n_total : N_REG_ARGS;
+        for (size_t i = 0; i < n_from_regs; i++) {
+            args[i] = registers[RARG1 + i];
+        }
+        // Copy remaining from stack if any
+        if (n_total > N_REG_ARGS) {
+            size_t n_from_stack = n_total - N_REG_ARGS;
+            uintptr_t* stack_args = cast(uintptr_t*)(registers[RSP] - n_from_stack * uintptr_t.sizeof);
+            for (size_t i = 0; i < n_from_stack; i++) {
+                args[N_REG_ARGS + i] = stack_args[i];
+            }
+            // Pop stack args
+            registers[RSP] -= n_from_stack * uintptr_t.sizeof;
+        }
+        import dvm.varargs_trampoline: call_varargs;
+        registers[ROUT1] = call_varargs(
+            cast(void*)func.native_function_,
+            args.ptr,
+            func.n_args,    // n_fixed from declaration
+            n_total
+        );
+        return 0;
     }}
 
     int
@@ -761,7 +793,18 @@ struct Machine {
                 case CALL_I:{
                     if(int b = begin(CALL_I)) return b;
                     Function* f = cast(Function*)get_unsigned;
-                    int err = call_function(f);
+                    int err = do_call(f, f.n_args);
+                    if(err) {
+                        backtrace;
+                        badend = true;
+                        return err;
+                    }
+                }break;
+                case CALL_I_NARGS:{
+                    if(int b = begin(CALL_I_NARGS)) return b;
+                    Function* f = cast(Function*)get_unsigned;
+                    size_t n_args = cast(size_t)get_unsigned;
+                    int err = do_call(f, n_args);
                     if(err) {
                         backtrace;
                         badend = true;
@@ -771,7 +814,18 @@ struct Machine {
                 case CALL_R:{
                     if(int b = begin(CALL_R)) return b;
                     Function* f = cast(Function*)read_reg;
-                    int err = call_function(f);
+                    int err = do_call(f, f.n_args);
+                    if(err) {
+                        backtrace;
+                        badend = true;
+                        return err;
+                    }
+                }break;
+                case CALL_R_NARGS:{
+                    if(int b = begin(CALL_R_NARGS)) return b;
+                    Function* f = cast(Function*)read_reg;
+                    size_t n_args = cast(size_t)get_unsigned;
+                    int err = do_call(f, n_args);
                     if(err) {
                         backtrace;
                         badend = true;

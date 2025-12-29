@@ -38,8 +38,9 @@ struct AbstractArray {
 
 struct DlimportFuncSpec {
     str name;
-    ubyte n_args;
+    ubyte n_args;  // For varargs: count of fixed (named) args
     ubyte n_ret;
+    bool is_varargs;
 }
 
 struct DlimportDecl {

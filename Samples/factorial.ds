@@ -1,10 +1,10 @@
 import io
 function start(arg){
     let result = factorial(arg)
-    io.printf2("%zd\n", result)
+    io.printf("%zd\n", result)
     result = factorial2(arg, 1)
-    io.printf2("%zd\n", result)
-    io.printf2("%zd\n", factorial2(arg, 1))
+    io.printf("%zd\n", result)
+    io.printf("%zd\n", factorial2(arg, 1))
 }
 
 function factorial(n){

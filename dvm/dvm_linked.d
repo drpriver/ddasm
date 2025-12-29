@@ -22,8 +22,7 @@ enum FunctionType: ubyte {
     NULL = 0,
     INTERPRETED = 1,
     NATIVE = 2,
-    // first arg is the interpreter
-    // NATIVE_TAKES_INTERPRETER = 2,
+    NATIVE_VARARGS = 3,
 }
 struct Function {
     union {

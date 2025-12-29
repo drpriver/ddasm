@@ -26,17 +26,17 @@ function fizzbuzz(n){
     for(let x = 1; x < n; x = x + 1){
         let printed = false;
         if(x%3==0){
-            io.printf2("%s", "\e[91mfizz");
+            io.printf("%s", "\e[91mfizz");
             printed = true;
         }
         if(x%5==0){
-            io.printf2("%s", "\e[92mbuzz");
+            io.printf("%s", "\e[92mbuzz");
             printed = true;
         }
         if(!printed){
-            io.printf2("\e[94m%u", x);
+            io.printf("\e[94m%u", x);
         }
-        io.printf1(" ");
+        io.printf(" ");
     }
     io.puts("\e[39m");
 }
@@ -50,17 +50,17 @@ function recursive_fizzbuzz(x, end){
     let mod3 = x % 3;
     let mod5 = x % 5;
     if(!mod3){
-        io.printf2("%s", "\e[91mfizz");
+        io.printf("%s", "\e[91mfizz");
         printed = true;
     }
     if(!mod5){
-        io.printf2("%s", "\e[92mbuzz");
+        io.printf("%s", "\e[92mbuzz");
         printed = true;
     }
     if(!printed){
-        io.printf2("\e[94m%u", x);
+        io.printf("\e[94m%u", x);
     }
-    io.printf1(" ");
+    io.printf(" ");
     x = x + 1;
     return recursive_fizzbuzz(x, end);
 }

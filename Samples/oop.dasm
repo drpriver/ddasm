@@ -148,7 +148,7 @@ function printerPrint 2
     add  rarg3 rarg3 1
     add  r0 r0 0p1
     write r0 rarg3
-    call function io.printf4
+    call function io.printf 4
     pop r0
     ret
 end
@@ -172,7 +172,7 @@ function otherPrinterPrint 2
     add  rarg3 rarg3 1
     add  r0 r0 0p1
     write r0 rarg3
-    call function io.printf4
+    call function io.printf 4
     pop r0
     ret
 end
@@ -191,7 +191,7 @@ function thirdPrinterPrint 2
     move rarg3 rarg2
     move rarg1 "%s ThirdPrinter: %s\n"
     read rarg2 r0
-    call function io.printf3
+    call function io.printf 3
     pop r0
     ret
 end

@@ -5,7 +5,7 @@ function start
   move rarg1 "Hello world"
   call function io.puts
   move rarg1 "Hello\n"
-  call function io.printf1
+  call function io.printf 1
   move rarg1 24
   call function mem.malloc
   push rout1

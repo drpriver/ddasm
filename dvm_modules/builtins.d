@@ -8,6 +8,16 @@ import dlib.get_input: get_input_line, LineHistory;
 __gshared bool devnull = false;
 
 Function*
+expose_varargs(void* fun, uint n_fixed) {
+    Function* f = cast(Function*)MALLOCATOR.alloc(Function.sizeof).ptr;
+    f.type = FunctionType.NATIVE_VARARGS;
+    f.native_function_ = cast(void function())fun;
+    f.n_args = cast(ubyte)n_fixed;
+    f.n_ret = 1;
+    return f;
+}
+
+Function*
 expose_function(F)(F fun){
     Function* f = cast(Function*)MALLOCATOR.alloc(Function.sizeof).ptr;
     f.type = FunctionType.NATIVE;
@@ -100,48 +110,10 @@ get_io_module(){
         FunctionInfo fi = FunctionInfo(key, expose_function(fun));
         mod.functions[key] = fi;
     }
-    reg("printf1",
-        (uintptr_t fmt, uintptr_t arg){
-            if(devnull) return;
-            if(!Fuzzing)fprintf(stdout, cast(char*)fmt, arg);
-        }
-    );
-    reg("printf2",
-        (uintptr_t fmt, uintptr_t arg, uintptr_t arg2){
-            if(devnull) return;
-            if(!Fuzzing)fprintf(stdout, cast(char*)fmt, arg, arg2);
-        }
-    );
-    reg("printf3",
-        (uintptr_t fmt, uintptr_t arg, uintptr_t arg2, uintptr_t arg3){
-            if(devnull) return;
-            if(!Fuzzing)fprintf(stdout, cast(char*)fmt, arg, arg2, arg3);
-        }
-    );
-    reg("printf4",
-        (uintptr_t fmt, uintptr_t arg, uintptr_t arg2, uintptr_t arg3, uintptr_t arg4){
-            if(devnull) return;
-            if(!Fuzzing)fprintf(stdout, cast(char*)fmt, arg, arg2, arg3, arg4);
-        }
-    );
-    reg("fprintf1",
-        (uintptr_t fp, uintptr_t fmt, uintptr_t arg){
-            if(devnull) return;
-            if(!Fuzzing)fprintf(cast(FILE*)fp, cast(char*)fmt, arg);
-        }
-    );
-    reg("fprintf2",
-        (uintptr_t fp, uintptr_t fmt, uintptr_t arg, uintptr_t arg2){
-            if(devnull) return;
-            if(!Fuzzing)fprintf(cast(FILE*)fp, cast(char*)fmt, arg, arg2);
-        }
-    );
-    reg("fprintf3",
-        (uintptr_t fp, uintptr_t fmt, uintptr_t arg, uintptr_t arg2, uintptr_t arg3){
-            if(devnull) return;
-            if(!Fuzzing)fprintf(cast(FILE*)fp, cast(char*)fmt, arg, arg2, arg3);
-        }
-    );
+    // printf: 1 fixed arg (format string), variadic
+    mod.functions["printf"] = FunctionInfo("printf", expose_varargs(cast(void*)&printf, 1));
+    // fprintf: 2 fixed args (FILE*, format string), variadic
+    mod.functions["fprintf"] = FunctionInfo("fprintf", expose_varargs(cast(void*)&fprintf, 2));
     reg("puts",
         (uintptr_t arg){
             if(devnull) return;

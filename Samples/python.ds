@@ -1,0 +1,41 @@
+dlimport "python" as Py {
+  void Py_Initialize();
+  int PyRun_SimpleString(ptr);
+  void PyErr_Print()
+  void Py_Finalize();
+  ptr PyUnicode_FromString(ptr);
+  ptr PyImport_Import(ptr);
+  void Py_DecRef(ptr);
+  ptr PyObject_GetAttrString(ptr, ptr)
+  ptr PyObject_CallFunction(ptr, ptr, ...);
+
+}
+
+function pyimport(name){
+  let pystr = Py.PyUnicode_FromString(name);
+  if(!pystr) abort;
+  let imp = Py.PyImport_Import(pystr);
+  if(!imp) abort;
+  Py.Py_DecRef(pystr);
+  return imp;
+}
+function get(obj, key){
+  return Py.PyObject_GetAttrString(obj, key);
+}
+
+function start(){
+  Py.Py_Initialize();
+  let json = pyimport("json");
+  let loads = get(json, "loads");
+  let builtins = pyimport("builtins");
+  let print = get(builtins, "print");
+  let js = Py.PyObject_CallFunction(loads, "s", '{"foo":"bar"}');
+  let ret = Py.PyObject_CallFunction(print, "N", js);
+  Py.Py_DecRef(ret);
+  let code = "print('hello from python')"
+  if(Py.PyRun_SimpleString(code) == -1){
+    Py.PyErr_Print();
+  }
+  Py.Py_Finalize()
+  halt
+}

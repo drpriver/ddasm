@@ -4,37 +4,37 @@ function start 0
 
     move r0 0xff
     and rarg2 r0 0x0f
-    call function io.printf2
+    call function io.printf 2
 
     or rarg2 rarg2 0xf0
-    call function io.printf2
+    call function io.printf 2
 
     logical_and rarg2 rarg2 0xf0
-    call function io.printf2
+    call function io.printf 2
 
     move rarg2 0
     move r0 1
     logical_or rarg2 rarg2 r0
-    call function io.printf2
+    call function io.printf 2
 
     move rarg2 0
     logical_or rarg2 rarg2 rarg2
-    call function io.printf2
+    call function io.printf 2
 
     move rarg2 -500
     mul rarg2 rarg2 rarg2
-    call function io.printf2
+    call function io.printf 2
 
     move rarg2 -1
     shl rarg2 rarg2 16
     shr rarg2 rarg2 56
-    call function io.printf2
+    call function io.printf 2
 
     move rarg2 0b1010
     move rarg3 0b0011
     xor rarg2 rarg2 rarg3
-    call function io.printf2
-    move r3 function io.printf2
+    call function io.printf 2
+    move r3 function io.printf
 
     xor r4 r3 function io.puts
     xor r0 r4 function io.puts

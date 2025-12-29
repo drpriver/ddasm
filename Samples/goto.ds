@@ -1,0 +1,8 @@
+import io
+function start(){
+    goto bar
+    while(false){
+        label bar
+        io.puts("hello")
+    }
+}

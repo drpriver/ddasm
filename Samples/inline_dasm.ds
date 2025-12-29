@@ -12,5 +12,5 @@ function start(){
 
 function foo(){
     x = x + 1
-    io.printf2("hello from foo, x = %d\n", x)
+    io.printf("hello from foo, x = %d\n", x)
 }

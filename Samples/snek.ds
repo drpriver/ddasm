@@ -19,6 +19,7 @@ dlimport "SDL2" as SDL {
     void SDL_Delay(uint ms);
     uint SDL_GetTicks();
     int SDL_SetRenderDrawBlendMode(ptr renderer, int mode);
+    void SDL_Log(ptr fmt, ...);
 }
 
 import mem
@@ -198,7 +199,7 @@ function main_loop(){
     }
     else if(type == 0x401){ // mousedown
       let button = peek1(event+16)
-      // io.printf2("button: %zd\n", button)
+      // io.printf("button: %zd\n", button)
     }
     else if(type == 0x300){ //keydown
       let sym = peek4(event+16+4)

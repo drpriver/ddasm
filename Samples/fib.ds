@@ -10,5 +10,5 @@ function fib_inner(a, b, n){
 
 function start(){
    for(let i = 0; i < 20; i = i + 1)
-       io.printf2("fib(%zu) = %zu\n", i, fib(i))
+       io.printf("fib(%zu) = %zu\n", i, fib(i))
 }

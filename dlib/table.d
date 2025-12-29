@@ -39,7 +39,7 @@ struct Table(K, V){
         return (cast(uint*)ptr)[0..cap*2];
     }
 
-    It[] 
+    It[]
     items(){
         return (cast(It*)data.data.ptr)[0..count];
     }
@@ -70,7 +70,7 @@ struct Table(K, V){
             idxes[idx] = cast(uint)i;
         }
     }
-    
+
     void
     set_item(K k, V v){
         *set(k) = v;

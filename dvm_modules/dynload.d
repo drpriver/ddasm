@@ -159,7 +159,7 @@ load_dynamic_module(
 
         // Create Function struct
         Function* f = cast(Function*)allocator.alloc(Function.sizeof).ptr;
-        f.type = FunctionType.NATIVE;
+        f.type = spec.is_varargs ? FunctionType.NATIVE_VARARGS : FunctionType.NATIVE;
         f.n_args = spec.n_args;
         f.n_ret = spec.n_ret;
 

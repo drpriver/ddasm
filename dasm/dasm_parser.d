@@ -197,8 +197,8 @@ struct ParseContext{
                                 return PARSE_ERROR;
                             }
                             IntegerResult!ulong n_args_res = parse_unsigned_human(tok.text);
-                            if(n_args_res.errored || n_args_res.value > 6){
-                                err_print(tok, "invalid argument count (must be 0-6)");
+                            if(n_args_res.errored || n_args_res.value > 8){
+                                err_print(tok, "invalid argument count (must be 0-8)");
                                 return PARSE_ERROR;
                             }
                             spec.n_args = cast(ubyte)n_args_res.value;
@@ -215,6 +215,14 @@ struct ParseContext{
                                 return PARSE_ERROR;
                             }
                             spec.n_ret = cast(ubyte)n_ret_res.value;
+                            // Check for optional "varargs" marker (peek ahead)
+                            // Skip spaces to peek at next token
+                            while(tokenizer.current_token.type == SPACE || tokenizer.current_token.type == TAB)
+                                tokenizer.advance;
+                            if(tokenizer.current_token.type == IDENTIFIER && tokenizer.current_token.text == "varargs"){
+                                spec.is_varargs = true;
+                                tokenizer.advance; // consume "varargs"
+                            }
                             decl.funcs.push(spec);
                         }
                         prog.dlimports.push(decl);

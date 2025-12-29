@@ -20,6 +20,6 @@ end
 
 function say
     bt
-    call function io.printf1
+    call function io.printf 2
     ret
 end

@@ -3,13 +3,13 @@ import misc
 function start(){
   //let t = misc.clock()
   for(let i = 0; i < 42; i = i+1){
-    io.printf2("fib1(%zu): %zu\n", i, fib1(i))
-    io.printf2("fib2(%zu): %zu\n", i, fib2(i))
-    io.printf2("fib3(%zu): %zu\n", i, fib3(i))
-    io.printf2("fib4(%zu): %zu\n", i, fib4(i))
+    io.printf("fib1(%zu): %zu\n", i, fib1(i))
+    io.printf("fib2(%zu): %zu\n", i, fib2(i))
+    io.printf("fib3(%zu): %zu\n", i, fib3(i))
+    io.printf("fib4(%zu): %zu\n", i, fib4(i))
   }
-  io.printf2("fibinner(3, 9, 4): %zu\n", fibinner(3, 9, 4))
-  //return io.printf2("after-before: %llu\n", misc.clock() - t)
+  io.printf("fibinner(3, 9, 4): %zu\n", fibinner(3, 9, 4))
+  //return io.printf("after-before: %llu\n", misc.clock() - t)
 }
 
 
