@@ -731,16 +731,16 @@ struct DlimportFuncDecl {
 
 struct DlimportStatement {
     Statement stmt;
-    Token library_path;
+    Token[] library_paths;  // Multiple paths to try in order
     Token alias_name;
     DlimportFuncDecl[] funcs;
     static
     Statement*
-    make(Allocator allocator, Token lib, Token alias_, DlimportFuncDecl[] funcs){
+    make(Allocator allocator, Token alias_, Token[] lib_paths, DlimportFuncDecl[] funcs){
         auto data = allocator.alloc(typeof(this).sizeof);
         auto p = cast(typeof(this)*)data.ptr;
         p.stmt.type = StatementType.DLIMPORT;
-        p.library_path = lib;
+        p.library_paths = lib_paths;
         p.alias_name = alias_;
         p.funcs = funcs;
         return &p.stmt;
@@ -943,25 +943,25 @@ struct Parser {
 
     Statement*
     dlimport_statement(){with(TokenType){
-        // dlimport "libfoo.dylib" as foo { int add(int, int); ... }
-        Token lib = consume(STRING, "Expected library path string");
-        if(ERROR_OCCURRED) return null;
-        Token as_kw = consume(IDENTIFIER, "Expected 'as' keyword");
-        if(ERROR_OCCURRED) return null;
-        if(as_kw.lexeme != "as"){
-            error(as_kw, "Expected 'as' keyword");
-            return null;
-        }
+        // dlimport Alias { "lib1" "lib2" int func(args); ... }
         Token alias_ = consume(IDENTIFIER, "Expected alias name");
         if(ERROR_OCCURRED) return null;
         consume(LEFT_BRACE, "Expected '{'");
         if(ERROR_OCCURRED) return null;
 
+        auto lib_paths = make_barray!Token(allocator);
         auto funcs = make_barray!DlimportFuncDecl(allocator);
+
         while(!check(RIGHT_BRACE) && !at_end){
+            // String literals are library paths to try
+            if(check(STRING)){
+                lib_paths ~= advance();
+                match(SEMICOLON); // optional semicolon
+                continue;
+            }
             DlimportFuncDecl decl;
             // return_type name(params...);
-            decl.return_type = consume(IDENTIFIER, "Expected return type");
+            decl.return_type = consume(IDENTIFIER, "Expected return type or library path string");
             if(ERROR_OCCURRED) return null;
             decl.name = consume(IDENTIFIER, "Expected function name");
             if(ERROR_OCCURRED) return null;
@@ -1010,7 +1010,11 @@ struct Parser {
         }
         consume(RIGHT_BRACE, "Expected '}'");
         if(ERROR_OCCURRED) return null;
-        return DlimportStatement.make(allocator, lib, alias_, funcs[]);
+        if(lib_paths.count == 0){
+            error(alias_, "dlimport block must contain at least one library path string");
+            return null;
+        }
+        return DlimportStatement.make(allocator, alias_, lib_paths[], funcs[]);
     }
     }
 

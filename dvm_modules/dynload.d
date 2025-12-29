@@ -112,7 +112,12 @@ load_dynamic_module(
 ){
     DynLoadError err;
 
-    void* handle = find_library(decl.library_path);
+    // Try each library path in order until one succeeds
+    void* handle = null;
+    foreach(lib_path; decl.library_paths[]){
+        handle = find_library(lib_path);
+        if(handle) break;
+    }
     if(!handle){
         err.errored = true;
         version(Windows){

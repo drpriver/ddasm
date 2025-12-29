@@ -282,7 +282,7 @@ int main(int argc, char** argv){
             auto dl_err = load_dynamic_module(MALLOCATOR, dlimport, dyn_mod);
             if(dl_err.errored){
                 fprintf(stderr, "Failed to load '%.*s': %.*s\n",
-                    cast(int)dlimport.library_path.length, dlimport.library_path.ptr,
+                    cast(int)dlimport.alias_name.length, dlimport.alias_name.ptr,
                     cast(int)dl_err.message.length, dl_err.message.ptr);
                 return 1;
             }

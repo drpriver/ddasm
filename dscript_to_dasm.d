@@ -1115,11 +1115,15 @@ struct DasmWriter{
         return 0;
     }
     int visit_dlimport(DlimportStatement* stmt){
-        // Strip quotes from library path
-        str lib = stmt.library_path.lexeme;
-        if(lib.length >= 2 && lib[0] == '"' && lib[$-1] == '"')
-            lib = lib[1..$-1];
-        sb.writef("dlimport \"%\" %\n", lib, stmt.alias_name.lexeme);
+        sb.writef("dlimport %\n", stmt.alias_name.lexeme);
+        // Emit library paths to try
+        foreach(lib_tok; stmt.library_paths){
+            str lib = lib_tok.lexeme;
+            // Strip quotes if present
+            if(lib.length >= 2 && lib[0] == '"' && lib[$-1] == '"')
+                lib = lib[1..$-1];
+            sb.writef("  \"%\"\n", lib);
+        }
         foreach(func; stmt.funcs){
             ubyte n_ret = func.return_type.lexeme == "void" ? 0 : 1;
             if(func.is_varargs){

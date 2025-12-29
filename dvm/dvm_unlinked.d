@@ -44,7 +44,7 @@ struct DlimportFuncSpec {
 }
 
 struct DlimportDecl {
-    str library_path;
+    Barray!str library_paths;  // Multiple paths to try in order
     str alias_name;
     Barray!DlimportFuncSpec funcs;
 }

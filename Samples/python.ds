@@ -1,4 +1,12 @@
-dlimport "python" as Py {
+dlimport Py {
+  "python3.12"
+  "python3.11"
+  "python3.10"
+  "python3.9"
+  "python3.8"
+  "python3"
+  "python"
+
   void Py_Initialize();
   int PyRun_SimpleString(ptr);
   void PyErr_Print()
@@ -8,7 +16,6 @@ dlimport "python" as Py {
   void Py_DecRef(ptr);
   ptr PyObject_GetAttrString(ptr, ptr)
   ptr PyObject_CallFunction(ptr, ptr, ...);
-
 }
 
 function pyimport(name){

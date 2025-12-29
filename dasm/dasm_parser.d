@@ -125,11 +125,14 @@ struct ParseContext{
                         prog.imports.push(tok.text);
                     }
                     else if(tok.text == "dlimport"){
-                        // dlimport "libpath" alias
+                        // dlimport alias
+                        //   "libpath1"
+                        //   "libpath2"
                         //   funcname n_args n_ret
                         //   ...
                         // end
                         DlimportDecl decl;
+                        decl.library_paths.bdata.allocator = allocator;
                         decl.funcs.bdata.allocator = allocator;
                         tok = tokenizer.current_token_and_advance;
                         if(tok.type != SPACE){
@@ -137,24 +140,6 @@ struct ParseContext{
                             return PARSE_ERROR;
                         }
                         tok = tokenizer.current_token_and_advance;
-                        if(tok.type != QUOTATION){
-                            err_print(tok, "expected library path string starting with '\"'");
-                            return PARSE_ERROR;
-                        }
-                        // Parse quoted string for library path
-                        const(char)* lib_start = tok._text + 1; // skip opening quote
-                        tok = tokenizer.current_token_and_advance;
-                        while(tok.type != QUOTATION && tok.type != NEWLINE && tok.type != EOF){
-                            tok = tokenizer.current_token_and_advance;
-                        }
-                        if(tok.type != QUOTATION){
-                            err_print(tok, "unterminated library path string");
-                            return PARSE_ERROR;
-                        }
-                        decl.library_path = lib_start[0 .. tok._text - lib_start];
-                        tok = tokenizer.current_token_and_advance;
-                        while(tok.type == SPACE || tok.type == TAB)
-                            tok = tokenizer.current_token_and_advance;
                         if(tok.type != IDENTIFIER){
                             err_print(tok, "expected alias name");
                             return PARSE_ERROR;
@@ -169,7 +154,7 @@ struct ParseContext{
                             err_print(tok, "expected newline after dlimport header");
                             return PARSE_ERROR;
                         }
-                        // Parse function specs until "end"
+                        // Parse library paths and function specs until "end"
                         for(;;){
                             tok = tokenizer.current_token_and_advance;
                             while(tok.type == SPACE || tok.type == TAB || tok.type == NEWLINE)
@@ -181,8 +166,22 @@ struct ParseContext{
                                 err_print(tok, "unexpected EOF in dlimport block");
                                 return PARSE_ERROR;
                             }
+                            // Check for quoted library path
+                            if(tok.type == QUOTATION){
+                                const(char)* lib_start = tok._text + 1; // skip opening quote
+                                tok = tokenizer.current_token_and_advance;
+                                while(tok.type != QUOTATION && tok.type != NEWLINE && tok.type != EOF){
+                                    tok = tokenizer.current_token_and_advance;
+                                }
+                                if(tok.type != QUOTATION){
+                                    err_print(tok, "unterminated library path string");
+                                    return PARSE_ERROR;
+                                }
+                                decl.library_paths.push(lib_start[0 .. tok._text - lib_start]);
+                                continue;
+                            }
                             if(tok.type != IDENTIFIER){
-                                err_print(tok, "expected function name or 'end'");
+                                err_print(tok, "expected function name, library path string, or 'end'");
                                 return PARSE_ERROR;
                             }
                             if(tok.text == "end")
@@ -224,6 +223,10 @@ struct ParseContext{
                                 tokenizer.advance; // consume "varargs"
                             }
                             decl.funcs.push(spec);
+                        }
+                        if(decl.library_paths.count == 0){
+                            err_print(tok, "dlimport block must contain at least one library path");
+                            return PARSE_ERROR;
                         }
                         prog.dlimports.push(decl);
                     }

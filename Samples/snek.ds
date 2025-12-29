@@ -1,7 +1,9 @@
 #!Bin/ddasm
 // Snek game using dlimport
 
-dlimport "SDL2" as SDL {
+dlimport SDL {
+    "SDL2"
+
     int SDL_Init(uint flags);
     ptr SDL_CreateWindow(ptr title, int x, int y, int w, int h, uint flags);
     ptr SDL_CreateRenderer(ptr window, int idx, uint flags);
