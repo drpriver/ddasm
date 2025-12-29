@@ -80,13 +80,83 @@ version(AArch64) {
     }
 }
 else version(X86_64) {
-    uintptr_t call_varargs(
-        void* func_ptr,
-        uintptr_t* args,
-        size_t n_fixed,
-        size_t n_total
-    ) {
-        assert(0, "x86_64 varargs not yet implemented");
+    version(linux) {
+        import ldc.llvmasm;
+
+        // System V AMD64 ABI:
+        // - First 6 integer/pointer args in: rdi, rsi, rdx, rcx, r8, r9
+        // - Additional args on stack (pushed right-to-left)
+        // - For varargs: al = number of vector registers used (0 for no floats)
+        // - Stack must be 16-byte aligned before call
+        uintptr_t call_varargs(
+            void* func_ptr,
+            uintptr_t* args,
+            size_t n_fixed,
+            size_t n_total
+        ) {
+            // Copy args to local storage for stable asm access
+            uintptr_t[16] local_args = void;
+            for (size_t i = 0; i < n_total && i < 16; i++) {
+                local_args[i] = args[i];
+            }
+
+            // Load register args (up to 6)
+            uintptr_t a0 = n_total > 0 ? local_args[0] : 0;
+            uintptr_t a1 = n_total > 1 ? local_args[1] : 0;
+            uintptr_t a2 = n_total > 2 ? local_args[2] : 0;
+            uintptr_t a3 = n_total > 3 ? local_args[3] : 0;
+            uintptr_t a4 = n_total > 4 ? local_args[4] : 0;
+            uintptr_t a5 = n_total > 5 ? local_args[5] : 0;
+
+            // Args beyond 6 go on stack
+            size_t n_stack_args = n_total > 6 ? n_total - 6 : 0;
+            uintptr_t* stack_args = local_args.ptr + 6;
+
+            // Calculate stack space (16-byte aligned, plus 8 if odd number to maintain alignment)
+            size_t stack_bytes = n_stack_args * 8;
+            stack_bytes = (stack_bytes + 15) & ~cast(size_t)15;
+
+            // r10 = func_ptr, r11 = stack_args ptr, r12 = n_stack_args, r13 = stack_bytes
+            // rbx used to save original rsp (callee-saved)
+            return __asm!uintptr_t(
+                // Save original rsp in callee-saved register
+                "movq %rsp, %rbx\n" ~
+                // Allocate stack space
+                "subq %r13, %rsp\n" ~
+                // Push args right-to-left (stack_args[n-1] first)
+                "testq %r12, %r12\n" ~
+                "jz 2f\n" ~                         // skip if no stack args
+                // r14 = index (start at n_stack_args - 1)
+                "leaq -1(%r12), %r14\n" ~
+                // r15 = dest on stack
+                "movq %rsp, %r15\n" ~
+                "1:\n" ~
+                "movq (%r11, %r14, 8), %rax\n" ~    // load arg[index]
+                "movq %rax, (%r15)\n" ~             // store to stack
+                "addq $$8, %r15\n" ~                // advance dest
+                "subq $$1, %r14\n" ~
+                "jns 1b\n" ~                        // loop while index >= 0
+                "2:\n" ~
+                // Set al = 0 (no floating point variadic args)
+                "xorl %eax, %eax\n" ~
+                // Call the function
+                "callq *%r10\n" ~
+                // Restore stack
+                "movq %rbx, %rsp",
+                "={rax},{rdi},{rsi},{rdx},{rcx},{r8},{r9},{r10},{r11},{r12},{r13},~{rbx},~{r14},~{r15},~{memory}",
+                a0, a1, a2, a3, a4, a5, func_ptr, stack_args, n_stack_args, stack_bytes
+            );
+        }
+    }
+    else {
+        uintptr_t call_varargs(
+            void* func_ptr,
+            uintptr_t* args,
+            size_t n_fixed,
+            size_t n_total
+        ) {
+            assert(0, "x86_64 varargs not yet implemented for this OS");
+        }
     }
 }
 else {
