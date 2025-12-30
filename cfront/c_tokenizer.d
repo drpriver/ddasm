@@ -135,6 +135,8 @@ struct CTokenizer {
         str replacement;           // Replacement text
         str[] params;              // Parameter names (empty for object-like macros)
         bool is_function_like;     // True if macro has parameters
+        bool is_variadic;          // True if last param is ...
+        bool is_undefined;         // True if #undef'd (treat as not defined)
     }
 
     // Preprocessor defines: name -> macro definition
@@ -170,12 +172,21 @@ struct CTokenizer {
         defines[name] = def;
     }
 
+    // Check if a macro is defined (and not #undef'd)
+    bool is_macro_defined(str name) {
+        if (MacroDef* def = name in defines) {
+            return !def.is_undefined;
+        }
+        return false;
+    }
+
     // Helper to define a function-like macro
-    void define_func_macro(str name, str[] params, str replacement) {
+    void define_func_macro(str name, str[] params, str replacement, bool variadic = false) {
         MacroDef def;
         def.replacement = replacement;
         def.params = params;
         def.is_function_like = true;
+        def.is_variadic = variadic;
         defines[name] = def;
     }
 
@@ -207,19 +218,6 @@ struct CTokenizer {
 
         // Note: __cplusplus is NOT defined (we're C, not C++)
 
-        // SDL-specific attributes that expand to nothing for us
-        define_macro("DECLSPEC", "");
-        define_macro("SDLCALL", "");
-        define_macro("SDL_DEPRECATED", "");
-        define_macro("SDL_UNUSED", "");
-        define_macro("SDL_FORCE_INLINE", "static inline");
-        define_macro("SDL_INLINE", "static inline");
-        define_macro("DOXYGEN_SHOULD_IGNORE_THIS", "1");  // Skip some SDL_COMPILE_TIME_ASSERT uses
-        {
-            __gshared str[2] cta_params = ["name", "x"];
-            define_func_macro("SDL_COMPILE_TIME_ASSERT", cta_params[], "");  // Skip (uses ## token pasting)
-        }
-
         // Pretend to be GCC for SDL's compiler detection
         define_macro("__GNUC__", "4");
         define_macro("__GNUC_MINOR__", "0");
@@ -227,9 +225,8 @@ struct CTokenizer {
         // Size/type macros
         define_macro("__SIZEOF_POINTER__", "8");  // 64-bit
         define_macro("__x86_64__", "1");
-        define_macro("HAVE_SSIZE_T", "1");  // Python headers need this
+        define_macro("__LP64__", "1");  // Long and Pointer are 64-bit (standard 64-bit Linux data model)
         define_macro("NULL", "0");
-        define_macro("PYLONG_BITS_IN_DIGIT", "30");  // Python long integer digit size
 
         // Disable complex number types (not needed for SDL)
         define_macro("__HAVE_FLOAT128", "0");
@@ -540,6 +537,7 @@ struct CTokenizer {
                 case ' ':
                 case '\r':
                 case '\t':
+                case '\f':  // Form feed
                 case 0:  // NUL bytes (can appear as padding from allocator)
                     break;
 
@@ -759,7 +757,7 @@ struct CTokenizer {
             str macro_name = cast(str)source[name_start .. current];
             skip_to_eol();
 
-            bool defined = (macro_name in defines) !is null;
+            bool defined = is_macro_defined(macro_name);
             push_cond(defined);
         }
         else if (directive == "ifndef") {
@@ -769,7 +767,7 @@ struct CTokenizer {
             str macro_name = cast(str)source[name_start .. current];
             skip_to_eol();
 
-            bool defined = (macro_name in defines) !is null;
+            bool defined = is_macro_defined(macro_name);
             push_cond(!defined);
         }
         else if (directive == "if") {
@@ -957,7 +955,7 @@ struct CTokenizer {
                 skip_pp_ws();
                 if (peek == ')') advance();
             }
-            return (name in defines) !is null ? 1 : 0;
+            return is_macro_defined(name) ? 1 : 0;
         }
 
         // Parenthesized expression
@@ -1001,8 +999,10 @@ struct CTokenizer {
 
             // Check if it's a defined macro with a numeric value
             if (MacroDef* def = name in defines) {
-                // Try to parse as number
-                return parse_number_from_str(def.replacement);
+                if (!def.is_undefined) {
+                    // Try to parse as number
+                    return parse_number_from_str(def.replacement);
+                }
             }
             return 0;  // Undefined identifier = 0
         }
@@ -1069,6 +1069,7 @@ struct CTokenizer {
             // Parse parameter list
             Barray!str params;
             params.bdata.allocator = allocator;
+            bool is_variadic = false;
 
             while (!at_end && peek != ')') {
                 // Skip whitespace
@@ -1076,10 +1077,11 @@ struct CTokenizer {
 
                 if (peek == ')') break;
 
-                // Handle variadic ... (skip it)
+                // Handle variadic ...
                 if (peek == '.' && peekNext == '.') {
                     advance(); advance();
                     if (peek == '.') advance();
+                    is_variadic = true;
                     // Skip whitespace
                     while (peek == ' ' || peek == '\t') advance();
                     if (peek == ',') advance();
@@ -1146,7 +1148,7 @@ struct CTokenizer {
 
             // Store function-like macro - don't overwrite predefined
             if ((macro_name in defines) is null) {
-                define_func_macro(macro_name, params[], value);
+                define_func_macro(macro_name, params[], value, is_variadic);
             }
             return;
         }
@@ -1224,8 +1226,10 @@ struct CTokenizer {
         while (peek.is_ident_char) advance();
         str macro_name = cast(str)source[name_start .. current];
         skip_to_eol();
-        // Note: Table doesn't have remove, but we can set to a special marker
-        // For now, just skip - #undef is rarely needed for SDL headers
+        // Mark the macro as undefined
+        if (MacroDef* def = macro_name in defines) {
+            def.is_undefined = true;
+        }
     }
 
     void do_block_comment() {
@@ -1250,15 +1254,19 @@ struct CTokenizer {
 
         // Check for macro substitution (prevent recursive expansion)
         if (MacroDef* macro_def = text in defines) {
-            if (bool* expanding = text in expanding_macros) {
-                if (*expanding) {
-                    // Macro is currently being expanded - emit as identifier to prevent recursion
-                    add_token(CTokenType.IDENTIFIER);
-                    return;
+            // Skip if macro was #undef'd
+            if (macro_def.is_undefined) {
+                // Not a macro anymore, fall through to keyword/identifier handling
+            } else {
+                if (bool* expanding = text in expanding_macros) {
+                    if (*expanding) {
+                        // Macro is currently being expanded - emit as identifier to prevent recursion
+                        add_token(CTokenType.IDENTIFIER);
+                        return;
+                    }
                 }
-            }
 
-            // Handle function-like macros
+                // Handle function-like macros
             if (macro_def.is_function_like) {
                 // Must have ( after identifier
                 // Skip whitespace first
@@ -1274,7 +1282,7 @@ struct CTokenizer {
                 str[] args = parse_macro_args();
 
                 // Substitute parameters in replacement text
-                str expanded = substitute_macro_params(macro_def.replacement, macro_def.params, args);
+                str expanded = substitute_macro_params(macro_def.replacement, macro_def.params, args, macro_def.is_variadic);
 
                 // Track that we're expanding this macro
                 expanding_macros[text] = true;
@@ -1295,6 +1303,7 @@ struct CTokenizer {
             // Tokenize the replacement text and emit those tokens
             tokenize_macro_replacement(value);
             return;
+            }
         }
 
         // Check for keywords
@@ -1461,21 +1470,91 @@ struct CTokenizer {
     }
 
     // Substitute macro parameters in replacement text
-    str substitute_macro_params(str replacement, str[] params, str[] args) {
+    str substitute_macro_params(str replacement, str[] params, str[] args, bool is_variadic = false) {
         import dlib.stringbuilder : StringBuilder;
 
-        if (params.length == 0) return replacement;
+        if (params.length == 0 && !is_variadic) return replacement;
 
         StringBuilder result;
         result.allocator = allocator;
 
         size_t i = 0;
         while (i < replacement.length) {
+            // Check for token pasting ## - just copy it through, apply_token_pasting handles it later
+            if (replacement[i] == '#' && i + 1 < replacement.length && replacement[i + 1] == '#') {
+                result.write('#');
+                result.write('#');
+                i += 2;
+                continue;
+            }
+
+            // Check for stringification operator #
+            if (replacement[i] == '#') {
+                i++;  // skip #
+                // Skip whitespace after #
+                while (i < replacement.length && (replacement[i] == ' ' || replacement[i] == '\t')) i++;
+                // Get the parameter name
+                if (i < replacement.length && (replacement[i].is_alpha || replacement[i] == '_')) {
+                    size_t id_start = i;
+                    while (i < replacement.length && replacement[i].is_ident_char) i++;
+                    str ident = replacement[id_start .. i];
+
+                    // Check for __VA_ARGS__ stringification
+                    if (is_variadic && ident == "__VA_ARGS__") {
+                        result.write('"');
+                        size_t num_named = params.length;
+                        bool first = true;
+                        for (size_t ai = num_named; ai < args.length; ai++) {
+                            if (!first) result.write(", ");
+                            // TODO: properly escape the arg
+                            result.write(args[ai]);
+                            first = false;
+                        }
+                        result.write('"');
+                        continue;
+                    }
+
+                    // Find matching parameter and stringify
+                    bool found = false;
+                    foreach (pi, param; params) {
+                        if (param == ident && pi < args.length) {
+                            result.write('"');
+                            // TODO: properly escape the arg (quotes, backslashes)
+                            result.write(args[pi]);
+                            result.write('"');
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        // Not a parameter, emit # and identifier as-is
+                        result.write('#');
+                        result.write(ident);
+                    }
+                } else {
+                    result.write('#');
+                }
+                continue;
+            }
+
             // Check if this is the start of an identifier
             if (replacement[i].is_alpha || replacement[i] == '_') {
                 size_t id_start = i;
                 while (i < replacement.length && replacement[i].is_ident_char) i++;
                 str ident = replacement[id_start .. i];
+
+                // Check for __VA_ARGS__ in variadic macros
+                if (is_variadic && ident == "__VA_ARGS__") {
+                    // Concatenate all extra arguments (after named params) with commas
+                    size_t num_named = params.length;
+                    bool first = true;
+                    for (size_t ai = num_named; ai < args.length; ai++) {
+                        if (!first) result.write(", ");
+                        result.write(args[ai]);
+                        first = false;
+                    }
+                    continue;
+                }
 
                 // Check if this is a parameter
                 bool found = false;
@@ -1493,6 +1572,50 @@ struct CTokenizer {
                 result.write(cast(char)replacement[i]);
                 i++;
             }
+        }
+
+        // Handle token pasting (##) - do a post-processing pass
+        str intermediate = result.borrow();
+        return apply_token_pasting(intermediate);
+    }
+
+    // Apply ## token pasting operator
+    str apply_token_pasting(str text) {
+        import dlib.stringbuilder : StringBuilder;
+
+        // Look for ## in the text
+        bool has_paste = false;
+        for (size_t j = 0; j + 1 < text.length; j++) {
+            if (text[j] == '#' && text[j + 1] == '#') {
+                has_paste = true;
+                break;
+            }
+        }
+        if (!has_paste) return text;
+
+        StringBuilder result;
+        result.allocator = allocator;
+
+        size_t i = 0;
+        while (i < text.length) {
+            // Check for ##
+            if (i + 1 < text.length && text[i] == '#' && text[i + 1] == '#') {
+                // Remove trailing whitespace from result
+                while (result.cursor > 0) {
+                    ubyte last = cast(ubyte)result.data[result.cursor - 1];
+                    if (last == ' ' || last == '\t') {
+                        result.erase(1);
+                    } else {
+                        break;
+                    }
+                }
+                i += 2;  // skip ##
+                // Skip leading whitespace after ##
+                while (i < text.length && (text[i] == ' ' || text[i] == '\t')) i++;
+                continue;
+            }
+            result.write(cast(char)text[i]);
+            i++;
         }
 
         return result.borrow();
@@ -1629,6 +1752,12 @@ struct CTokenizer {
 
                 // Check for nested macro (prevent recursive expansion)
                 if (MacroDef* nested = ident in defines) {
+                    // Skip if macro was #undef'd
+                    if (nested.is_undefined) {
+                        // Not a macro anymore, emit as identifier
+                        *tokens ~= CToken(CTokenType.IDENTIFIER, ident, line, start_column, current_file);
+                        continue;
+                    }
                     bool is_expanding = false;
                     if (bool* exp = ident in expanding_macros) {
                         is_expanding = *exp;
@@ -1650,7 +1779,7 @@ struct CTokenizer {
                             // Parse args from replacement text
                             i++;  // consume (
                             str[] func_args = parse_macro_args_from_text(text, i);
-                            str expanded = substitute_macro_params(nested.replacement, nested.params, func_args);
+                            str expanded = substitute_macro_params(nested.replacement, nested.params, func_args, nested.is_variadic);
                             expanding_macros[ident] = true;
                             scope(exit) expanding_macros[ident] = false;
                             tokenize_macro_replacement(expanded);

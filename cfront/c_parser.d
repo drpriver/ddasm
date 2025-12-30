@@ -72,6 +72,7 @@ struct CParser {
         typedef_types["uintptr_t"] = &TYPE_ULONG;
         typedef_types["wchar_t"] = &TYPE_INT;
         typedef_types["wint_t"] = &TYPE_UINT;
+        typedef_types["va_list"] = &TYPE_VOID_PTR;
 
         while (!at_end) {
             // Handle #pragma
@@ -1677,6 +1678,14 @@ struct CParser {
 
     int parse_extern_decl(CExternDecl* decl) {
         advance();  // consume 'extern'
+
+        // Skip __attribute__((...)) if present (e.g., from DECLSPEC)
+        while (check(CTokenType.IDENTIFIER) && peek().lexeme == "__attribute__") {
+            advance();  // skip __attribute__
+            if (check(CTokenType.LEFT_PAREN)) {
+                skip_balanced_parens();
+            }
+        }
 
         // Parse return type
         CType* ret_type = parse_type();
