@@ -1,16 +1,8 @@
 #pragma library("libc.so.6")
-extern void abort();
-extern int printf(const char* fmt, ...);
+  #include <stdlib.h>
+  #include <stdio.h>
 #pragma library("python3.8")
-extern void Py_Initialize();
-extern int PyRun_SimpleString(char* s);
-extern void PyErr_Print();
-extern void Py_Finalize();
-extern void* PyUnicode_FromString(char* s);
-extern void* PyImport_Import(void* o);
-extern void Py_DecRef(void* o);
-extern void* PyObject_GetAttrString(void* o, char* s);
-extern void* PyObject_CallFunction(void* o, char* s, ...);
+  #include <python3.8/Python.h>
 
 void* pyimport(char* name){
     void* pystr = PyUnicode_FromString(name);

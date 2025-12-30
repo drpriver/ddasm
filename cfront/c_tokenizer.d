@@ -15,7 +15,7 @@ enum CTokenType : uint {
     // Single character tokens
     LEFT_PAREN = '(', RIGHT_PAREN = ')', LEFT_BRACE = '{', RIGHT_BRACE = '}',
     LEFT_BRACKET = '[', RIGHT_BRACKET = ']',
-    COMMA = ',', DOT = '.', SEMICOLON = ';', COLON = ':',
+    COMMA = ',', DOT = '.', SEMICOLON = ';', COLON = ':', QUESTION = '?',
     PLUS = '+', MINUS = '-', STAR = '*', SLASH = '/', PERCENT = '%',
     AMP = '&', PIPE = '|', CARET = '^', TILDE = '~',
 
@@ -130,8 +130,15 @@ struct CTokenizer {
     int column = 1;
     int start_column = 1;
 
-    // Preprocessor defines: name -> replacement text (empty string = expands to nothing)
-    Table!(str, str) defines;
+    // Macro definition
+    struct MacroDef {
+        str replacement;           // Replacement text
+        str[] params;              // Parameter names (empty for object-like macros)
+        bool is_function_like;     // True if macro has parameters
+    }
+
+    // Preprocessor defines: name -> macro definition
+    Table!(str, MacroDef) defines;
 
     // Conditional compilation stack
     Barray!CondBlock cond_stack;
@@ -140,6 +147,9 @@ struct CTokenizer {
     Barray!IncludeFrame include_stack;
     Table!(str, bool) included_files;  // Files already included (for include guards)
     str current_file;                   // Current file being processed
+
+    // Macro expansion tracking (prevent recursive expansion)
+    Table!(str, bool) expanding_macros;
 
     // Include search paths
     static immutable str[] INCLUDE_PATHS = [
@@ -151,123 +161,183 @@ struct CTokenizer {
 
     bool ERROR_OCCURRED = false;
 
+    // Helper to define an object-like macro
+    void define_macro(str name, str replacement) {
+        MacroDef def;
+        def.replacement = replacement;
+        def.params = null;
+        def.is_function_like = false;
+        defines[name] = def;
+    }
+
+    // Helper to define a function-like macro
+    void define_func_macro(str name, str[] params, str replacement) {
+        MacroDef def;
+        def.replacement = replacement;
+        def.params = params;
+        def.is_function_like = true;
+        defines[name] = def;
+    }
+
     void init() {
         defines.data.allocator = allocator;
         cond_stack.bdata.allocator = allocator;
         include_stack.bdata.allocator = allocator;
         included_files.data.allocator = allocator;
+        expanding_macros.data.allocator = allocator;
 
         // Predefined macros for SDL headers compatibility
         // Platform macros
         version(linux) {
-            defines["__linux__"] = "1";
-            defines["__unix__"] = "1";
+            define_macro("__linux__", "1");
+            define_macro("__unix__", "1");
         }
         version(Windows) {
-            defines["_WIN32"] = "1";
+            define_macro("_WIN32", "1");
         }
         version(OSX) {
-            defines["__APPLE__"] = "1";
-            defines["__MACH__"] = "1";
+            define_macro("__APPLE__", "1");
+            define_macro("__MACH__", "1");
         }
+
+        // Byte order macros (x86 is little-endian)
+        define_macro("__LITTLE_ENDIAN", "1234");
+        define_macro("__BIG_ENDIAN", "4321");
+        define_macro("__BYTE_ORDER", "1234");  // Little-endian
 
         // Note: __cplusplus is NOT defined (we're C, not C++)
 
         // SDL-specific attributes that expand to nothing for us
-        defines["DECLSPEC"] = "";
-        defines["SDLCALL"] = "";
-        defines["SDL_DEPRECATED"] = "";
-        defines["SDL_UNUSED"] = "";
-        defines["SDL_FORCE_INLINE"] = "static inline";
-        defines["SDL_INLINE"] = "static inline";
+        define_macro("DECLSPEC", "");
+        define_macro("SDLCALL", "");
+        define_macro("SDL_DEPRECATED", "");
+        define_macro("SDL_UNUSED", "");
+        define_macro("SDL_FORCE_INLINE", "static inline");
+        define_macro("SDL_INLINE", "static inline");
+        define_macro("DOXYGEN_SHOULD_IGNORE_THIS", "1");  // Skip some SDL_COMPILE_TIME_ASSERT uses
+        {
+            __gshared str[2] cta_params = ["name", "x"];
+            define_func_macro("SDL_COMPILE_TIME_ASSERT", cta_params[], "");  // Skip (uses ## token pasting)
+        }
 
         // Pretend to be GCC for SDL's compiler detection
-        defines["__GNUC__"] = "4";
-        defines["__GNUC_MINOR__"] = "0";
+        define_macro("__GNUC__", "4");
+        define_macro("__GNUC_MINOR__", "0");
 
         // Size/type macros
-        defines["__SIZEOF_POINTER__"] = "8";  // 64-bit
-        defines["__x86_64__"] = "1";
+        define_macro("__SIZEOF_POINTER__", "8");  // 64-bit
+        define_macro("__x86_64__", "1");
+        define_macro("HAVE_SSIZE_T", "1");  // Python headers need this
+        define_macro("NULL", "0");
+        define_macro("PYLONG_BITS_IN_DIGIT", "30");  // Python long integer digit size
 
         // Disable complex number types (not needed for SDL)
-        defines["__HAVE_FLOAT128"] = "0";
-        defines["__HAVE_FLOAT64X"] = "0";
-        defines["__HAVE_FLOAT32"] = "0";
-        defines["__HAVE_FLOAT64"] = "0";
+        define_macro("__HAVE_FLOAT128", "0");
+        define_macro("__HAVE_FLOAT64X", "0");
+        define_macro("__HAVE_FLOAT32", "0");
+        define_macro("__HAVE_FLOAT64", "0");
 
         // glibc compatibility (C++ extern "C" wrappers)
-        defines["__BEGIN_DECLS"] = "";
-        defines["__END_DECLS"] = "";
-        defines["__THROW"] = "";
-        defines["__THROWNL"] = "";
-        // Note: __nonnull is a function-like macro, so we skip its definition
-        // and handle it as unknown macro invocation at parse time
-        defines["__attribute_pure__"] = "";
-        defines["__attribute_malloc__"] = "";
-        defines["__wur"] = "";  // warn_unused_result
+        define_macro("__BEGIN_DECLS", "");
+        define_macro("__END_DECLS", "");
+        define_macro("__THROW", "");
+        define_macro("__THROWNL", "");
+        define_macro("__attribute_pure__", "");
+        define_macro("__attribute_malloc__", "");
+        define_macro("__wur", "");  // warn_unused_result
 
         // glibc compatibility - va_list support
-        defines["__gnuc_va_list"] = "void*";
+        define_macro("__gnuc_va_list", "void*");
 
         // glibc bits/types.h support
-        defines["__STD_TYPE"] = "typedef";
-        defines["__extension__"] = "";
-        defines["__inline"] = "";
-        defines["__inline__"] = "";
-        defines["__restrict"] = "";
-        defines["__restrict__"] = "";
-        defines["__volatile__"] = "";
-        defines["__asm__"] = ""; // NOTE: This will break asm() usage
+        define_macro("__STD_TYPE", "typedef");
+        define_macro("__extension__", "");
+        define_macro("__inline", "");
+        define_macro("__inline__", "");
+        define_macro("__restrict", "");
+        define_macro("__restrict__", "");
+        define_macro("__volatile__", "");
+        define_macro("__asm__", ""); // NOTE: This will break asm() usage
+
+        // glibc __REDIRECT macros - expand to just name proto, skip __asm__ alias
+        {
+            __gshared str[3] redirect_params = ["name", "proto", "alias"];
+            define_func_macro("__REDIRECT", redirect_params[], "name proto");
+            define_func_macro("__REDIRECT_NTH", redirect_params[], "name proto");
+            define_func_macro("__REDIRECT_NTHNL", redirect_params[], "name proto");
+        }
+
+        // Python API macros
+        {
+            __gshared str[1] rtype_param = ["RTYPE"];
+            define_func_macro("PyAPI_FUNC", rtype_param[], "extern RTYPE");
+            define_func_macro("PyAPI_DATA", rtype_param[], "extern RTYPE");
+            define_macro("PyMODINIT_FUNC", "void");
+            __gshared str[1] version_param = ["VERSION"];
+            define_func_macro("Py_DEPRECATED", version_param[], "");  // Expands to nothing
+            __gshared str[1] attr_param = ["x"];
+            define_func_macro("Py_GCC_ATTRIBUTE", attr_param[], "");  // Expands to nothing
+            define_macro("_Py_NO_RETURN", "");  // __attribute__((noreturn))
+        }
+
+        // Skip math.h entirely (can't handle __CONCAT with ## token pasting)
+        define_macro("_MATH_H", "1");
+        // Skip ctype.h (complex ternary macros in enum values not worth the effort)
+        define_macro("_CTYPE_H", "1");
+        // Skip genobject.h (uses ## token pasting in _PyGenObject_HEAD)
+        define_macro("Py_GENOBJECT_H", "1");
+        // Skip pyerrors.h (cpython/pyerrors.h uses _PyErr_StackItem before pystate.h defines it)
+        define_macro("Py_ERRORS_H", "1");
 
         // glibc type macros (from bits/typesizes.h)
-        defines["__S16_TYPE"] = "short";
-        defines["__U16_TYPE"] = "unsigned short";
-        defines["__S32_TYPE"] = "int";
-        defines["__U32_TYPE"] = "unsigned int";
-        defines["__SLONGWORD_TYPE"] = "long";
-        defines["__ULONGWORD_TYPE"] = "unsigned long";
-        defines["__SQUAD_TYPE"] = "long long";
-        defines["__UQUAD_TYPE"] = "unsigned long long";
-        defines["__SWORD_TYPE"] = "long";
-        defines["__UWORD_TYPE"] = "unsigned long";
-        defines["__SLONG32_TYPE"] = "int";
-        defines["__ULONG32_TYPE"] = "unsigned int";
-        defines["__S64_TYPE"] = "long long";
-        defines["__U64_TYPE"] = "unsigned long long";
+        define_macro("__S16_TYPE", "short");
+        define_macro("__U16_TYPE", "unsigned short");
+        define_macro("__S32_TYPE", "int");
+        define_macro("__U32_TYPE", "unsigned int");
+        define_macro("__SLONGWORD_TYPE", "long");
+        define_macro("__ULONGWORD_TYPE", "unsigned long");
+        define_macro("__SQUAD_TYPE", "long long");
+        define_macro("__UQUAD_TYPE", "unsigned long long");
+        define_macro("__SWORD_TYPE", "long");
+        define_macro("__UWORD_TYPE", "unsigned long");
+        define_macro("__SLONG32_TYPE", "int");
+        define_macro("__ULONG32_TYPE", "unsigned int");
+        define_macro("__S64_TYPE", "long long");
+        define_macro("__U64_TYPE", "unsigned long long");
 
         // Type aliases used in bits/types.h
-        defines["__DEV_T_TYPE"] = "unsigned long long";
-        defines["__UID_T_TYPE"] = "unsigned int";
-        defines["__GID_T_TYPE"] = "unsigned int";
-        defines["__INO_T_TYPE"] = "unsigned long";
-        defines["__INO64_T_TYPE"] = "unsigned long long";
-        defines["__MODE_T_TYPE"] = "unsigned int";
-        defines["__NLINK_T_TYPE"] = "unsigned long";
-        defines["__OFF_T_TYPE"] = "long";
-        defines["__OFF64_T_TYPE"] = "long long";
-        defines["__PID_T_TYPE"] = "int";
-        defines["__RLIM_T_TYPE"] = "unsigned long";
-        defines["__RLIM64_T_TYPE"] = "unsigned long long";
-        defines["__BLKCNT_T_TYPE"] = "long";
-        defines["__BLKCNT64_T_TYPE"] = "long long";
-        defines["__FSBLKCNT_T_TYPE"] = "unsigned long";
-        defines["__FSBLKCNT64_T_TYPE"] = "unsigned long long";
-        defines["__FSFILCNT_T_TYPE"] = "unsigned long";
-        defines["__FSFILCNT64_T_TYPE"] = "unsigned long long";
-        defines["__ID_T_TYPE"] = "unsigned int";
-        defines["__CLOCK_T_TYPE"] = "long";
-        defines["__TIME_T_TYPE"] = "long";
-        defines["__USECONDS_T_TYPE"] = "unsigned int";
-        defines["__SUSECONDS_T_TYPE"] = "long";
-        defines["__DADDR_T_TYPE"] = "int";
-        defines["__KEY_T_TYPE"] = "int";
-        defines["__CLOCKID_T_TYPE"] = "int";
-        defines["__TIMER_T_TYPE"] = "void*";
-        defines["__BLKSIZE_T_TYPE"] = "long";
-        defines["__SSIZE_T_TYPE"] = "long";
-        defines["__SYSCALL_SLONG_TYPE"] = "long";
-        defines["__SYSCALL_ULONG_TYPE"] = "unsigned long";
-        defines["__CPU_MASK_TYPE"] = "unsigned long";
+        define_macro("__DEV_T_TYPE", "unsigned long long");
+        define_macro("__UID_T_TYPE", "unsigned int");
+        define_macro("__GID_T_TYPE", "unsigned int");
+        define_macro("__INO_T_TYPE", "unsigned long");
+        define_macro("__INO64_T_TYPE", "unsigned long long");
+        define_macro("__MODE_T_TYPE", "unsigned int");
+        define_macro("__NLINK_T_TYPE", "unsigned long");
+        define_macro("__OFF_T_TYPE", "long");
+        define_macro("__OFF64_T_TYPE", "long long");
+        define_macro("__PID_T_TYPE", "int");
+        define_macro("__RLIM_T_TYPE", "unsigned long");
+        define_macro("__RLIM64_T_TYPE", "unsigned long long");
+        define_macro("__BLKCNT_T_TYPE", "long");
+        define_macro("__BLKCNT64_T_TYPE", "long long");
+        define_macro("__FSBLKCNT_T_TYPE", "unsigned long");
+        define_macro("__FSBLKCNT64_T_TYPE", "unsigned long long");
+        define_macro("__FSFILCNT_T_TYPE", "unsigned long");
+        define_macro("__FSFILCNT64_T_TYPE", "unsigned long long");
+        define_macro("__ID_T_TYPE", "unsigned int");
+        define_macro("__CLOCK_T_TYPE", "long");
+        define_macro("__TIME_T_TYPE", "long");
+        define_macro("__USECONDS_T_TYPE", "unsigned int");
+        define_macro("__SUSECONDS_T_TYPE", "long");
+        define_macro("__DADDR_T_TYPE", "int");
+        define_macro("__KEY_T_TYPE", "int");
+        define_macro("__CLOCKID_T_TYPE", "int");
+        define_macro("__TIMER_T_TYPE", "void*");
+        define_macro("__BLKSIZE_T_TYPE", "long");
+        define_macro("__SSIZE_T_TYPE", "long");
+        define_macro("__SYSCALL_SLONG_TYPE", "long");
+        define_macro("__SYSCALL_ULONG_TYPE", "unsigned long");
+        define_macro("__CPU_MASK_TYPE", "unsigned long");
 
     }
 
@@ -777,20 +847,20 @@ struct CTokenizer {
     }
 
     // Evaluate preprocessor expression (for #if)
-    // Supports: defined(X), defined X, ||, &&, !, numbers, ()
+    // Supports: defined(X), defined X, ||, &&, ==, !=, <, <=, >, >=, !, numbers, ()
     bool evaluate_pp_expression() {
         skip_pp_ws();
-        return eval_pp_or();
+        return eval_pp_or() != 0;
     }
 
-    bool eval_pp_or() {
-        bool result = eval_pp_and();
+    long eval_pp_or() {
+        long result = eval_pp_and();
         while (true) {
             skip_pp_ws();
             if (peek == '|' && peekNext == '|') {
                 advance(); advance();
-                bool right = eval_pp_and();
-                result = result || right;
+                long right = eval_pp_and();
+                result = (result != 0 || right != 0) ? 1 : 0;
             } else {
                 break;
             }
@@ -798,14 +868,14 @@ struct CTokenizer {
         return result;
     }
 
-    bool eval_pp_and() {
-        bool result = eval_pp_unary();
+    long eval_pp_and() {
+        long result = eval_pp_equality();
         while (true) {
             skip_pp_ws();
             if (peek == '&' && peekNext == '&') {
                 advance(); advance();
-                bool right = eval_pp_unary();
-                result = result && right;
+                long right = eval_pp_equality();
+                result = (result != 0 && right != 0) ? 1 : 0;
             } else {
                 break;
             }
@@ -813,16 +883,62 @@ struct CTokenizer {
         return result;
     }
 
-    bool eval_pp_unary() {
+    long eval_pp_equality() {
+        long result = eval_pp_relational();
+        while (true) {
+            skip_pp_ws();
+            if (peek == '=' && peekNext == '=') {
+                advance(); advance();
+                long right = eval_pp_relational();
+                result = (result == right) ? 1 : 0;
+            } else if (peek == '!' && peekNext == '=') {
+                advance(); advance();
+                long right = eval_pp_relational();
+                result = (result != right) ? 1 : 0;
+            } else {
+                break;
+            }
+        }
+        return result;
+    }
+
+    long eval_pp_relational() {
+        long result = eval_pp_unary();
+        while (true) {
+            skip_pp_ws();
+            if (peek == '<' && peekNext == '=') {
+                advance(); advance();
+                long right = eval_pp_unary();
+                result = (result <= right) ? 1 : 0;
+            } else if (peek == '>' && peekNext == '=') {
+                advance(); advance();
+                long right = eval_pp_unary();
+                result = (result >= right) ? 1 : 0;
+            } else if (peek == '<') {
+                advance();
+                long right = eval_pp_unary();
+                result = (result < right) ? 1 : 0;
+            } else if (peek == '>') {
+                advance();
+                long right = eval_pp_unary();
+                result = (result > right) ? 1 : 0;
+            } else {
+                break;
+            }
+        }
+        return result;
+    }
+
+    long eval_pp_unary() {
         skip_pp_ws();
         if (peek == '!') {
             advance();
-            return !eval_pp_unary();
+            return eval_pp_unary() == 0 ? 1 : 0;
         }
         return eval_pp_primary();
     }
 
-    bool eval_pp_primary() {
+    long eval_pp_primary() {
         skip_pp_ws();
 
         // defined(X) or defined X
@@ -841,19 +957,19 @@ struct CTokenizer {
                 skip_pp_ws();
                 if (peek == ')') advance();
             }
-            return (name in defines) !is null;
+            return (name in defines) !is null ? 1 : 0;
         }
 
         // Parenthesized expression
         if (peek == '(') {
             advance();
-            bool result = eval_pp_or();
+            long result = eval_pp_or();
             skip_pp_ws();
             if (peek == ')') advance();
             return result;
         }
 
-        // Number literal (0 = false, non-zero = true)
+        // Number literal
         if (peek.is_digit) {
             long value = 0;
             while (peek.is_digit) {
@@ -861,10 +977,10 @@ struct CTokenizer {
             }
             // Skip suffixes
             while (peek == 'L' || peek == 'l' || peek == 'U' || peek == 'u') advance();
-            return value != 0;
+            return value;
         }
 
-        // Identifier - undefined = 0
+        // Identifier - check for defined macro value, otherwise 0
         if (peek.is_alpha || peek == '_') {
             int name_start = current;
             while (peek.is_ident_char) advance();
@@ -884,14 +1000,14 @@ struct CTokenizer {
             }
 
             // Check if it's a defined macro with a numeric value
-            if (str* val = name in defines) {
+            if (MacroDef* def = name in defines) {
                 // Try to parse as number
-                return parse_number_from_str(*val) != 0;
+                return parse_number_from_str(def.replacement);
             }
-            return false;  // Undefined identifier = 0
+            return 0;  // Undefined identifier = 0
         }
 
-        return false;
+        return 0;
     }
 
     bool match_pp_word(str word) {
@@ -948,9 +1064,90 @@ struct CTokenizer {
 
         // Check for function-like macro: NAME( with no space before (
         if (peek == '(') {
-            // This is a function-like macro - skip it entirely for now
-            // (Phase 4 will implement proper function-like macro support)
-            skip_to_eol();
+            advance();  // consume (
+
+            // Parse parameter list
+            Barray!str params;
+            params.bdata.allocator = allocator;
+
+            while (!at_end && peek != ')') {
+                // Skip whitespace
+                while (peek == ' ' || peek == '\t') advance();
+
+                if (peek == ')') break;
+
+                // Handle variadic ... (skip it)
+                if (peek == '.' && peekNext == '.') {
+                    advance(); advance();
+                    if (peek == '.') advance();
+                    // Skip whitespace
+                    while (peek == ' ' || peek == '\t') advance();
+                    if (peek == ',') advance();
+                    continue;
+                }
+
+                // Get parameter name
+                int param_start = current;
+                while (peek.is_ident_char) advance();
+                str param = cast(str)source[param_start .. current];
+                if (param.length > 0) {
+                    params ~= param;
+                }
+
+                // Skip whitespace after param
+                while (peek == ' ' || peek == '\t') advance();
+
+                // Skip comma if present
+                if (peek == ',') advance();
+            }
+
+            if (peek == ')') advance();  // consume )
+
+            // Skip whitespace before replacement
+            while (peek == ' ' || peek == '\t') advance();
+
+            // Get replacement text
+            int value_start = current;
+            int value_end = current;
+            bool in_comment = false;
+
+            while (!at_end) {
+                if (!in_comment && peek == '/' && peekNext == '*') {
+                    if (!in_comment) value_end = current;
+                    in_comment = true;
+                    advance(); advance();
+                    continue;
+                }
+                if (in_comment && peek == '*' && peekNext == '/') {
+                    in_comment = false;
+                    advance(); advance();
+                    continue;
+                }
+                if (in_comment) {
+                    if (peek == '\n') { line++; column = 0; }
+                    advance();
+                    continue;
+                }
+                if (peek == '\n') break;
+                if (peek == '\\' && peekNext == '\n') {
+                    advance(); advance();
+                    line++; column = 1;
+                    value_end = current;
+                    continue;
+                }
+                advance();
+                value_end = current;
+            }
+
+            str value = cast(str)source[value_start .. value_end];
+            while (value.length > 0 && (value[$ - 1] == ' ' || value[$ - 1] == '\t')) {
+                value = value[0 .. $ - 1];
+            }
+
+            // Store function-like macro - don't overwrite predefined
+            if ((macro_name in defines) is null) {
+                define_func_macro(macro_name, params[], value);
+            }
             return;
         }
 
@@ -1017,7 +1214,7 @@ struct CTokenizer {
 
         // Store in defines table - don't overwrite predefined macros
         if ((macro_name in defines) is null) {
-            defines[macro_name] = value;
+            define_macro(macro_name, value);
         }
     }
 
@@ -1051,13 +1248,50 @@ struct CTokenizer {
         while (peek.is_ident_char) advance();
         auto text = cast(str)source[start .. current];
 
-        // Check for macro substitution
-        if (str* replacement = text in defines) {
-            str value = *replacement;
+        // Check for macro substitution (prevent recursive expansion)
+        if (MacroDef* macro_def = text in defines) {
+            if (bool* expanding = text in expanding_macros) {
+                if (*expanding) {
+                    // Macro is currently being expanded - emit as identifier to prevent recursion
+                    add_token(CTokenType.IDENTIFIER);
+                    return;
+                }
+            }
+
+            // Handle function-like macros
+            if (macro_def.is_function_like) {
+                // Must have ( after identifier
+                // Skip whitespace first
+                while (peek == ' ' || peek == '\t') advance();
+                if (peek != '(') {
+                    // Not a macro invocation, just the name
+                    add_token(CTokenType.IDENTIFIER);
+                    return;
+                }
+                advance();  // consume (
+
+                // Parse arguments
+                str[] args = parse_macro_args();
+
+                // Substitute parameters in replacement text
+                str expanded = substitute_macro_params(macro_def.replacement, macro_def.params, args);
+
+                // Track that we're expanding this macro
+                expanding_macros[text] = true;
+                scope(exit) expanding_macros[text] = false;
+                // Tokenize the expansion
+                tokenize_macro_replacement(expanded);
+                return;
+            }
+
+            str value = macro_def.replacement;
             if (value.length == 0) {
                 // Macro expands to nothing - don't emit any token
                 return;
             }
+            // Track that we're expanding this macro
+            expanding_macros[text] = true;
+            scope(exit) expanding_macros[text] = false;
             // Tokenize the replacement text and emit those tokens
             tokenize_macro_replacement(value);
             return;
@@ -1102,6 +1336,168 @@ struct CTokenizer {
         add_token(type);
     }
 
+    // Parse macro arguments (after the opening paren has been consumed)
+    str[] parse_macro_args() {
+        import dlib.stringbuilder : StringBuilder;
+        import core.stdc.string : memcpy;
+
+        Barray!str args;
+        args.bdata.allocator = allocator;
+
+        StringBuilder current_arg;
+        current_arg.allocator = allocator;
+
+        int paren_depth = 1;
+
+        while (!at_end && paren_depth > 0) {
+            ubyte c = peek;
+
+            if (c == '(') {
+                paren_depth++;
+                current_arg.write(cast(char)c);
+                advance();
+            } else if (c == ')') {
+                paren_depth--;
+                if (paren_depth == 0) {
+                    // End of arguments
+                    advance();  // consume )
+                    break;
+                }
+                current_arg.write(cast(char)c);
+                advance();
+            } else if (c == ',' && paren_depth == 1) {
+                // Argument separator - copy the string before reset
+                str arg = current_arg.borrow();
+                // Trim leading/trailing whitespace
+                while (arg.length > 0 && (arg[0] == ' ' || arg[0] == '\t')) arg = arg[1 .. $];
+                while (arg.length > 0 && (arg[$ - 1] == ' ' || arg[$ - 1] == '\t')) arg = arg[0 .. $ - 1];
+                // Allocate a copy
+                char* copy = cast(char*)allocator.alloc(arg.length).ptr;
+                memcpy(copy, arg.ptr, arg.length);
+                args ~= cast(str)copy[0 .. arg.length];
+                current_arg.reset();
+                advance();
+            } else if (c == '\n') {
+                line++;
+                column = 0;
+                advance();
+            } else {
+                current_arg.write(cast(char)c);
+                advance();
+            }
+        }
+
+        // Add the last argument
+        str last = current_arg.borrow();
+        // Trim leading/trailing whitespace
+        while (last.length > 0 && (last[0] == ' ' || last[0] == '\t')) last = last[1 .. $];
+        while (last.length > 0 && (last[$ - 1] == ' ' || last[$ - 1] == '\t')) last = last[0 .. $ - 1];
+        if (last.length > 0 || args.count > 0) {
+            // Allocate a copy for the last arg too
+            char* copy = cast(char*)allocator.alloc(last.length).ptr;
+            memcpy(copy, last.ptr, last.length);
+            args ~= cast(str)copy[0 .. last.length];
+        }
+
+        return args[];
+    }
+
+    // Parse macro arguments from a text slice (for nested macro expansion)
+    // Returns args array and updates idx to point past the closing paren
+    str[] parse_macro_args_from_text(str text, ref size_t idx) {
+        import dlib.stringbuilder : StringBuilder;
+        import core.stdc.string : memcpy;
+
+        Barray!str args;
+        args.bdata.allocator = allocator;
+
+        StringBuilder current_arg;
+        current_arg.allocator = allocator;
+
+        int paren_depth = 1;
+
+        while (idx < text.length && paren_depth > 0) {
+            ubyte c = text[idx];
+
+            if (c == '(') {
+                paren_depth++;
+                current_arg.write(cast(char)c);
+                idx++;
+            } else if (c == ')') {
+                paren_depth--;
+                if (paren_depth == 0) {
+                    idx++;  // consume )
+                    break;
+                }
+                current_arg.write(cast(char)c);
+                idx++;
+            } else if (c == ',' && paren_depth == 1) {
+                // Argument separator
+                str arg = current_arg.borrow();
+                while (arg.length > 0 && (arg[0] == ' ' || arg[0] == '\t')) arg = arg[1 .. $];
+                while (arg.length > 0 && (arg[$ - 1] == ' ' || arg[$ - 1] == '\t')) arg = arg[0 .. $ - 1];
+                char* copy = cast(char*)allocator.alloc(arg.length).ptr;
+                memcpy(copy, arg.ptr, arg.length);
+                args ~= cast(str)copy[0 .. arg.length];
+                current_arg.reset();
+                idx++;
+            } else {
+                current_arg.write(cast(char)c);
+                idx++;
+            }
+        }
+
+        // Add the last argument
+        str last = current_arg.borrow();
+        while (last.length > 0 && (last[0] == ' ' || last[0] == '\t')) last = last[1 .. $];
+        while (last.length > 0 && (last[$ - 1] == ' ' || last[$ - 1] == '\t')) last = last[0 .. $ - 1];
+        if (last.length > 0 || args.count > 0) {
+            char* copy = cast(char*)allocator.alloc(last.length).ptr;
+            memcpy(copy, last.ptr, last.length);
+            args ~= cast(str)copy[0 .. last.length];
+        }
+
+        return args[];
+    }
+
+    // Substitute macro parameters in replacement text
+    str substitute_macro_params(str replacement, str[] params, str[] args) {
+        import dlib.stringbuilder : StringBuilder;
+
+        if (params.length == 0) return replacement;
+
+        StringBuilder result;
+        result.allocator = allocator;
+
+        size_t i = 0;
+        while (i < replacement.length) {
+            // Check if this is the start of an identifier
+            if (replacement[i].is_alpha || replacement[i] == '_') {
+                size_t id_start = i;
+                while (i < replacement.length && replacement[i].is_ident_char) i++;
+                str ident = replacement[id_start .. i];
+
+                // Check if this is a parameter
+                bool found = false;
+                foreach (pi, param; params) {
+                    if (param == ident && pi < args.length) {
+                        result.write(args[pi]);
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    result.write(ident);
+                }
+            } else {
+                result.write(cast(char)replacement[i]);
+                i++;
+            }
+        }
+
+        return result.borrow();
+    }
+
     // Tokenize macro replacement text and emit tokens
     void tokenize_macro_replacement(str text) {
         size_t i = 0;
@@ -1115,13 +1511,62 @@ struct CTokenizer {
                 continue;
             }
 
+            // Check for ellipsis
+            if (c == '.' && i + 2 < text.length && text[i + 1] == '.' && text[i + 2] == '.') {
+                *tokens ~= CToken(CTokenType.ELLIPSIS, text[i .. i + 3], line, start_column, current_file);
+                i += 3;
+                continue;
+            }
+
+            // Two-character operators
+            if (c == '<' && i + 1 < text.length && text[i + 1] == '<') {
+                *tokens ~= CToken(CTokenType.LESS_LESS, text[i .. i + 2], line, start_column, current_file);
+                i += 2;
+                continue;
+            }
+            if (c == '>' && i + 1 < text.length && text[i + 1] == '>') {
+                *tokens ~= CToken(CTokenType.GREATER_GREATER, text[i .. i + 2], line, start_column, current_file);
+                i += 2;
+                continue;
+            }
+            if (c == '=' && i + 1 < text.length && text[i + 1] == '=') {
+                *tokens ~= CToken(CTokenType.EQUAL_EQUAL, text[i .. i + 2], line, start_column, current_file);
+                i += 2;
+                continue;
+            }
+            if (c == '!' && i + 1 < text.length && text[i + 1] == '=') {
+                *tokens ~= CToken(CTokenType.BANG_EQUAL, text[i .. i + 2], line, start_column, current_file);
+                i += 2;
+                continue;
+            }
+            if (c == '<' && i + 1 < text.length && text[i + 1] == '=') {
+                *tokens ~= CToken(CTokenType.LESS_EQUAL, text[i .. i + 2], line, start_column, current_file);
+                i += 2;
+                continue;
+            }
+            if (c == '>' && i + 1 < text.length && text[i + 1] == '=') {
+                *tokens ~= CToken(CTokenType.GREATER_EQUAL, text[i .. i + 2], line, start_column, current_file);
+                i += 2;
+                continue;
+            }
+            if (c == '&' && i + 1 < text.length && text[i + 1] == '&') {
+                *tokens ~= CToken(CTokenType.AMP_AMP, text[i .. i + 2], line, start_column, current_file);
+                i += 2;
+                continue;
+            }
+            if (c == '|' && i + 1 < text.length && text[i + 1] == '|') {
+                *tokens ~= CToken(CTokenType.PIPE_PIPE, text[i .. i + 2], line, start_column, current_file);
+                i += 2;
+                continue;
+            }
+
             // Single-character tokens
             if (c == '(' || c == ')' || c == '[' || c == ']' ||
                 c == '{' || c == '}' || c == ',' || c == ';' ||
                 c == '+' || c == '-' || c == '*' || c == '/' ||
                 c == '%' || c == '&' || c == '|' || c == '^' ||
                 c == '~' || c == '<' || c == '>' || c == '!' ||
-                c == '=') {
+                c == '=' || c == '.' || c == '?' || c == ':') {
                 *tokens ~= CToken(cast(CTokenType) c, text[i .. i + 1], line, start_column, current_file);
                 i++;
                 continue;
@@ -1182,12 +1627,38 @@ struct CTokenizer {
                 while (i < text.length && text[i].is_ident_char) i++;
                 str ident = text[id_start .. i];
 
-                // Check for nested macro
-                if (str* nested = ident in defines) {
-                    if ((*nested).length > 0) {
-                        tokenize_macro_replacement(*nested);
+                // Check for nested macro (prevent recursive expansion)
+                if (MacroDef* nested = ident in defines) {
+                    bool is_expanding = false;
+                    if (bool* exp = ident in expanding_macros) {
+                        is_expanding = *exp;
                     }
-                    // else: empty macro, emit nothing
+                    if (is_expanding) {
+                        // Macro is currently being expanded - emit as identifier
+                        *tokens ~= CToken(CTokenType.IDENTIFIER, ident, line, start_column, current_file);
+                    } else if (!nested.is_function_like && nested.replacement.length > 0) {
+                        expanding_macros[ident] = true;
+                        scope(exit) expanding_macros[ident] = false;
+                        tokenize_macro_replacement(nested.replacement);
+                    } else if (!nested.is_function_like) {
+                        // empty object-like macro - emit nothing
+                    } else {
+                        // Function-like macro - check for ( after
+                        // Skip whitespace in text
+                        while (i < text.length && (text[i] == ' ' || text[i] == '\t')) i++;
+                        if (i < text.length && text[i] == '(') {
+                            // Parse args from replacement text
+                            i++;  // consume (
+                            str[] func_args = parse_macro_args_from_text(text, i);
+                            str expanded = substitute_macro_params(nested.replacement, nested.params, func_args);
+                            expanding_macros[ident] = true;
+                            scope(exit) expanding_macros[ident] = false;
+                            tokenize_macro_replacement(expanded);
+                        } else {
+                            // No parens - just emit as identifier
+                            *tokens ~= CToken(CTokenType.IDENTIFIER, ident, line, start_column, current_file);
+                        }
+                    }
                 } else {
                     // Check for keywords
                     CTokenType type = CTokenType.IDENTIFIER;

@@ -182,6 +182,7 @@ struct CDasmWriter {
     Table!(str, int) stacklocals;    // Variables on stack (offset from rbp)
     Table!(str, CType*) var_types;   // Variable types (for pointer arithmetic)
     Table!(str, str) extern_funcs;   // Map: function name -> module alias
+    Table!(str, bool) used_funcs;    // Track which extern functions are actually called
     Table!(str, bool) addr_taken;    // Variables whose address is taken
     Table!(str, bool) arrays;        // Array variables (need special handling)
     Table!(str, CType*) global_types; // Global variable types
@@ -340,6 +341,7 @@ struct CDasmWriter {
         stacklocals.data.allocator = a;
         var_types.data.allocator = a;
         extern_funcs.data.allocator = a;
+        used_funcs.data.allocator = a;
         addr_taken.data.allocator = a;
         arrays.data.allocator = a;
         global_types.data.allocator = a;
@@ -350,6 +352,7 @@ struct CDasmWriter {
         stacklocals.cleanup();
         var_types.cleanup();
         extern_funcs.cleanup();
+        used_funcs.cleanup();
         addr_taken.cleanup();
         arrays.cleanup();
         global_types.cleanup();
@@ -381,13 +384,12 @@ struct CDasmWriter {
     // =========================================================================
 
     int generate(CTranslationUnit* unit) {
-        // Generate dlimport blocks for extern declarations, grouped by library
-        if (unit.externs.length > 0) {
-            // First pass: collect unique libraries and assign aliases
-            Table!(str, str) lib_to_alias;
-            lib_to_alias.data.allocator = allocator;
-            scope(exit) lib_to_alias.cleanup();
+        // Collect unique libraries and assign aliases for extern declarations
+        Table!(str, str) lib_to_alias;
+        lib_to_alias.data.allocator = allocator;
+        scope(exit) lib_to_alias.cleanup();
 
+        if (unit.externs.length > 0) {
             int lib_counter = 0;
             foreach (ref ext; unit.externs) {
                 str fname = ext.name.lexeme;
@@ -404,54 +406,14 @@ struct CDasmWriter {
                 // Track function -> module alias mapping
                 extern_funcs[fname] = lib_to_alias[lib];
             }
-
-            // Second pass: generate dlimport blocks per library
-            foreach (ref ext; unit.externs) {
-                str lib = ext.library.length ? ext.library : "libc.so.6";
-                str alias_name = lib_to_alias[lib];
-
-                // Check if we already started this library's block
-                // We'll use a simple approach: emit header only for first function of each lib
-                bool first_for_lib = true;
-                foreach (ref prev; unit.externs) {
-                    if (&prev is &ext) break;
-                    str prev_lib = prev.library.length ? prev.library : "libc.so.6";
-                    if (prev_lib == lib) {
-                        first_for_lib = false;
-                        break;
-                    }
-                }
-
-                if (first_for_lib) {
-                    sb.writef("dlimport %\n", alias_name);
-                    sb.writef("  \"%\"\n", lib);
-
-                    // Emit all functions for this library
-                    foreach (ref func_ext; unit.externs) {
-                        str fname = func_ext.name.lexeme;
-                        // Only use SDL library for SDL_ prefixed functions
-                        str func_lib = func_ext.library.length ? func_ext.library : "libc.so.6";
-                        if (func_lib == "libSDL2.so" && (fname.length < 4 || fname[0..4] != "SDL_")) {
-                            func_lib = "libc.so.6";
-                        }
-                        if (func_lib == lib) {
-                            if (func_ext.return_type is null) continue;  // Skip incomplete externs
-                            // Skip compiler builtins and special symbols
-                            if (fname == "alloca") continue;
-                            if (fname == "atexit") continue;  // In crt0, not directly in libc
-                            if (fname == "SDL_main") continue;  // User-provided, not in SDL lib
-                            ubyte n_ret = func_ext.return_type.is_void() ? 0 : 1;
-                            // Cap params at 8 (ddasm limit)
-                            auto n_params = func_ext.params.length > 8 ? 8 : func_ext.params.length;
-                            sb.writef("  % % %", fname, n_params, n_ret);
-                            if (func_ext.is_varargs) sb.write(" varargs");
-                            sb.write("\n");
-                        }
-                    }
-                    sb.write("end\n\n");
-                }
-            }
         }
+
+        // Use a temp buffer for globals and functions so we can emit dlimports first
+        StringBuilder code_sb;
+        code_sb.allocator = allocator;
+        scope(exit) code_sb.cleanup();
+        StringBuilder* main_sb = sb;
+        sb = &code_sb;
 
         // Generate global variables
         foreach (ref gvar; unit.globals) {
@@ -508,6 +470,50 @@ struct CDasmWriter {
             sb.write("    ret\n");
             sb.write("end\n");
         }
+
+        // Switch back to main buffer
+        sb = main_sb;
+
+        // Now generate dlimport blocks only for used functions
+        if (unit.externs.length > 0 && used_funcs.count > 0) {
+            // Track which libraries have been emitted
+            Table!(str, bool) emitted_libs;
+            emitted_libs.data.allocator = allocator;
+            scope(exit) emitted_libs.cleanup();
+
+            foreach (ref ext; unit.externs) {
+                str fname = ext.name.lexeme;
+                // Skip if not used
+                if (fname !in used_funcs) continue;
+                if (ext.return_type is null) continue;
+
+                // Determine library
+                str lib = ext.library.length ? ext.library : "libc.so.6";
+                if (lib == "libSDL2.so" && (fname.length < 4 || fname[0..4] != "SDL_")) {
+                    lib = "libc.so.6";
+                }
+
+                // Emit library header if first function from this lib
+                if (lib !in emitted_libs) {
+                    if (emitted_libs.count > 0) sb.write("end\n\n");
+                    str alias_name = lib_to_alias[lib];
+                    sb.writef("dlimport %\n", alias_name);
+                    sb.writef("  \"%\"\n", lib);
+                    emitted_libs[lib] = true;
+                }
+
+                // Emit function
+                ubyte n_ret = ext.return_type.is_void() ? 0 : 1;
+                auto n_params = ext.params.length > 8 ? 8 : ext.params.length;
+                sb.writef("  % % %", fname, n_params, n_ret);
+                if (ext.is_varargs) sb.write(" varargs");
+                sb.write("\n");
+            }
+            if (emitted_libs.count > 0) sb.write("end\n\n");
+        }
+
+        // Append the code (globals and functions)
+        sb.write(code_sb.borrow());
 
         return 0;
     }
@@ -1699,6 +1705,7 @@ struct CDasmWriter {
 
             // Direct call - use qualified name for extern functions
             if (str* mod_alias = id.name.lexeme in extern_funcs) {
+                used_funcs[id.name.lexeme] = true;  // Mark as used
                 sb.writef("    call function %.% %\n", *mod_alias, id.name.lexeme, total_args);
             } else {
                 sb.writef("    call function % %\n", id.name.lexeme, total_args);

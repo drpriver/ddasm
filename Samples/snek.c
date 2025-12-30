@@ -2,6 +2,7 @@
 #pragma library("libc.so.6")
   #include <stdlib.h>
   #include <string.h>
+  #include <stdio.h>
 #pragma library("SDL2")
   #include <SDL2/SDL.h>
 
@@ -22,18 +23,16 @@ int start(int width, int height){
   if(height > 1200) height = 1200;
   int INIT_VIDEO = 0x20;
   SDL_Init(SDL_INIT_VIDEO);
-  //           WINDOW_SHOWN | HIGHDPI    | RESIZABLE
-  int flags = 0x00000004 | 0x00002000 | 0x00000020;
   int WINDOWPOS_UNDEFINED = 0x1FFF0000;
   window = SDL_CreateWindow(
     "Snek!",
     WINDOWPOS_UNDEFINED, WINDOWPOS_UNDEFINED,
     width, height,
-    flags
+    SDL_WINDOW_SHOWN | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE
   );
-  if(!window) abort();
+  if(!window) {printf("no window\n"); abort();}
   renderer = SDL_CreateRenderer(window, -1, 0);
-  if(!renderer) abort();
+  if(!renderer) {printf("no renderer\n"); abort();}
   // Set blend mode (SDL_BLENDMODE_BLEND = 1)
   SDL_SetRenderDrawBlendMode(renderer, 1);
   gwindow = window;

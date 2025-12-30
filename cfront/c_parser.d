@@ -80,6 +80,11 @@ struct CParser {
                 continue;
             }
 
+            // Skip empty statements (from macros that expand to nothing)
+            if (match(CTokenType.SEMICOLON)) {
+                continue;
+            }
+
             // Parse extern or function/global
             if (check(CTokenType.EXTERN)) {
                 CExternDecl ext;
@@ -336,6 +341,40 @@ struct CParser {
                 continue;
             }
 
+            // Check for anonymous enum field: enum { ... } field_name;
+            if (check(CTokenType.ENUM) && peek_at(1).type == CTokenType.LEFT_BRACE) {
+                advance();  // consume 'enum'
+                advance();  // consume '{'
+                // Parse and register enum values
+                long enum_val = 0;
+                while (!check(CTokenType.RIGHT_BRACE) && !at_end) {
+                    CToken ename = consume(CTokenType.IDENTIFIER, "Expected enum constant name");
+                    if (ERROR_OCCURRED) return 1;
+                    if (match(CTokenType.EQUAL)) {
+                        auto result = parse_enum_const_expr();
+                        if (result.err) return 1;
+                        enum_val = result.value;
+                    }
+                    enum_constants[ename.lexeme] = enum_val;
+                    enum_val++;
+                    if (!match(CTokenType.COMMA)) break;
+                }
+                consume(CTokenType.RIGHT_BRACE, "Expected '}'");
+                if (ERROR_OCCURRED) return 1;
+                // Now parse the field name
+                CToken field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
+                if (ERROR_OCCURRED) return 1;
+                StructField field;
+                field.name = field_name.lexeme;
+                field.type = &TYPE_INT;  // enum is int
+                field.offset = offset;
+                fields ~= field;
+                offset += TYPE_INT.size_of();
+                consume(CTokenType.SEMICOLON, "Expected ';'");
+                if (ERROR_OCCURRED) return 1;
+                continue;
+            }
+
             // Parse field type
             CType* field_type = parse_type();
             if (field_type is null) return 1;
@@ -352,6 +391,8 @@ struct CParser {
                     error("Expected '*' in function pointer field");
                     return 1;
                 }
+                // Skip const after * (e.g., (*const funcptr))
+                match(CTokenType.CONST);
                 field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
                 if (ERROR_OCCURRED) return 1;
                 consume(CTokenType.RIGHT_PAREN, "Expected ')' after field name");
@@ -363,6 +404,17 @@ struct CParser {
                 // Treat as void* for simplicity
                 field_type = make_pointer_type(allocator, &TYPE_VOID);
             } else {
+                // Check for anonymous bit field (e.g., unsigned int :24;)
+                if (check(CTokenType.COLON)) {
+                    advance();  // consume :
+                    auto width_result = parse_enum_const_expr();
+                    if (width_result.err) return 1;
+                    consume(CTokenType.SEMICOLON, "Expected ';' after anonymous bit field");
+                    if (ERROR_OCCURRED) return 1;
+                    // Skip anonymous bit fields - they're just padding
+                    continue;
+                }
+
                 // Regular field name
                 field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
                 if (ERROR_OCCURRED) return 1;
@@ -378,6 +430,14 @@ struct CParser {
                     consume(CTokenType.RIGHT_BRACKET, "Expected ']' after array size");
                     if (ERROR_OCCURRED) return 1;
                     field_type = make_array_type(allocator, field_type, cast(size_t) size_result.value);
+                }
+
+                // Handle bit fields (e.g., unsigned int field:2;)
+                if (match(CTokenType.COLON)) {
+                    // Just skip the bit width - we'll use the full type size
+                    auto width_result = parse_enum_const_expr();
+                    if (width_result.err) return 1;
+                    // Bit field - just use the underlying type (imprecise but ok for now)
                 }
             }
 
@@ -445,6 +505,16 @@ struct CParser {
             CType* field_type = parse_type();
             if (field_type is null) return 1;
 
+            // Check for anonymous bit field
+            if (check(CTokenType.COLON)) {
+                advance();  // consume :
+                auto width_result = parse_enum_const_expr();
+                if (width_result.err) return 1;
+                consume(CTokenType.SEMICOLON, "Expected ';' after anonymous bit field");
+                if (ERROR_OCCURRED) return 1;
+                continue;  // Skip anonymous bit fields
+            }
+
             // Parse field name
             CToken field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
             if (ERROR_OCCURRED) return 1;
@@ -460,6 +530,12 @@ struct CParser {
                 consume(CTokenType.RIGHT_BRACKET, "Expected ']' after array size");
                 if (ERROR_OCCURRED) return 1;
                 field_type = make_array_type(allocator, field_type, cast(size_t) size_result.value);
+            }
+
+            // Handle bit fields
+            if (match(CTokenType.COLON)) {
+                auto width_result = parse_enum_const_expr();
+                if (width_result.err) return 1;
             }
 
             consume(CTokenType.SEMICOLON, "Expected ';' after field declaration");
@@ -501,9 +577,33 @@ struct CParser {
     }
 
     // Parse a constant expression for enum values
-    // Supports: integer literals, enum constant references, unary minus, +/-, comparisons
+    // Supports: integer literals, enum constant references, unary minus, +/-, comparisons, ternary
     ConstExprResult parse_enum_const_expr() {
-        return parse_enum_const_or();
+        return parse_enum_const_ternary();
+    }
+
+    // Ternary operator - lowest precedence
+    ConstExprResult parse_enum_const_ternary() {
+        auto result = parse_enum_const_or();
+        if (result.err) return result;
+
+        if (check(CTokenType.QUESTION)) {
+            advance();  // consume ?
+            auto if_true = parse_enum_const_expr();  // Recursive for nested ternary
+            if (if_true.err) return if_true;
+
+            consume(CTokenType.COLON, "Expected ':' in ternary expression");
+            if (ERROR_OCCURRED) {
+                result.err = true;
+                return result;
+            }
+
+            auto if_false = parse_enum_const_ternary();
+            if (if_false.err) return if_false;
+
+            result.value = result.value != 0 ? if_true.value : if_false.value;
+        }
+        return result;
     }
 
     // Bitwise OR - lowest precedence of bitwise ops
@@ -972,6 +1072,45 @@ struct CParser {
                 size_t offset = 0;
 
                 while (!check(CTokenType.RIGHT_BRACE) && !at_end) {
+                    // Check for anonymous enum field: enum { ... } field_name;
+                    if (check(CTokenType.ENUM)) {
+                        advance();  // consume 'enum'
+                        if (check(CTokenType.LEFT_BRACE)) {
+                            advance();  // consume '{'
+                            // Parse and skip enum values
+                            long enum_val = 0;
+                            while (!check(CTokenType.RIGHT_BRACE) && !at_end) {
+                                CToken name = consume(CTokenType.IDENTIFIER, "Expected enum constant name");
+                                if (ERROR_OCCURRED) return 1;
+                                if (match(CTokenType.EQUAL)) {
+                                    auto result = parse_enum_const_expr();
+                                    if (result.err) return 1;
+                                    enum_val = result.value;
+                                }
+                                enum_constants[name.lexeme] = enum_val;
+                                enum_val++;
+                                if (!match(CTokenType.COMMA)) break;
+                            }
+                            consume(CTokenType.RIGHT_BRACE, "Expected '}'");
+                            if (ERROR_OCCURRED) return 1;
+                            // Now parse the field name
+                            CToken field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
+                            if (ERROR_OCCURRED) return 1;
+                            StructField field;
+                            field.name = field_name.lexeme;
+                            field.type = &TYPE_INT;  // enum is int
+                            field.offset = offset;
+                            fields ~= field;
+                            offset += TYPE_INT.size_of();
+                            consume(CTokenType.SEMICOLON, "Expected ';'");
+                            if (ERROR_OCCURRED) return 1;
+                            continue;
+                        } else {
+                            // Named enum, put token back and let parse_type handle it
+                            current--;
+                        }
+                    }
+
                     CType* field_type = parse_type();
                     if (field_type is null) return 1;
 
@@ -980,6 +1119,7 @@ struct CParser {
                         advance();  // consume '('
                         while (check(CTokenType.IDENTIFIER)) advance();
                         if (!match(CTokenType.STAR)) { error("Expected '*' in function pointer field"); return 1; }
+                        match(CTokenType.CONST);  // Skip const after * (e.g., (*const funcptr))
                         CToken field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
                         if (ERROR_OCCURRED) return 1;
                         consume(CTokenType.RIGHT_PAREN, "Expected ')' after field name");
@@ -993,12 +1133,27 @@ struct CParser {
                         fields ~= field;
                         offset += field.type.size_of();
                     } else {
-                        // Handle comma-separated field names: int x, y;
+                        // Check for anonymous bit field first (before comma loop)
+                        if (check(CTokenType.COLON)) {
+                            advance();  // consume :
+                            auto width_result = parse_enum_const_expr();
+                            if (width_result.err) return 1;
+                            consume(CTokenType.SEMICOLON, "Expected ';' after anonymous bit field");
+                            if (ERROR_OCCURRED) return 1;
+                            continue;  // Skip to next field
+                        }
+
+                        // Handle comma-separated field names: int x, y; or int *x, *y;
                         do {
+                            CType* this_field_type = field_type;
+
+                            // Each comma-separated name can have its own pointer levels
+                            while (match(CTokenType.STAR)) {
+                                this_field_type = make_pointer_type(allocator, this_field_type);
+                            }
+
                             CToken field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
                             if (ERROR_OCCURRED) return 1;
-
-                            CType* this_field_type = field_type;
 
                             // Handle arrays
                             if (match(CTokenType.LEFT_BRACKET)) {
@@ -1011,6 +1166,12 @@ struct CParser {
                                 consume(CTokenType.RIGHT_BRACKET, "Expected ']'");
                                 if (ERROR_OCCURRED) return 1;
                                 this_field_type = make_array_type(allocator, this_field_type, cast(size_t) size_result.value);
+                            }
+
+                            // Handle bit fields
+                            if (match(CTokenType.COLON)) {
+                                auto width_result = parse_enum_const_expr();
+                                if (width_result.err) return 1;
                             }
 
                             StructField field;
@@ -1062,14 +1223,90 @@ struct CParser {
                 while (match(CTokenType.CONST) || match(CTokenType.VOLATILE)) {}
             }
 
+            // Check for function pointer typedef: typedef struct X *(*name)(...)
+            if (check(CTokenType.LEFT_PAREN)) {
+                advance();  // consume '('
+
+                // Skip any calling convention identifiers until we hit '*'
+                while (check(CTokenType.IDENTIFIER)) {
+                    advance();
+                }
+
+                if (!match(CTokenType.STAR)) {
+                    error("Expected '*' in function pointer typedef");
+                    return 1;
+                }
+
+                CToken typedef_name = consume(CTokenType.IDENTIFIER, "Expected typedef name");
+                if (ERROR_OCCURRED) return 1;
+
+                consume(CTokenType.RIGHT_PAREN, "Expected ')' after function pointer name");
+                if (ERROR_OCCURRED) return 1;
+
+                // Now parse the parameter list
+                consume(CTokenType.LEFT_PAREN, "Expected '(' for function parameters");
+                if (ERROR_OCCURRED) return 1;
+
+                auto param_types = make_barray!(CType*)(allocator);
+                bool is_varargs = false;
+
+                if (!check(CTokenType.RIGHT_PAREN)) {
+                    do {
+                        if (check(CTokenType.ELLIPSIS)) {
+                            advance();
+                            is_varargs = true;
+                            break;
+                        }
+                        if (check(CTokenType.VOID)) {
+                            CToken void_tok = advance();
+                            if (check(CTokenType.RIGHT_PAREN)) break;
+                            CType* param_type = &TYPE_VOID;
+                            while (match(CTokenType.STAR)) {
+                                param_type = make_pointer_type(allocator, param_type);
+                            }
+                            if (check(CTokenType.IDENTIFIER)) advance();
+                            param_types ~= param_type;
+                        } else {
+                            CType* param_type = parse_type();
+                            if (param_type is null) return 1;
+                            if (check(CTokenType.IDENTIFIER)) advance();
+                            param_types ~= param_type;
+                        }
+                    } while (match(CTokenType.COMMA));
+                }
+
+                consume(CTokenType.RIGHT_PAREN, "Expected ')' after parameters");
+                if (ERROR_OCCURRED) return 1;
+
+                consume(CTokenType.SEMICOLON, "Expected ';' after typedef");
+                if (ERROR_OCCURRED) return 1;
+
+                CType* func_type = make_function_type(allocator, struct_type, param_types[], is_varargs);
+                CType* func_ptr_type = make_pointer_type(allocator, func_type);
+
+                typedef_types[typedef_name.lexeme] = func_ptr_type;
+                return 0;
+            }
+
             // Skip attribute macros (like SDL_AUDIOCVT_PACKED, __attribute__((packed))) before typedef name
             while (check(CTokenType.IDENTIFIER)) {
+                auto cur_lexeme = peek().lexeme;
                 auto next = peek_at(1).type;
-                if (next == CTokenType.IDENTIFIER) {
-                    // Skip simple attribute identifier
+
+                // Only skip __attribute__(...) or known attribute macros
+                if (cur_lexeme == "__attribute__" && next == CTokenType.LEFT_PAREN) {
+                    advance();
+                    skip_balanced_parens();
+                } else if (next == CTokenType.IDENTIFIER) {
+                    // Check if next token is __attribute__ - if so, current is the typedef name
+                    auto next_lexeme = peek_at(1).lexeme;
+                    if (next_lexeme == "__attribute__") {
+                        break;  // Current is typedef name, stop skipping
+                    }
+                    // Skip simple attribute identifier (like SDL_AUDIOCVT_PACKED)
                     advance();
                 } else if (next == CTokenType.LEFT_PAREN) {
-                    // Skip function-like attribute: __attribute__((packed))
+                    // Skip function-like macro attribute
                     advance();
                     skip_balanced_parens();
                 } else {
@@ -1080,6 +1317,12 @@ struct CParser {
             // Now get the typedef name
             CToken typedef_name = consume(CTokenType.IDENTIFIER, "Expected typedef name");
             if (ERROR_OCCURRED) return 1;
+
+            // Skip __attribute__((xxx)) after typedef name
+            if (check(CTokenType.IDENTIFIER) && peek().lexeme == "__attribute__") {
+                advance();
+                skip_balanced_parens();
+            }
 
             consume(CTokenType.SEMICOLON, "Expected ';' after typedef");
             if (ERROR_OCCURRED) return 1;
@@ -1115,6 +1358,16 @@ struct CParser {
                     CType* field_type = parse_type();
                     if (field_type is null) return 1;
 
+                    // Check for anonymous bit field
+                    if (check(CTokenType.COLON)) {
+                        advance();  // consume :
+                        auto width_result = parse_enum_const_expr();
+                        if (width_result.err) return 1;
+                        consume(CTokenType.SEMICOLON, "Expected ';' after anonymous bit field");
+                        if (ERROR_OCCURRED) return 1;
+                        continue;  // Skip anonymous bit fields
+                    }
+
                     CToken field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
                     if (ERROR_OCCURRED) return 1;
 
@@ -1128,6 +1381,12 @@ struct CParser {
                         consume(CTokenType.RIGHT_BRACKET, "Expected ']'");
                         if (ERROR_OCCURRED) return 1;
                         field_type = make_array_type(allocator, field_type, cast(size_t) size_result.value);
+                    }
+
+                    // Handle bit fields
+                    if (match(CTokenType.COLON)) {
+                        auto width_result = parse_enum_const_expr();
+                        if (width_result.err) return 1;
                     }
 
                     consume(CTokenType.SEMICOLON, "Expected ';' after field");
@@ -1178,6 +1437,12 @@ struct CParser {
 
             CToken typedef_name = consume(CTokenType.IDENTIFIER, "Expected typedef name");
             if (ERROR_OCCURRED) return 1;
+
+            // Skip __attribute__((xxx)) after typedef name
+            if (check(CTokenType.IDENTIFIER) && peek().lexeme == "__attribute__") {
+                advance();
+                skip_balanced_parens();
+            }
 
             consume(CTokenType.SEMICOLON, "Expected ';' after typedef");
             if (ERROR_OCCURRED) return 1;
@@ -1383,6 +1648,25 @@ struct CParser {
             CToken typedef_name = consume(CTokenType.IDENTIFIER, "Expected typedef name");
             if (ERROR_OCCURRED) return 1;
 
+            // Handle array typedefs: typedef int array_t[10];
+            if (match(CTokenType.LEFT_BRACKET)) {
+                auto size_result = parse_enum_const_expr();
+                if (size_result.err) return 1;
+                if (size_result.value <= 0) {
+                    error("Array size must be positive");
+                    return 1;
+                }
+                consume(CTokenType.RIGHT_BRACKET, "Expected ']'");
+                if (ERROR_OCCURRED) return 1;
+                base_type = make_array_type(allocator, base_type, cast(size_t) size_result.value);
+            }
+
+            // Skip __attribute__((xxx)) after typedef name
+            if (check(CTokenType.IDENTIFIER) && peek().lexeme == "__attribute__") {
+                advance();
+                skip_balanced_parens();
+            }
+
             consume(CTokenType.SEMICOLON, "Expected ';' after typedef");
             if (ERROR_OCCURRED) return 1;
 
@@ -1398,6 +1682,27 @@ struct CParser {
         CType* ret_type = parse_type();
         if (ret_type is null) return 1;
 
+        // Check for function pointer variable: extern type (*name)(...);
+        if (check(CTokenType.LEFT_PAREN)) {
+            advance();  // consume '('
+            if (!match(CTokenType.STAR)) {
+                error("Expected '*' in function pointer declaration");
+                return 1;
+            }
+            CToken name = consume(CTokenType.IDENTIFIER, "Expected function pointer name");
+            if (ERROR_OCCURRED) return 1;
+            consume(CTokenType.RIGHT_PAREN, "Expected ')' after function pointer name");
+            if (ERROR_OCCURRED) return 1;
+            // Skip the parameter list and semicolon
+            if (check(CTokenType.LEFT_PAREN)) {
+                skip_balanced_parens();
+            }
+            consume(CTokenType.SEMICOLON, "Expected ';' after extern declaration");
+            if (ERROR_OCCURRED) return 1;
+            decl.name.lexeme = "";  // Mark as skipped (function pointer variable)
+            return 0;
+        }
+
         // Parse function/variable name
         CToken name = consume(CTokenType.IDENTIFIER, "Expected identifier");
         if (ERROR_OCCURRED) return 1;
@@ -1407,6 +1712,18 @@ struct CParser {
             // extern variable - skip it
             advance();  // consume ';'
             decl.name.lexeme = "";  // Mark as empty/skipped
+            return 0;
+        }
+
+        // Handle comma-separated extern variable declarations: extern type a, b;
+        if (check(CTokenType.COMMA)) {
+            while (match(CTokenType.COMMA)) {
+                if (!check(CTokenType.IDENTIFIER)) break;
+                advance();  // skip identifier
+            }
+            consume(CTokenType.SEMICOLON, "Expected ';' after extern declaration");
+            if (ERROR_OCCURRED) return 1;
+            decl.name.lexeme = "";  // Mark as skipped
             return 0;
         }
 
@@ -1474,6 +1791,9 @@ struct CParser {
                         return 1;
                     }
                 }
+
+                // Skip const/volatile qualifiers between type and name (e.g., char *const name)
+                while (match(CTokenType.CONST) || match(CTokenType.VOLATILE)) {}
 
                 // Parameter name is optional in declarations
                 if (check(CTokenType.IDENTIFIER)) {
@@ -1552,14 +1872,98 @@ struct CParser {
                     break;
                 }
 
-                CParam param;
-                param.type = parse_type();
-                if (param.type is null) return 1;
+                // Check for (void) - means no parameters
+                if (check(CTokenType.VOID)) {
+                    CToken void_tok = advance();
+                    if (check(CTokenType.RIGHT_PAREN)) {
+                        // Just "void" - no parameters
+                        break;
+                    }
+                    // void* or void type - put back conceptually
+                    CParam param;
+                    param.type = &TYPE_VOID;
+                    // Check for pointer
+                    while (match(CTokenType.STAR)) {
+                        param.type = make_pointer_type(allocator, param.type);
+                    }
 
-                param.name = consume(CTokenType.IDENTIFIER, "Expected parameter name");
-                if (ERROR_OCCURRED) return 1;
+                    // Check for function pointer parameter: void (*name)(params)
+                    if (check(CTokenType.LEFT_PAREN)) {
+                        advance();  // consume '('
+                        if (match(CTokenType.STAR)) {
+                            if (check(CTokenType.IDENTIFIER)) {
+                                param.name = advance();
+                            }
+                            consume(CTokenType.RIGHT_PAREN, "Expected ')' after function pointer");
+                            if (ERROR_OCCURRED) return 1;
+                            if (check(CTokenType.LEFT_PAREN)) {
+                                skip_balanced_parens();
+                            }
+                            param.type = make_pointer_type(allocator, &TYPE_VOID);
+                            params ~= param;
+                            continue;
+                        } else {
+                            error("Unexpected '(' in void parameter");
+                            return 1;
+                        }
+                    }
 
-                params ~= param;
+                    // Parameter name is optional in declarations
+                    if (check(CTokenType.IDENTIFIER)) {
+                        param.name = advance();
+                    }
+                    params ~= param;
+                } else {
+                    CParam param;
+                    param.type = parse_type();
+                    if (param.type is null) return 1;
+
+                    // Check for function pointer parameter: type (*name)(params) or type (*)(params)
+                    if (check(CTokenType.LEFT_PAREN)) {
+                        advance();  // consume '('
+                        if (match(CTokenType.STAR)) {
+                            // Function pointer parameter - name is optional
+                            if (check(CTokenType.IDENTIFIER)) {
+                                param.name = advance();
+                            }
+                            consume(CTokenType.RIGHT_PAREN, "Expected ')' after function pointer");
+                            if (ERROR_OCCURRED) return 1;
+                            // Skip the parameter list
+                            if (check(CTokenType.LEFT_PAREN)) {
+                                skip_balanced_parens();
+                            }
+                            // Treat as void* for simplicity
+                            param.type = make_pointer_type(allocator, &TYPE_VOID);
+                            params ~= param;
+                            continue;
+                        } else {
+                            error("Unexpected '(' in parameter");
+                            return 1;
+                        }
+                    }
+
+                    // Skip const/volatile qualifiers between type and name (e.g., char *const name)
+                    while (match(CTokenType.CONST) || match(CTokenType.VOLATILE)) {}
+
+                    // Parameter name is optional in declarations
+                    if (check(CTokenType.IDENTIFIER)) {
+                        param.name = advance();
+                    }
+
+                    // Handle array parameters: type name[size]
+                    if (check(CTokenType.LEFT_BRACKET)) {
+                        while (check(CTokenType.LEFT_BRACKET)) {
+                            advance();  // consume '['
+                            while (!check(CTokenType.RIGHT_BRACKET) && !at_end) {
+                                advance();
+                            }
+                            if (check(CTokenType.RIGHT_BRACKET)) advance();
+                        }
+                        param.type = make_pointer_type(allocator, param.type);
+                    }
+
+                    params ~= param;
+                }
             } while (match(CTokenType.COMMA));
         }
 
@@ -1701,6 +2105,16 @@ struct CParser {
                     CType* field_type = parse_type();
                     if (field_type is null) return null;
 
+                    // Check for anonymous bit field
+                    if (check(CTokenType.COLON)) {
+                        advance();  // consume :
+                        auto width_result = parse_enum_const_expr();
+                        if (width_result.err) return null;
+                        consume(CTokenType.SEMICOLON, "Expected ';' after anonymous bit field");
+                        if (ERROR_OCCURRED) return null;
+                        continue;  // Skip anonymous bit fields
+                    }
+
                     CToken field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
                     if (ERROR_OCCURRED) return null;
 
@@ -1714,6 +2128,12 @@ struct CParser {
                         consume(CTokenType.RIGHT_BRACKET, "Expected ']'");
                         if (ERROR_OCCURRED) return null;
                         field_type = make_array_type(allocator, field_type, cast(size_t) size_result.value);
+                    }
+
+                    // Handle bit fields
+                    if (match(CTokenType.COLON)) {
+                        auto width_result = parse_enum_const_expr();
+                        if (width_result.err) return null;
                     }
 
                     consume(CTokenType.SEMICOLON, "Expected ';' after field");
@@ -1773,6 +2193,16 @@ struct CParser {
                     CType* field_type = parse_type();
                     if (field_type is null) return null;
 
+                    // Check for anonymous bit field
+                    if (check(CTokenType.COLON)) {
+                        advance();  // consume :
+                        auto width_result = parse_enum_const_expr();
+                        if (width_result.err) return null;
+                        consume(CTokenType.SEMICOLON, "Expected ';' after anonymous bit field");
+                        if (ERROR_OCCURRED) return null;
+                        continue;  // Skip anonymous bit fields
+                    }
+
                     CToken field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
                     if (ERROR_OCCURRED) return null;
 
@@ -1786,6 +2216,12 @@ struct CParser {
                         consume(CTokenType.RIGHT_BRACKET, "Expected ']'");
                         if (ERROR_OCCURRED) return null;
                         field_type = make_array_type(allocator, field_type, cast(size_t) size_result.value);
+                    }
+
+                    // Handle bit fields
+                    if (match(CTokenType.COLON)) {
+                        auto width_result = parse_enum_const_expr();
+                        if (width_result.err) return null;
                     }
 
                     consume(CTokenType.SEMICOLON, "Expected ';' after field");
