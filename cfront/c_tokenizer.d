@@ -8,6 +8,7 @@ import core.stdc.stdio : fprintf, stderr;
 import dlib.aliases;
 import dlib.allocator : Allocator;
 import dlib.barray : Barray, make_barray;
+import dlib.table : Table;
 
 enum CTokenType : uint {
     // Single character tokens
@@ -98,13 +99,21 @@ struct CToken {
 struct CTokenizer {
     const(ubyte)[] source;
     Barray!CToken* tokens;
+    Allocator allocator;
     int start = 0;
     int current = 0;
     int line = 1;
     int column = 1;
     int start_column = 1;
 
+    // Preprocessor defines: name -> replacement text (empty string = expands to nothing)
+    Table!(str, str) defines;
+
     bool ERROR_OCCURRED = false;
+
+    void init() {
+        defines.data.allocator = allocator;
+    }
 
     void error(str message) {
         ERROR_OCCURRED = true;
@@ -280,8 +289,38 @@ struct CTokenizer {
             // Skip to end of line, store as pragma token
             while (peek != '\n' && !at_end) advance();
             add_token(CTokenType.PRAGMA);
+        } else if (directive == "define") {
+            // #define NAME or #define NAME VALUE
+            // Skip whitespace after 'define'
+            while (peek == ' ' || peek == '\t') advance();
+
+            // Get macro name
+            int name_start = current;
+            while (peek.is_ident_char) advance();
+            str macro_name = cast(str)source[name_start .. current];
+
+            if (macro_name.length == 0) {
+                error("Expected macro name after #define");
+                return;
+            }
+
+            // Skip whitespace after name
+            while (peek == ' ' || peek == '\t') advance();
+
+            // Get replacement text (everything until end of line)
+            int value_start = current;
+            while (peek != '\n' && !at_end) advance();
+            str value = cast(str)source[value_start .. current];
+
+            // Trim trailing whitespace from value
+            while (value.length > 0 && (value[$ - 1] == ' ' || value[$ - 1] == '\t')) {
+                value = value[0 .. $ - 1];
+            }
+
+            // Store in defines table
+            defines[macro_name] = value;
         } else {
-            // For now, skip other preprocessor directives
+            // Skip other preprocessor directives
             while (peek != '\n' && !at_end) advance();
         }
     }
@@ -305,6 +344,18 @@ struct CTokenizer {
     void do_identifier() {
         while (peek.is_ident_char) advance();
         auto text = cast(str)source[start .. current];
+
+        // Check for macro substitution
+        if (str* replacement = text in defines) {
+            str value = *replacement;
+            if (value.length == 0) {
+                // Macro expands to nothing - don't emit any token
+                return;
+            }
+            // Tokenize the replacement text and emit those tokens
+            tokenize_macro_replacement(value);
+            return;
+        }
 
         // Check for keywords
         CTokenType type = CTokenType.IDENTIFIER;
@@ -339,6 +390,100 @@ struct CTokenizer {
             default: break;
         }
         add_token(type);
+    }
+
+    // Tokenize macro replacement text and emit tokens
+    void tokenize_macro_replacement(str text) {
+        size_t i = 0;
+
+        while (i < text.length) {
+            ubyte c = text[i];
+
+            // Skip whitespace
+            if (c == ' ' || c == '\t') {
+                i++;
+                continue;
+            }
+
+            // Single-character tokens
+            if (c == '(' || c == ')' || c == '[' || c == ']' ||
+                c == '{' || c == '}' || c == ',' || c == ';' ||
+                c == '+' || c == '-' || c == '*' || c == '/' ||
+                c == '%' || c == '&' || c == '|' || c == '^' ||
+                c == '~' || c == '<' || c == '>' || c == '!' ||
+                c == '=') {
+                *tokens ~= CToken(cast(CTokenType) c, text[i .. i + 1], line, start_column);
+                i++;
+                continue;
+            }
+
+            // Hex number
+            if (c == '0' && i + 1 < text.length && (text[i + 1] == 'x' || text[i + 1] == 'X')) {
+                size_t num_start = i;
+                i += 2;  // skip 0x
+                while (i < text.length && text[i].is_hex_digit) i++;
+                *tokens ~= CToken(CTokenType.HEX, text[num_start .. i], line, start_column);
+                continue;
+            }
+
+            // Decimal number
+            if (c.is_digit) {
+                size_t num_start = i;
+                while (i < text.length && text[i].is_digit) i++;
+                // Skip suffixes like L, U, UL
+                while (i < text.length && (text[i] == 'L' || text[i] == 'l' ||
+                                            text[i] == 'U' || text[i] == 'u')) i++;
+                *tokens ~= CToken(CTokenType.NUMBER, text[num_start .. i], line, start_column);
+                continue;
+            }
+
+            // String literal
+            if (c == '"') {
+                size_t str_start = i;
+                i++;  // skip opening "
+                while (i < text.length && text[i] != '"') {
+                    if (text[i] == '\\' && i + 1 < text.length) i++;  // skip escaped char
+                    i++;
+                }
+                if (i < text.length) i++;  // skip closing "
+                *tokens ~= CToken(CTokenType.STRING, text[str_start .. i], line, start_column);
+                continue;
+            }
+
+            // Char literal
+            if (c == '\'') {
+                size_t chr_start = i;
+                i++;  // skip opening '
+                while (i < text.length && text[i] != '\'') {
+                    if (text[i] == '\\' && i + 1 < text.length) i++;
+                    i++;
+                }
+                if (i < text.length) i++;  // skip closing '
+                *tokens ~= CToken(CTokenType.CHAR_LITERAL, text[chr_start .. i], line, start_column);
+                continue;
+            }
+
+            // Identifier
+            if (c.is_alpha || c == '_') {
+                size_t id_start = i;
+                while (i < text.length && text[i].is_ident_char) i++;
+                str ident = text[id_start .. i];
+
+                // Check for nested macro
+                if (str* nested = ident in defines) {
+                    if ((*nested).length > 0) {
+                        tokenize_macro_replacement(*nested);
+                    }
+                    // else: empty macro, emit nothing
+                } else {
+                    *tokens ~= CToken(CTokenType.IDENTIFIER, ident, line, start_column);
+                }
+                continue;
+            }
+
+            // Unknown character - skip it
+            i++;
+        }
     }
 
     void do_string() {

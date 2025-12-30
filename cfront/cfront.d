@@ -21,7 +21,8 @@ int compile_c_to_dasm(const(ubyte)[] source, Box!(char[])* progtext) {
 
     // Tokenize
     Barray!CToken tokens = make_barray!CToken(arena.allocator());
-    CTokenizer tokenizer = CTokenizer(source, &tokens);
+    CTokenizer tokenizer = CTokenizer(source, &tokens, arena.allocator());
+    tokenizer.init();
     int err = tokenizer.tokenize_tokens();
     if (err) return 1;
     tokens.bdata.resize(tokens.count);

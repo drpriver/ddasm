@@ -23,6 +23,7 @@ struct CParser {
     Table!(str, CType*) union_types;   // Defined union types
     Table!(str, CType*) enum_types;    // Defined enum types
     Table!(str, long) enum_constants;  // Enum constant values (name -> value)
+    Table!(str, CType*) typedef_types; // Typedef aliases (name -> type)
 
     void error(CToken token, str message) {
         ERROR_OCCURRED = true;
@@ -53,6 +54,7 @@ struct CParser {
         union_types.data.allocator = allocator;
         enum_types.data.allocator = allocator;
         enum_constants.data.allocator = allocator;
+        typedef_types.data.allocator = allocator;
 
         while (!at_end) {
             // Handle #pragma
@@ -129,10 +131,13 @@ struct CParser {
                 }
             } else if (check(CTokenType.ENUM)) {
                 // Check if this is an enum definition
-                // Look ahead: enum Name { ... means definition
-                // enum Name var... means variable of enum type
-                if (peek_at(1).type == CTokenType.IDENTIFIER &&
-                    peek_at(2).type == CTokenType.LEFT_BRACE) {
+                // Look ahead: enum Name { ... means named definition
+                //             enum { ... means anonymous definition
+                //             enum Name var... means variable of enum type
+                bool is_anon_enum = peek_at(1).type == CTokenType.LEFT_BRACE;
+                bool is_named_enum = peek_at(1).type == CTokenType.IDENTIFIER &&
+                                     peek_at(2).type == CTokenType.LEFT_BRACE;
+                if (is_anon_enum || is_named_enum) {
                     CEnumDef edef;
                     int err = parse_enum_def(&edef);
                     if (err) return err;
@@ -157,6 +162,10 @@ struct CParser {
                         globals ~= gvar;
                     }
                 }
+            } else if (check(CTokenType.TYPEDEF)) {
+                // Parse typedef declaration
+                int err = parse_typedef(&enums);
+                if (err) return err;
             } else {
                 // Parse type and name, then decide if it's a function or global
                 CType* type_ = parse_type();
@@ -240,15 +249,15 @@ struct CParser {
 
             // Handle arrays
             if (match(CTokenType.LEFT_BRACKET)) {
-                CToken size_tok = consume(CTokenType.NUMBER, "Expected array size");
-                if (ERROR_OCCURRED) return 1;
-                size_t arr_size = 0;
-                foreach (c; size_tok.lexeme) {
-                    arr_size = arr_size * 10 + (c - '0');
+                auto size_result = parse_enum_const_expr();
+                if (size_result.err) return 1;
+                if (size_result.value <= 0) {
+                    error("Array size must be positive");
+                    return 1;
                 }
                 consume(CTokenType.RIGHT_BRACKET, "Expected ']' after array size");
                 if (ERROR_OCCURRED) return 1;
-                field_type = make_array_type(allocator, field_type, arr_size);
+                field_type = make_array_type(allocator, field_type, cast(size_t) size_result.value);
             }
 
             consume(CTokenType.SEMICOLON, "Expected ';' after field declaration");
@@ -305,15 +314,15 @@ struct CParser {
 
             // Handle arrays
             if (match(CTokenType.LEFT_BRACKET)) {
-                CToken size_tok = consume(CTokenType.NUMBER, "Expected array size");
-                if (ERROR_OCCURRED) return 1;
-                size_t arr_size = 0;
-                foreach (c; size_tok.lexeme) {
-                    arr_size = arr_size * 10 + (c - '0');
+                auto size_result = parse_enum_const_expr();
+                if (size_result.err) return 1;
+                if (size_result.value <= 0) {
+                    error("Array size must be positive");
+                    return 1;
                 }
                 consume(CTokenType.RIGHT_BRACKET, "Expected ']' after array size");
                 if (ERROR_OCCURRED) return 1;
-                field_type = make_array_type(allocator, field_type, arr_size);
+                field_type = make_array_type(allocator, field_type, cast(size_t) size_result.value);
             }
 
             consume(CTokenType.SEMICOLON, "Expected ';' after field declaration");
@@ -405,6 +414,24 @@ struct CParser {
             return result;
         }
 
+        if (match(CTokenType.HEX)) {
+            CToken tok = previous();
+            long value = 0;
+            str lexeme = tok.lexeme;
+            // Skip "0x" or "0X" prefix
+            foreach (c; lexeme[2 .. $]) {
+                if (c >= '0' && c <= '9') {
+                    value = value * 16 + (c - '0');
+                } else if (c >= 'a' && c <= 'f') {
+                    value = value * 16 + (c - 'a' + 10);
+                } else if (c >= 'A' && c <= 'F') {
+                    value = value * 16 + (c - 'A' + 10);
+                }
+            }
+            result.value = value;
+            return result;
+        }
+
         if (match(CTokenType.IDENTIFIER)) {
             CToken tok = previous();
             // Look up in already-defined enum constants
@@ -434,10 +461,16 @@ struct CParser {
 
     int parse_enum_def(CEnumDef* edef) {
         advance();  // consume 'enum'
-        CToken name = consume(CTokenType.IDENTIFIER, "Expected enum name");
-        if (ERROR_OCCURRED) return 1;
 
-        consume(CTokenType.LEFT_BRACE, "Expected '{' after enum name");
+        // Name is optional (anonymous enum)
+        CToken name;
+        bool has_name = false;
+        if (check(CTokenType.IDENTIFIER)) {
+            name = advance();
+            has_name = true;
+        }
+
+        consume(CTokenType.LEFT_BRACE, "Expected '{' after enum");
         if (ERROR_OCCURRED) return 1;
 
         // Parse enum constants
@@ -489,15 +522,307 @@ struct CParser {
         if (ERROR_OCCURRED) return 1;
 
         // Create the enum type
-        CType* enum_type = make_enum_type(allocator, name.lexeme);
+        CType* enum_type = make_enum_type(allocator, has_name ? name.lexeme : "");
 
-        // Register the enum type
-        enum_types[name.lexeme] = enum_type;
+        // Register the enum type if named
+        if (has_name) {
+            enum_types[name.lexeme] = enum_type;
+        }
 
-        edef.name = name;
+        edef.name = has_name ? name : CToken.init;
         edef.enum_type = enum_type;
         edef.constants = constants[];
         return 0;
+    }
+
+    // Parse typedef declaration
+    // Supports: typedef <type> <name>;
+    //           typedef struct { ... } Name;
+    //           typedef struct Name { ... } Alias;
+    //           typedef enum { ... } Name;
+    int parse_typedef(Barray!(CEnumDef)* enums_out) {
+        advance();  // consume 'typedef'
+
+        // Check for struct/union/enum definition within typedef
+        if (check(CTokenType.STRUCT)) {
+            advance();  // consume 'struct'
+
+            // Check if there's a name and/or brace
+            CToken struct_name;
+            bool has_name = false;
+            bool has_body = false;
+
+            if (check(CTokenType.IDENTIFIER)) {
+                struct_name = advance();
+                has_name = true;
+            }
+            if (check(CTokenType.LEFT_BRACE)) {
+                has_body = true;
+            }
+
+            CType* struct_type;
+
+            if (has_body) {
+                // Parse struct body
+                consume(CTokenType.LEFT_BRACE, "Expected '{'");
+                if (ERROR_OCCURRED) return 1;
+
+                auto fields = make_barray!StructField(allocator);
+                size_t offset = 0;
+
+                while (!check(CTokenType.RIGHT_BRACE) && !at_end) {
+                    CType* field_type = parse_type();
+                    if (field_type is null) return 1;
+
+                    CToken field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
+                    if (ERROR_OCCURRED) return 1;
+
+                    // Handle arrays
+                    if (match(CTokenType.LEFT_BRACKET)) {
+                        auto size_result = parse_enum_const_expr();
+                        if (size_result.err) return 1;
+                        if (size_result.value <= 0) {
+                            error("Array size must be positive");
+                            return 1;
+                        }
+                        consume(CTokenType.RIGHT_BRACKET, "Expected ']'");
+                        if (ERROR_OCCURRED) return 1;
+                        field_type = make_array_type(allocator, field_type, cast(size_t) size_result.value);
+                    }
+
+                    consume(CTokenType.SEMICOLON, "Expected ';' after field");
+                    if (ERROR_OCCURRED) return 1;
+
+                    StructField field;
+                    field.name = field_name.lexeme;
+                    field.type = field_type;
+                    field.offset = offset;
+                    fields ~= field;
+                    offset += field_type.size_of();
+                }
+
+                consume(CTokenType.RIGHT_BRACE, "Expected '}'");
+                if (ERROR_OCCURRED) return 1;
+
+                struct_type = make_struct_type(allocator, has_name ? struct_name.lexeme : "", fields[], offset);
+
+                // If named, also register as struct type
+                if (has_name) {
+                    struct_types[struct_name.lexeme] = struct_type;
+                }
+            } else {
+                // Just referencing existing struct
+                if (!has_name) {
+                    error("Expected struct name or body");
+                    return 1;
+                }
+                if (CType** found = struct_name.lexeme in struct_types) {
+                    struct_type = *found;
+                } else {
+                    error("Unknown struct type");
+                    return 1;
+                }
+            }
+
+            // Now get the typedef name
+            CToken typedef_name = consume(CTokenType.IDENTIFIER, "Expected typedef name");
+            if (ERROR_OCCURRED) return 1;
+
+            consume(CTokenType.SEMICOLON, "Expected ';' after typedef");
+            if (ERROR_OCCURRED) return 1;
+
+            typedef_types[typedef_name.lexeme] = struct_type;
+            return 0;
+
+        } else if (check(CTokenType.UNION)) {
+            advance();  // consume 'union'
+
+            CToken union_name;
+            bool has_name = false;
+            bool has_body = false;
+
+            if (check(CTokenType.IDENTIFIER)) {
+                union_name = advance();
+                has_name = true;
+            }
+            if (check(CTokenType.LEFT_BRACE)) {
+                has_body = true;
+            }
+
+            CType* union_type;
+
+            if (has_body) {
+                consume(CTokenType.LEFT_BRACE, "Expected '{'");
+                if (ERROR_OCCURRED) return 1;
+
+                auto fields = make_barray!StructField(allocator);
+                size_t max_size = 0;
+
+                while (!check(CTokenType.RIGHT_BRACE) && !at_end) {
+                    CType* field_type = parse_type();
+                    if (field_type is null) return 1;
+
+                    CToken field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
+                    if (ERROR_OCCURRED) return 1;
+
+                    if (match(CTokenType.LEFT_BRACKET)) {
+                        auto size_result = parse_enum_const_expr();
+                        if (size_result.err) return 1;
+                        if (size_result.value <= 0) {
+                            error("Array size must be positive");
+                            return 1;
+                        }
+                        consume(CTokenType.RIGHT_BRACKET, "Expected ']'");
+                        if (ERROR_OCCURRED) return 1;
+                        field_type = make_array_type(allocator, field_type, cast(size_t) size_result.value);
+                    }
+
+                    consume(CTokenType.SEMICOLON, "Expected ';' after field");
+                    if (ERROR_OCCURRED) return 1;
+
+                    StructField field;
+                    field.name = field_name.lexeme;
+                    field.type = field_type;
+                    field.offset = 0;  // All union fields at offset 0
+                    fields ~= field;
+                    size_t field_size = field_type.size_of();
+                    if (field_size > max_size) max_size = field_size;
+                }
+
+                consume(CTokenType.RIGHT_BRACE, "Expected '}'");
+                if (ERROR_OCCURRED) return 1;
+
+                union_type = make_union_type(allocator, has_name ? union_name.lexeme : "", fields[], max_size);
+
+                if (has_name) {
+                    union_types[union_name.lexeme] = union_type;
+                }
+            } else {
+                if (!has_name) {
+                    error("Expected union name or body");
+                    return 1;
+                }
+                if (CType** found = union_name.lexeme in union_types) {
+                    union_type = *found;
+                } else {
+                    error("Unknown union type");
+                    return 1;
+                }
+            }
+
+            CToken typedef_name = consume(CTokenType.IDENTIFIER, "Expected typedef name");
+            if (ERROR_OCCURRED) return 1;
+
+            consume(CTokenType.SEMICOLON, "Expected ';' after typedef");
+            if (ERROR_OCCURRED) return 1;
+
+            typedef_types[typedef_name.lexeme] = union_type;
+            return 0;
+
+        } else if (check(CTokenType.ENUM)) {
+            advance();  // consume 'enum'
+
+            CToken enum_name;
+            bool has_name = false;
+            bool has_body = false;
+
+            if (check(CTokenType.IDENTIFIER)) {
+                enum_name = advance();
+                has_name = true;
+            }
+            if (check(CTokenType.LEFT_BRACE)) {
+                has_body = true;
+            }
+
+            CType* enum_type;
+
+            if (has_body) {
+                consume(CTokenType.LEFT_BRACE, "Expected '{'");
+                if (ERROR_OCCURRED) return 1;
+
+                // Parse enum constants
+                auto constants = make_barray!EnumConstant(allocator);
+                long next_value = 0;
+
+                while (!check(CTokenType.RIGHT_BRACE) && !at_end) {
+                    CToken const_name = consume(CTokenType.IDENTIFIER, "Expected enum constant name");
+                    if (ERROR_OCCURRED) return 1;
+
+                    long value = next_value;
+                    if (match(CTokenType.EQUAL)) {
+                        auto result = parse_enum_const_expr();
+                        if (result.err) return 1;
+                        value = result.value;
+                    }
+
+                    EnumConstant ec;
+                    ec.name = const_name.lexeme;
+                    ec.value = value;
+                    constants ~= ec;
+                    enum_constants[const_name.lexeme] = value;
+                    next_value = value + 1;
+
+                    if (!check(CTokenType.RIGHT_BRACE)) {
+                        if (!match(CTokenType.COMMA)) {
+                            if (!check(CTokenType.RIGHT_BRACE)) {
+                                error("Expected ',' or '}' after enum constant");
+                                return 1;
+                            }
+                        }
+                    }
+                }
+
+                consume(CTokenType.RIGHT_BRACE, "Expected '}'");
+                if (ERROR_OCCURRED) return 1;
+
+                enum_type = make_enum_type(allocator, has_name ? enum_name.lexeme : "");
+
+                if (has_name) {
+                    enum_types[enum_name.lexeme] = enum_type;
+                }
+
+                // Add enum definition to translation unit so code generator sees constants
+                CEnumDef edef;
+                edef.name = has_name ? enum_name : CToken.init;
+                edef.enum_type = enum_type;
+                edef.constants = constants[];
+                *enums_out ~= edef;
+            } else {
+                if (!has_name) {
+                    error("Expected enum name or body");
+                    return 1;
+                }
+                if (CType** found = enum_name.lexeme in enum_types) {
+                    enum_type = *found;
+                } else {
+                    error("Unknown enum type");
+                    return 1;
+                }
+            }
+
+            CToken typedef_name = consume(CTokenType.IDENTIFIER, "Expected typedef name");
+            if (ERROR_OCCURRED) return 1;
+
+            consume(CTokenType.SEMICOLON, "Expected ';' after typedef");
+            if (ERROR_OCCURRED) return 1;
+
+            typedef_types[typedef_name.lexeme] = enum_type;
+            return 0;
+
+        } else {
+            // Simple typedef: typedef <type> <name>;
+            CType* base_type = parse_type();
+            if (base_type is null) return 1;
+
+            CToken typedef_name = consume(CTokenType.IDENTIFIER, "Expected typedef name");
+            if (ERROR_OCCURRED) return 1;
+
+            consume(CTokenType.SEMICOLON, "Expected ';' after typedef");
+            if (ERROR_OCCURRED) return 1;
+
+            typedef_types[typedef_name.lexeme] = base_type;
+            return 0;
+        }
     }
 
     int parse_extern_decl(CExternDecl* decl) {
@@ -724,6 +1049,16 @@ struct CParser {
                 error("Unknown enum type");
                 return null;
             }
+        } else if (check(CTokenType.IDENTIFIER)) {
+            // Check for typedef name
+            CToken name = peek();
+            if (CType** found = name.lexeme in typedef_types) {
+                advance();  // consume the typedef name
+                result = *found;
+            } else {
+                error("Expected type specifier");
+                return null;
+            }
         } else {
             error("Expected type specifier");
             return null;
@@ -763,7 +1098,7 @@ struct CParser {
         if (match(CTokenType.CONTINUE)) return parse_continue();
 
         // Check for variable declaration (starts with type)
-        if (is_type_specifier(peek().type)) {
+        if (is_type_specifier(peek())) {
             return parse_var_decl();
         }
 
@@ -771,12 +1106,19 @@ struct CParser {
         return parse_expr_stmt();
     }
 
-    bool is_type_specifier(CTokenType type) {
+    bool is_type_specifier(CToken tok) {
         with (CTokenType) {
-            return type == VOID || type == CHAR || type == SHORT ||
-                   type == INT || type == LONG || type == UNSIGNED ||
-                   type == SIGNED || type == CONST || type == STRUCT ||
-                   type == UNION || type == ENUM;
+            if (tok.type == VOID || tok.type == CHAR || tok.type == SHORT ||
+                tok.type == INT || tok.type == LONG || tok.type == UNSIGNED ||
+                tok.type == SIGNED || tok.type == CONST || tok.type == STRUCT ||
+                tok.type == UNION || tok.type == ENUM) {
+                return true;
+            }
+            // Check for typedef names
+            if (tok.type == IDENTIFIER) {
+                return (tok.lexeme in typedef_types) !is null;
+            }
+            return false;
         }
     }
 
@@ -846,7 +1188,7 @@ struct CParser {
         // Initializer
         CStmt* init = null;
         if (!check(CTokenType.SEMICOLON)) {
-            if (is_type_specifier(peek().type)) {
+            if (is_type_specifier(peek())) {
                 init = parse_var_decl();
             } else {
                 init = parse_expr_stmt();
@@ -919,16 +1261,12 @@ struct CParser {
         CToken name = consume(CTokenType.IDENTIFIER, "Expected variable name");
         if (ERROR_OCCURRED) return null;
 
-        // Check for array declaration: int arr[10]
+        // Check for array declaration: int arr[10] or int arr[SIZE]
         if (match(CTokenType.LEFT_BRACKET)) {
-            CToken size_tok = consume(CTokenType.NUMBER, "Expected array size");
-            if (ERROR_OCCURRED) return null;
-
-            // Parse the size as an integer
-            import dlib.parse_numbers : parse_unsigned_human;
-            auto parsed = parse_unsigned_human(size_tok.lexeme);
-            if (parsed.errored || parsed.value == 0) {
-                error("Invalid array size");
+            auto size_result = parse_enum_const_expr();
+            if (size_result.err) return null;
+            if (size_result.value <= 0) {
+                error("Array size must be positive");
                 return null;
             }
 
@@ -936,7 +1274,7 @@ struct CParser {
             if (ERROR_OCCURRED) return null;
 
             // Create array type
-            var_type = make_array_type(allocator, var_type, parsed.value);
+            var_type = make_array_type(allocator, var_type, cast(size_t) size_result.value);
         }
 
         CExpr* initializer = null;
