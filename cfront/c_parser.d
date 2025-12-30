@@ -38,6 +38,7 @@ struct CParser {
     int parse(CTranslationUnit* unit) {
         auto functions = make_barray!CFunction(allocator);
         auto externs = make_barray!CExternDecl(allocator);
+        auto globals = make_barray!CGlobalVar(allocator);
 
         while (!at_end) {
             // Handle #pragma
@@ -46,22 +47,39 @@ struct CParser {
                 continue;
             }
 
-            // Parse extern or function
+            // Parse extern or function/global
             if (check(CTokenType.EXTERN)) {
                 CExternDecl ext;
                 int err = parse_extern_decl(&ext);
                 if (err) return err;
                 externs ~= ext;
             } else {
-                CFunction func;
-                int err = parse_function(&func);
-                if (err) return err;
-                functions ~= func;
+                // Parse type and name, then decide if it's a function or global
+                CType* type_ = parse_type();
+                if (type_ is null) return 1;
+
+                CToken name = consume(CTokenType.IDENTIFIER, "Expected identifier");
+                if (ERROR_OCCURRED) return 1;
+
+                if (check(CTokenType.LEFT_PAREN)) {
+                    // It's a function
+                    CFunction func;
+                    int err = parse_function_rest(type_, name, &func);
+                    if (err) return err;
+                    functions ~= func;
+                } else {
+                    // It's a global variable
+                    CGlobalVar gvar;
+                    int err = parse_global_var_rest(type_, name, &gvar);
+                    if (err) return err;
+                    globals ~= gvar;
+                }
             }
         }
 
         unit.functions = functions[];
         unit.externs = externs[];
+        unit.globals = globals[];
         unit.current_library = current_library;
         return 0;
     }
@@ -154,6 +172,11 @@ struct CParser {
         CToken name = consume(CTokenType.IDENTIFIER, "Expected function name");
         if (ERROR_OCCURRED) return 1;
 
+        return parse_function_rest(ret_type, name, func);
+    }
+
+    // Parse function after type and name have been consumed
+    int parse_function_rest(CType* ret_type, CToken name, CFunction* func) {
         // Parse parameters
         consume(CTokenType.LEFT_PAREN, "Expected '(' after function name");
         if (ERROR_OCCURRED) return 1;
@@ -210,6 +233,24 @@ struct CParser {
         if (ERROR_OCCURRED) return 1;
 
         func.body = body[];
+        return 0;
+    }
+
+    // Parse global variable after type and name have been consumed
+    int parse_global_var_rest(CType* var_type, CToken name, CGlobalVar* gvar) {
+        gvar.name = name;
+        gvar.var_type = var_type;
+        gvar.initializer = null;
+
+        // Check for initializer
+        if (match(CTokenType.EQUAL)) {
+            gvar.initializer = parse_expression();
+            if (gvar.initializer is null) return 1;
+        }
+
+        consume(CTokenType.SEMICOLON, "Expected ';' after global variable declaration");
+        if (ERROR_OCCURRED) return 1;
+
         return 0;
     }
 

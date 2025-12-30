@@ -76,6 +76,12 @@ __gshared CType TYPE_UCHAR = { kind: CTypeKind.CHAR, is_unsigned: true };
 __gshared CType TYPE_UINT = { kind: CTypeKind.INT, is_unsigned: true };
 __gshared CType TYPE_ULONG = { kind: CTypeKind.LONG, is_unsigned: true };
 
+// Pointer types
+__gshared CType TYPE_VOID_PTR = { kind: CTypeKind.POINTER, pointed_to: &TYPE_VOID };
+__gshared CType TYPE_CHAR_PTR = { kind: CTypeKind.POINTER, pointed_to: &TYPE_CHAR };
+__gshared CType TYPE_INT_PTR = { kind: CTypeKind.POINTER, pointed_to: &TYPE_INT };
+__gshared CType TYPE_LONG_PTR = { kind: CTypeKind.POINTER, pointed_to: &TYPE_LONG };
+
 CType* make_pointer_type(Allocator a, CType* base) {
     auto data = a.alloc(CType.sizeof);
     auto result = cast(CType*)data.ptr;
@@ -145,7 +151,7 @@ struct CLiteral {
     CToken value;
 
     static CExpr* make(Allocator a, CToken t, CType* type) {
-        auto data = a.alloc(typeof(this).sizeof);
+        auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.LITERAL;
         result.expr.token = t;
@@ -160,7 +166,7 @@ struct CIdentifier {
     CToken name;
 
     static CExpr* make(Allocator a, CToken t) {
-        auto data = a.alloc(typeof(this).sizeof);
+        auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.IDENTIFIER;
         result.expr.token = t;
@@ -179,7 +185,7 @@ struct CBinary {
     CExpr* right() { return right_.ungroup(); }
 
     static CExpr* make(Allocator a, CExpr* l, CTokenType op, CExpr* r, CToken t) {
-        auto data = a.alloc(typeof(this).sizeof);
+        auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.BINARY;
         result.expr.token = t;
@@ -199,7 +205,7 @@ struct CUnary {
     CExpr* operand() { return operand_.ungroup(); }
 
     static CExpr* make(Allocator a, CTokenType op, CExpr* operand, bool prefix, CToken t) {
-        auto data = a.alloc(typeof(this).sizeof);
+        auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.UNARY;
         result.expr.token = t;
@@ -218,7 +224,7 @@ struct CCall {
     CExpr* callee() { return callee_.ungroup(); }
 
     static CExpr* make(Allocator a, CExpr* callee, CExpr*[] args, CToken t) {
-        auto data = a.alloc(typeof(this).sizeof);
+        auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.CALL;
         result.expr.token = t;
@@ -238,7 +244,7 @@ struct CAssign {
     CExpr* value() { return value_.ungroup(); }
 
     static CExpr* make(Allocator a, CExpr* target, CTokenType op, CExpr* value, CToken t) {
-        auto data = a.alloc(typeof(this).sizeof);
+        auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.ASSIGN;
         result.expr.token = t;
@@ -254,7 +260,7 @@ struct CGrouping {
     CExpr* expression;
 
     static CExpr* make(Allocator a, CExpr* e, CToken t) {
-        auto data = a.alloc(typeof(this).sizeof);
+        auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.GROUPING;
         result.expr.token = t;
@@ -272,7 +278,7 @@ struct CSubscript {
     CExpr* index() { return index_.ungroup(); }
 
     static CExpr* make(Allocator a, CExpr* arr, CExpr* idx, CToken t) {
-        auto data = a.alloc(typeof(this).sizeof);
+        auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.SUBSCRIPT;
         result.expr.token = t;
@@ -309,7 +315,7 @@ struct CExprStmt {
     CExpr* expression;
 
     static CStmt* make(Allocator a, CExpr* e, CToken t) {
-        auto data = a.alloc(typeof(this).sizeof);
+        auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.stmt.kind = CStmtKind.EXPR;
         result.stmt.token = t;
@@ -323,7 +329,7 @@ struct CReturnStmt {
     CExpr* value;  // null for bare return
 
     static CStmt* make(Allocator a, CExpr* v, CToken t) {
-        auto data = a.alloc(typeof(this).sizeof);
+        auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.stmt.kind = CStmtKind.RETURN;
         result.stmt.token = t;
@@ -339,7 +345,7 @@ struct CIfStmt {
     CStmt* else_branch;  // null if no else
 
     static CStmt* make(Allocator a, CExpr* cond, CStmt* then_, CStmt* else_, CToken t) {
-        auto data = a.alloc(typeof(this).sizeof);
+        auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.stmt.kind = CStmtKind.IF;
         result.stmt.token = t;
@@ -356,7 +362,7 @@ struct CWhileStmt {
     CStmt* body;
 
     static CStmt* make(Allocator a, CExpr* cond, CStmt* body_, CToken t) {
-        auto data = a.alloc(typeof(this).sizeof);
+        auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.stmt.kind = CStmtKind.WHILE;
         result.stmt.token = t;
@@ -374,7 +380,7 @@ struct CForStmt {
     CStmt* body_;
 
     static CStmt* make(Allocator a, CStmt* init_, CExpr* cond, CExpr* incr, CStmt* body__, CToken t) {
-        auto data = a.alloc(typeof(this).sizeof);
+        auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.stmt.kind = CStmtKind.FOR;
         result.stmt.token = t;
@@ -391,7 +397,7 @@ struct CBlock {
     CStmt*[] statements;
 
     static CStmt* make(Allocator a, CStmt*[] stmts, CToken t) {
-        auto data = a.alloc(typeof(this).sizeof);
+        auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.stmt.kind = CStmtKind.BLOCK;
         result.stmt.token = t;
@@ -407,7 +413,7 @@ struct CVarDecl {
     CExpr* initializer;  // null if uninitialized
 
     static CStmt* make(Allocator a, CType* type, CToken name_, CExpr* init, CToken t) {
-        auto data = a.alloc(typeof(this).sizeof);
+        auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.stmt.kind = CStmtKind.VAR_DECL;
         result.stmt.token = t;
@@ -422,7 +428,7 @@ struct CBreakStmt {
     CStmt stmt;
 
     static CStmt* make(Allocator a, CToken t) {
-        auto data = a.alloc(typeof(this).sizeof);
+        auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.stmt.kind = CStmtKind.BREAK;
         result.stmt.token = t;
@@ -434,7 +440,7 @@ struct CContinueStmt {
     CStmt stmt;
 
     static CStmt* make(Allocator a, CToken t) {
-        auto data = a.alloc(typeof(this).sizeof);
+        auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.stmt.kind = CStmtKind.CONTINUE;
         result.stmt.token = t;
@@ -479,8 +485,15 @@ struct CExternDecl {
     str library;  // From #pragma library
 }
 
+struct CGlobalVar {
+    CToken name;
+    CType* var_type;
+    CExpr* initializer;  // null if uninitialized (will be zero-initialized)
+}
+
 struct CTranslationUnit {
     CFunction[] functions;
     CExternDecl[] externs;
+    CGlobalVar[] globals;
     str current_library;  // Set by #pragma library
 }
