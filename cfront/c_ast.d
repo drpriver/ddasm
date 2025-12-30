@@ -52,7 +52,7 @@ struct CType {
 
     // Get element size for pointer arithmetic
     size_t element_size() {
-        if (kind == CTypeKind.POINTER && pointed_to) {
+        if ((kind == CTypeKind.POINTER || kind == CTypeKind.ARRAY) && pointed_to) {
             size_t s = pointed_to.size_of();
             return s ? s : 1;  // void* arithmetic uses size 1
         }
@@ -61,9 +61,26 @@ struct CType {
 
     bool is_void() { return kind == CTypeKind.VOID; }
     bool is_pointer() { return kind == CTypeKind.POINTER; }
+    bool is_array() { return kind == CTypeKind.ARRAY; }
     bool is_integer() {
         return kind == CTypeKind.CHAR || kind == CTypeKind.SHORT ||
                kind == CTypeKind.INT || kind == CTypeKind.LONG;
+    }
+
+    // Get element type for arrays/pointers
+    CType* element_type() {
+        if (kind == CTypeKind.ARRAY || kind == CTypeKind.POINTER)
+            return pointed_to;
+        return null;
+    }
+
+    // Number of stack slots needed for this type (for local allocation)
+    size_t stack_slots() {
+        if (kind == CTypeKind.ARRAY) {
+            // Array needs one slot per element
+            return array_size;
+        }
+        return 1;  // Everything else is one slot (pointer-sized)
     }
 }
 
@@ -87,6 +104,15 @@ CType* make_pointer_type(Allocator a, CType* base) {
     auto result = cast(CType*)data.ptr;
     result.kind = CTypeKind.POINTER;
     result.pointed_to = base;
+    return result;
+}
+
+CType* make_array_type(Allocator a, CType* element_type, size_t size) {
+    auto data = a.alloc(CType.sizeof);
+    auto result = cast(CType*)data.ptr;
+    result.kind = CTypeKind.ARRAY;
+    result.pointed_to = element_type;  // Element type stored in pointed_to
+    result.array_size = size;
     return result;
 }
 

@@ -20,9 +20,11 @@
     extern void SDL_Log(char* fmt, ...);
 
 #pragma library("libc.so.6")
+    extern int printf(char*, ...);
     extern void* malloc(long sz);
     extern void* calloc(long count, long sz);
     extern void abort();
+    extern void exit(int);
     extern void free(void* p);
     extern int rand();
     extern void srand(int seed);
@@ -32,7 +34,7 @@ void* gwindow;
 void* grenderer;
 long* gboard;
 int gwinlose = 0;
-long* gsnake;
+long** gsnake;
 int glen;
 int gpaused;
 int start(){
@@ -66,7 +68,6 @@ int start(){
   gboard = board;
   void* snake = calloc(10*10, 8);
   gsnake = snake;
-  glen = 1;
   main_loop();
   free(board);
   free(snake);
@@ -117,7 +118,7 @@ void place_apple(long* board){
   }
 }
 
-void move_snake(long* board, long* snake, int x, int y){
+void move_snake(long* board, long** snake, int x, int y){
   long* p;
   p = board + 10*y+x;
   long b = *p;
@@ -199,18 +200,18 @@ void main_loop(){
       poll = 1;
     }
     int* ptype = event;
-    int type = *ptype;
+    int type = *ptype &0xffffffff;
     if(type == 0x100){
       break;
     }
     else if(type == 0x401){ // mousedown
       char* pbutton = event;
-      char button = pbutton[16];
+      char button = pbutton[16] & 0xff;
       // io.printf("button: %zd\n", button)
     }
     else if(type == 0x300){ //keydown
       int* psym = event;
-      int sym = psym[4+1];
+      int sym = psym[4+1] &0xffffffff;
       if(sym == 'q') break;
       else if(sym == 32) gpaused = !gpaused;
       else if(sym == 61) grow_window();
@@ -279,9 +280,7 @@ void main_loop(){
 }
 
 void draw_rect(void* renderer, int x, int y, int w, int h){
-    int a; int b; int c; int d;
-    int* p = &a;
-    // int p[4];
+    int p[4];
     p[0] = x;
     p[1] = y;
     p[2] = w;

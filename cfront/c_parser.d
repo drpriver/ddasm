@@ -498,6 +498,26 @@ struct CParser {
         CToken name = consume(CTokenType.IDENTIFIER, "Expected variable name");
         if (ERROR_OCCURRED) return null;
 
+        // Check for array declaration: int arr[10]
+        if (match(CTokenType.LEFT_BRACKET)) {
+            CToken size_tok = consume(CTokenType.NUMBER, "Expected array size");
+            if (ERROR_OCCURRED) return null;
+
+            // Parse the size as an integer
+            import dlib.parse_numbers : parse_unsigned_human;
+            auto parsed = parse_unsigned_human(size_tok.lexeme);
+            if (parsed.errored || parsed.value == 0) {
+                error("Invalid array size");
+                return null;
+            }
+
+            consume(CTokenType.RIGHT_BRACKET, "Expected ']' after array size");
+            if (ERROR_OCCURRED) return null;
+
+            // Create array type
+            var_type = make_array_type(allocator, var_type, parsed.value);
+        }
+
         CExpr* initializer = null;
         if (match(CTokenType.EQUAL)) {
             initializer = parse_expression();

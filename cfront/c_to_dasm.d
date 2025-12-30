@@ -38,13 +38,16 @@ struct LabelAllocator {
 // Analysis pass to detect which variables need stack allocation
 struct CAnalyzer {
     Table!(str, bool) addr_taken;  // Variables whose address is taken
+    Table!(str, bool) arrays;      // Array variables (always need stack)
     Barray!(str) all_vars;         // All local variable names
     Allocator allocator;
 
     void analyze_function(CFunction* func) {
         addr_taken.data.allocator = allocator;
+        arrays.data.allocator = allocator;
         all_vars.bdata.allocator = allocator;
         addr_taken.cleanup();
+        arrays.cleanup();
         all_vars.clear();
 
         foreach (stmt; func.body) {
@@ -53,8 +56,8 @@ struct CAnalyzer {
     }
 
     bool should_use_stack() {
-        // Use stack if any address is taken OR if we have more than 4 variables
-        return addr_taken.count > 0 || all_vars[].length > 4;
+        // Use stack if any address is taken, any arrays, or more than 4 variables
+        return addr_taken.count > 0 || arrays.count > 0 || all_vars[].length > 4;
     }
 
     void analyze_stmt(CStmt* stmt) {
@@ -92,6 +95,10 @@ struct CAnalyzer {
             case VAR_DECL:
                 auto decl = cast(CVarDecl*)stmt;
                 all_vars.push(decl.name.lexeme);  // Track variable name
+                // Track array variables
+                if (decl.var_type && decl.var_type.is_array()) {
+                    arrays[decl.name.lexeme] = true;
+                }
                 if (decl.initializer)
                     analyze_expr(decl.initializer);
                 break;
@@ -152,6 +159,7 @@ struct CAnalyzer {
 
     void cleanup() {
         addr_taken.cleanup();
+        arrays.cleanup();
         all_vars.cleanup();
     }
 }
@@ -168,6 +176,7 @@ struct CDasmWriter {
     Table!(str, CType*) var_types;   // Variable types (for pointer arithmetic)
     Table!(str, str) extern_funcs;   // Map: function name -> module alias
     Table!(str, bool) addr_taken;    // Variables whose address is taken
+    Table!(str, bool) arrays;        // Array variables (need special handling)
     Table!(str, CType*) global_types; // Global variable types
 
     // Loop control
@@ -201,8 +210,17 @@ struct CDasmWriter {
                 return &TYPE_INT;  // Integer literals are int
             case IDENTIFIER:
                 auto id = e.as_identifier;
-                if (auto t = id.name.lexeme in var_types)
-                    return *t;
+                if (auto t = id.name.lexeme in var_types) {
+                    CType* typ = *t;
+                    // Arrays decay to pointers
+                    if (typ.is_array()) {
+                        // Return pointer to element type
+                        // For type checking purposes, we can use the element_type
+                        // but treat it as a pointer for arithmetic
+                        return typ;  // Array type has element_size() for arithmetic
+                    }
+                    return typ;
+                }
                 if (auto t = id.name.lexeme in global_types)
                     return *t;
                 return null;
@@ -234,7 +252,7 @@ struct CDasmWriter {
             case SUBSCRIPT:
                 auto sub = e.as_subscript;
                 auto at = get_expr_type(sub.array);
-                if (at && at.is_pointer()) return at.pointed_to;
+                if (at && (at.is_pointer() || at.is_array())) return at.pointed_to;
                 return null;
             case CAST:
             case MEMBER_ACCESS:
@@ -254,6 +272,7 @@ struct CDasmWriter {
         var_types.data.allocator = a;
         extern_funcs.data.allocator = a;
         addr_taken.data.allocator = a;
+        arrays.data.allocator = a;
         global_types.data.allocator = a;
     }
 
@@ -263,6 +282,7 @@ struct CDasmWriter {
         var_types.cleanup();
         extern_funcs.cleanup();
         addr_taken.cleanup();
+        arrays.cleanup();
         global_types.cleanup();
     }
 
@@ -393,6 +413,53 @@ struct CDasmWriter {
     }
 
     // =========================================================================
+    // Helper Functions
+    // =========================================================================
+
+    // Parse a character literal lexeme (e.g., "'q'" or "'\n'") and return its integer value
+    static int parse_char_literal(str lex) {
+        if (lex.length < 3) return 0;
+        char c = lex[1];  // Skip opening quote
+        if (c == '\\' && lex.length >= 4) {
+            switch (lex[2]) {
+                case 'n': c = '\n'; break;
+                case 't': c = '\t'; break;
+                case 'r': c = '\r'; break;
+                case '0': c = '\0'; break;
+                case '\\': c = '\\'; break;
+                case '\'': c = '\''; break;
+                default: c = lex[2]; break;
+            }
+        }
+        return cast(int)c;
+    }
+
+    // Count total stack slots needed for variable declarations in statements
+    static int count_var_slots(CStmt*[] stmts) {
+        int count = 0;
+        foreach (stmt; stmts) {
+            if (stmt.kind == CStmtKind.VAR_DECL) {
+                auto decl = cast(CVarDecl*)stmt;
+                count += cast(int)decl.var_type.stack_slots();
+            } else if (stmt.kind == CStmtKind.BLOCK) {
+                count += count_var_slots((cast(CBlock*)stmt).statements);
+            } else if (stmt.kind == CStmtKind.IF) {
+                auto s = cast(CIfStmt*)stmt;
+                if (s.then_branch) count += count_var_slots((&s.then_branch)[0..1]);
+                if (s.else_branch) count += count_var_slots((&s.else_branch)[0..1]);
+            } else if (stmt.kind == CStmtKind.WHILE) {
+                auto s = cast(CWhileStmt*)stmt;
+                if (s.body) count += count_var_slots((&s.body)[0..1]);
+            } else if (stmt.kind == CStmtKind.FOR) {
+                auto s = cast(CForStmt*)stmt;
+                if (s.init_stmt) count += count_var_slots((&s.init_stmt)[0..1]);
+                if (s.body_) count += count_var_slots((&s.body_)[0..1]);
+            }
+        }
+        return count;
+    }
+
+    // =========================================================================
     // Function Generation
     // =========================================================================
 
@@ -404,6 +471,7 @@ struct CDasmWriter {
             stacklocals.cleanup();
             var_types.cleanup();
             addr_taken.cleanup();
+            arrays.cleanup();
             regallocator.reset();
             labelallocator.reset();
             use_stack = false;
@@ -416,9 +484,12 @@ struct CDasmWriter {
         analyzer.analyze_function(func);
         scope(exit) analyzer.cleanup();
 
-        // Copy address-taken info
+        // Copy address-taken and array info
         foreach (ref item; analyzer.addr_taken.items()) {
             addr_taken[item.key] = true;
+        }
+        foreach (ref item; analyzer.arrays.items()) {
+            arrays[item.key] = true;
         }
         // Use stack if any address is taken OR if we have many variables (> 4)
         use_stack = analyzer.should_use_stack();
@@ -426,8 +497,10 @@ struct CDasmWriter {
         // First, count how many stack slots we need
         int num_stack_slots = 0;
         if (use_stack) {
-            // Count all parameters and variables since all go on stack
-            num_stack_slots = cast(int)func.params.length + cast(int)analyzer.all_vars[].length;
+            // Count parameters (1 slot each)
+            num_stack_slots = cast(int)func.params.length;
+            // Count local variables, accounting for array sizes
+            num_stack_slots += count_var_slots(func.body);
         }
 
         // Emit function header
@@ -651,25 +724,39 @@ struct CDasmWriter {
         str name = stmt.name.lexeme;
         var_types[name] = stmt.var_type;
 
+        // Check if this is an array
+        bool is_array = stmt.var_type.is_array();
+
         if (use_stack) {
             // All variables go on stack when use_stack is true
-            int slot = stack_offset++;
-            stacklocals[name] = slot;
+            int slot = stack_offset;
 
-            // Initialize on stack using local_write
-            if (stmt.initializer !is null) {
-                int before = regallocator.alloced;
-                int temp = regallocator.allocate();
-                int err = gen_expression(stmt.initializer, temp);
-                if (err) return err;
-                sb.writef("    local_write % r%\n", P(slot), temp);
-                regallocator.reset_to(before);
+            if (is_array) {
+                // Arrays need multiple slots
+                size_t arr_size = stmt.var_type.array_size;
+                stack_offset += cast(int)arr_size;
+                // Arrays are not initialized by default (stack memory is uninitialized)
+                // Note: We could add array initializer support later
             } else {
-                // Default initialize to 0
-                sb.writef("    local_write % 0\n", P(slot));
+                // Regular variable needs one slot
+                stack_offset++;
+
+                // Initialize on stack using local_write
+                if (stmt.initializer !is null) {
+                    int before = regallocator.alloced;
+                    int temp = regallocator.allocate();
+                    int err = gen_expression(stmt.initializer, temp);
+                    if (err) return err;
+                    sb.writef("    local_write % r%\n", P(slot), temp);
+                    regallocator.reset_to(before);
+                } else {
+                    // Default initialize to 0
+                    sb.writef("    local_write % 0\n", P(slot));
+                }
             }
+            stacklocals[name] = slot;
         } else {
-            // Allocate register for variable
+            // Allocate register for variable (arrays can't go here)
             int r = regallocator.allocate();
             reglocals[name] = r;
 
@@ -736,22 +823,7 @@ struct CDasmWriter {
             sb.writef("    move r% %\n", target, lex);
         } else if (expr.value.type == CTokenType.CHAR_LITERAL) {
             // Character literal - parse the value
-            if (lex.length >= 3) {
-                char c = lex[1];  // Skip opening quote
-                if (c == '\\' && lex.length >= 4) {
-                    // Escape sequence
-                    switch (lex[2]) {
-                        case 'n': c = '\n'; break;
-                        case 't': c = '\t'; break;
-                        case 'r': c = '\r'; break;
-                        case '0': c = '\0'; break;
-                        case '\\': c = '\\'; break;
-                        case '\'': c = '\''; break;
-                        default: c = lex[2]; break;
-                    }
-                }
-                sb.writef("    move r% %\n", target, cast(int)c);
-            }
+            sb.writef("    move r% %\n", target, parse_char_literal(lex));
         } else if (expr.value.type == CTokenType.HEX) {
             // Hex literal - DASM should handle 0x prefix
             sb.writef("    move r% %\n", target, lex);
@@ -767,6 +839,17 @@ struct CDasmWriter {
         if (target == TARGET_IS_NOTHING) return 0;
 
         str name = expr.name.lexeme;
+
+        // Check if this is an array - arrays decay to pointers (address of first element)
+        if (CType** vt = name in var_types) {
+            if ((*vt).is_array()) {
+                if (int* offset = name in stacklocals) {
+                    // Array-to-pointer decay: compute address of first element
+                    sb.writef("    add r% rbp %\n", target, P(*offset));
+                    return 0;
+                }
+            }
+        }
 
         if (int* r = name in reglocals) {
             if (target == *r) return 0;  // Already in target register
@@ -802,22 +885,35 @@ struct CDasmWriter {
         int err = gen_expression(expr.left, lhs);
         if (err) return err;
 
-        // Check for pointer arithmetic scaling
+        // Check for pointer/array arithmetic scaling
         CType* left_type = get_expr_type(expr.left);
-        size_t elem_size = (left_type && left_type.is_pointer()) ? left_type.element_size() : 0;
+        CType* right_type = get_expr_type(expr.right);
+        bool left_is_ptr = left_type && (left_type.is_pointer() || left_type.is_array());
+        bool right_is_ptr = right_type && (right_type.is_pointer() || right_type.is_array());
+        size_t left_elem_size = left_is_ptr ? left_type.element_size() : 0;
+        size_t right_elem_size = right_is_ptr ? right_type.element_size() : 0;
 
         // Check for literal RHS optimization
         CExpr* right = expr.right;
         if (CLiteral* lit = right.as_literal()) {
             str rhs = lit.value.lexeme;
+
+            // Convert char literals to numeric value
+            __gshared char[16] char_lit_buf;
+            if (lit.value.type == CTokenType.CHAR_LITERAL) {
+                import core.stdc.stdio : snprintf;
+                int len = snprintf(char_lit_buf.ptr, 16, "%d", parse_char_literal(rhs));
+                rhs = cast(str)char_lit_buf[0 .. len];
+            }
+
             switch (expr.op) with (CTokenType) {
                 case PLUS:
-                    if (elem_size > 1) {
-                        // Pointer arithmetic: scale by element size at compile time
+                    if (left_elem_size > 1) {
+                        // Pointer + integer: scale integer by element size at compile time
                         import dlib.parse_numbers : parse_unsigned_human;
                         auto parsed = parse_unsigned_human(rhs);
                         if (!parsed.errored) {
-                            ulong scaled = parsed.value * elem_size;
+                            ulong scaled = parsed.value * left_elem_size;
                             sb.writef("    add r% r% %\n", target, lhs, scaled);
                             break;
                         }
@@ -825,12 +921,13 @@ struct CDasmWriter {
                     sb.writef("    add r% r% %\n", target, lhs, rhs);
                     break;
                 case MINUS:
-                    if (elem_size > 1) {
-                        // Pointer arithmetic: scale by element size at compile time
+                    // Literals can't be pointers, so this is ptr - int
+                    if (left_elem_size > 1) {
+                        // Pointer - integer: scale integer by element size at compile time
                         import dlib.parse_numbers : parse_unsigned_human;
                         auto parsed = parse_unsigned_human(rhs);
                         if (!parsed.errored) {
-                            ulong scaled = parsed.value * elem_size;
+                            ulong scaled = parsed.value * left_elem_size;
                             sb.writef("    sub r% r% %\n", target, lhs, scaled);
                             break;
                         }
@@ -905,18 +1002,36 @@ struct CDasmWriter {
 
         switch (expr.op) with (CTokenType) {
             case PLUS:
-                if (elem_size > 1) {
-                    // Pointer arithmetic: scale RHS by element size
-                    sb.writef("    mul r% r% %\n", rhs, rhs, elem_size);
+                if (left_elem_size > 1 && !right_is_ptr) {
+                    // Pointer + integer: scale integer by element size
+                    sb.writef("    mul r% r% %\n", rhs, rhs, left_elem_size);
+                } else if (right_elem_size > 1 && !left_is_ptr) {
+                    // Integer + pointer: scale integer by element size
+                    sb.writef("    mul r% r% %\n", lhs, lhs, right_elem_size);
                 }
                 sb.writef("    add r% r% r%\n", target, lhs, rhs);
                 break;
             case MINUS:
-                if (elem_size > 1) {
-                    // Pointer arithmetic: scale RHS by element size
-                    sb.writef("    mul r% r% %\n", rhs, rhs, elem_size);
+                if (left_is_ptr && right_is_ptr) {
+                    // Pointer - pointer: check element sizes match, subtract, divide by size
+                    if (left_elem_size != right_elem_size) {
+                        error(expr.expr.token, "Subtraction of pointers to different types");
+                        return 1;
+                    }
+                    sb.writef("    sub r% r% r%\n", target, lhs, rhs);
+                    if (left_elem_size > 1) {
+                        sb.writef("    div r% rjunk r% %\n", target, target, left_elem_size);
+                    }
+                } else if (left_is_ptr) {
+                    // Pointer - integer: scale integer by element size
+                    if (left_elem_size > 1) {
+                        sb.writef("    mul r% r% %\n", rhs, rhs, left_elem_size);
+                    }
+                    sb.writef("    sub r% r% r%\n", target, lhs, rhs);
+                } else {
+                    // Regular integer subtraction
+                    sb.writef("    sub r% r% r%\n", target, lhs, rhs);
                 }
-                sb.writef("    sub r% r% r%\n", target, lhs, rhs);
                 break;
             case STAR:
                 sb.writef("    mul r% r% r%\n", target, lhs, rhs);
@@ -1347,7 +1462,7 @@ struct CDasmWriter {
 
             // Scale index by element size
             CType* arr_type = get_expr_type(sub.array);
-            size_t elem_size = (arr_type && arr_type.is_pointer()) ? arr_type.element_size() : 1;
+            size_t elem_size = (arr_type && (arr_type.is_pointer() || arr_type.is_array())) ? arr_type.element_size() : 1;
             if (elem_size > 1) {
                 sb.writef("    mul r% r% %\n", idx_reg, idx_reg, elem_size);
             }
@@ -1382,9 +1497,9 @@ struct CDasmWriter {
         err = gen_expression(expr.index, idx_reg);
         if (err) return err;
 
-        // Scale index by element size for proper pointer arithmetic
+        // Scale index by element size for proper pointer/array arithmetic
         CType* arr_type = get_expr_type(expr.array);
-        size_t elem_size = (arr_type && arr_type.is_pointer()) ? arr_type.element_size() : 1;
+        size_t elem_size = (arr_type && (arr_type.is_pointer() || arr_type.is_array())) ? arr_type.element_size() : 1;
         if (elem_size > 1) {
             sb.writef("    mul r% r% %\n", idx_reg, idx_reg, elem_size);
         }
