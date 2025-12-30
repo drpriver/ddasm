@@ -1019,6 +1019,10 @@ struct CParser {
             result = is_unsigned ? &TYPE_UINT : &TYPE_INT;
         } else if (match(CTokenType.LONG)) {
             result = is_unsigned ? &TYPE_ULONG : &TYPE_LONG;
+        } else if (match(CTokenType.FLOAT)) {
+            result = &TYPE_FLOAT;
+        } else if (match(CTokenType.DOUBLE)) {
+            result = &TYPE_DOUBLE;
         } else if (match(CTokenType.STRUCT)) {
             // struct Name
             CToken name = consume(CTokenType.IDENTIFIER, "Expected struct name");
@@ -1109,7 +1113,8 @@ struct CParser {
     bool is_type_specifier(CToken tok) {
         with (CTokenType) {
             if (tok.type == VOID || tok.type == CHAR || tok.type == SHORT ||
-                tok.type == INT || tok.type == LONG || tok.type == UNSIGNED ||
+                tok.type == INT || tok.type == LONG || tok.type == FLOAT ||
+                tok.type == DOUBLE || tok.type == UNSIGNED ||
                 tok.type == SIGNED || tok.type == CONST || tok.type == STRUCT ||
                 tok.type == UNION || tok.type == ENUM) {
                 return true;

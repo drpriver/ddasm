@@ -20,6 +20,8 @@ enum CTypeKind {
     SHORT,
     INT,
     LONG,
+    FLOAT,
+    DOUBLE,
     POINTER,
     ARRAY,
     FUNCTION,
@@ -57,6 +59,8 @@ struct CType {
             case CTypeKind.SHORT:    return 2;
             case CTypeKind.INT:      return 4;
             case CTypeKind.LONG:     return 8;
+            case CTypeKind.FLOAT:    return 4;
+            case CTypeKind.DOUBLE:   return 8;
             case CTypeKind.POINTER:  return 8;  // 64-bit
             case CTypeKind.ARRAY:    return pointed_to ? pointed_to.size_of() * array_size : 0;
             case CTypeKind.FUNCTION: return 8;  // Function pointer size
@@ -86,6 +90,12 @@ struct CType {
         return kind == CTypeKind.CHAR || kind == CTypeKind.SHORT ||
                kind == CTypeKind.INT || kind == CTypeKind.LONG ||
                kind == CTypeKind.ENUM;  // Enums are integer-compatible
+    }
+    bool is_float() {
+        return kind == CTypeKind.FLOAT || kind == CTypeKind.DOUBLE;
+    }
+    bool is_arithmetic() {
+        return is_integer() || is_float();
     }
 
     // Get a struct/union field by name
@@ -123,6 +133,8 @@ __gshared CType TYPE_VOID = { kind: CTypeKind.VOID };
 __gshared CType TYPE_CHAR = { kind: CTypeKind.CHAR };
 __gshared CType TYPE_INT = { kind: CTypeKind.INT };
 __gshared CType TYPE_LONG = { kind: CTypeKind.LONG };
+__gshared CType TYPE_FLOAT = { kind: CTypeKind.FLOAT };
+__gshared CType TYPE_DOUBLE = { kind: CTypeKind.DOUBLE };
 __gshared CType TYPE_UCHAR = { kind: CTypeKind.CHAR, is_unsigned: true };
 __gshared CType TYPE_UINT = { kind: CTypeKind.INT, is_unsigned: true };
 __gshared CType TYPE_ULONG = { kind: CTypeKind.LONG, is_unsigned: true };

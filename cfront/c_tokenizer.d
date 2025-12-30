@@ -54,16 +54,18 @@ enum CTokenType : uint {
     CHAR = 602,
     LONG = 603,
     SHORT = 604,
-    UNSIGNED = 605,
-    SIGNED = 606,
-    CONST = 607,
-    STATIC = 608,
-    EXTERN = 609,
-    STRUCT = 610,
-    UNION = 611,
-    ENUM = 612,
-    TYPEDEF = 613,
-    SIZEOF = 614,
+    FLOAT = 605,
+    DOUBLE = 606,
+    UNSIGNED = 607,
+    SIGNED = 608,
+    CONST = 609,
+    STATIC = 610,
+    EXTERN = 611,
+    STRUCT = 612,
+    UNION = 613,
+    ENUM = 614,
+    TYPEDEF = 615,
+    SIZEOF = 616,
 
     // Control flow keywords
     IF = 700,
@@ -365,6 +367,8 @@ struct CTokenizer {
             case "char":     type = CTokenType.CHAR; break;
             case "long":     type = CTokenType.LONG; break;
             case "short":    type = CTokenType.SHORT; break;
+            case "float":    type = CTokenType.FLOAT; break;
+            case "double":   type = CTokenType.DOUBLE; break;
             case "unsigned": type = CTokenType.UNSIGNED; break;
             case "signed":   type = CTokenType.SIGNED; break;
             case "const":    type = CTokenType.CONST; break;
