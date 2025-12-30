@@ -70,15 +70,32 @@ struct CParser {
                 if (err) return err;
                 externs ~= ext;
             } else if (check(CTokenType.STRUCT)) {
-                // Check if this is a struct definition
+                // Check if this is a struct definition or forward declaration
                 // Look ahead: struct Name { ... means definition
-                // struct Name var... means variable of struct type
+                //             struct Name ; means forward declaration
+                //             struct Name var... means variable of struct type
                 if (peek_at(1).type == CTokenType.IDENTIFIER &&
                     peek_at(2).type == CTokenType.LEFT_BRACE) {
                     CStructDef sdef;
                     int err = parse_struct_def(&sdef);
                     if (err) return err;
                     structs ~= sdef;
+                } else if (peek_at(1).type == CTokenType.IDENTIFIER &&
+                           peek_at(2).type == CTokenType.SEMICOLON) {
+                    // Forward declaration: struct Name;
+                    advance();  // consume 'struct'
+                    CToken struct_name = advance();  // consume name
+                    advance();  // consume ';'
+
+                    // Create incomplete struct type if not already defined
+                    if ((struct_name.lexeme in struct_types) is null) {
+                        auto data = allocator.alloc(CType.sizeof);
+                        CType* incomplete = cast(CType*)data.ptr;
+                        incomplete.kind = CTypeKind.STRUCT;
+                        incomplete.struct_name = struct_name.lexeme;
+                        incomplete.struct_size = 0;  // Unknown size
+                        struct_types[struct_name.lexeme] = incomplete;
+                    }
                 } else {
                     // It's a variable/function with struct type
                     CType* type_ = parse_type();
@@ -100,15 +117,32 @@ struct CParser {
                     }
                 }
             } else if (check(CTokenType.UNION)) {
-                // Check if this is a union definition
+                // Check if this is a union definition or forward declaration
                 // Look ahead: union Name { ... means definition
-                // union Name var... means variable of union type
+                //             union Name ; means forward declaration
+                //             union Name var... means variable of union type
                 if (peek_at(1).type == CTokenType.IDENTIFIER &&
                     peek_at(2).type == CTokenType.LEFT_BRACE) {
                     CUnionDef udef;
                     int err = parse_union_def(&udef);
                     if (err) return err;
                     unions ~= udef;
+                } else if (peek_at(1).type == CTokenType.IDENTIFIER &&
+                           peek_at(2).type == CTokenType.SEMICOLON) {
+                    // Forward declaration: union Name;
+                    advance();  // consume 'union'
+                    CToken union_name = advance();  // consume name
+                    advance();  // consume ';'
+
+                    // Create incomplete union type if not already defined
+                    if ((union_name.lexeme in union_types) is null) {
+                        auto data = allocator.alloc(CType.sizeof);
+                        CType* incomplete = cast(CType*)data.ptr;
+                        incomplete.kind = CTypeKind.UNION;
+                        incomplete.struct_name = union_name.lexeme;
+                        incomplete.struct_size = 0;  // Unknown size
+                        union_types[union_name.lexeme] = incomplete;
+                    }
                 } else {
                     // It's a variable/function with union type
                     CType* type_ = parse_type();
@@ -165,6 +199,10 @@ struct CParser {
             } else if (check(CTokenType.TYPEDEF)) {
                 // Parse typedef declaration
                 int err = parse_typedef(&enums);
+                if (err) return err;
+            } else if (match(CTokenType.STATIC_ASSERT)) {
+                // _Static_assert(expr, "message");
+                int err = parse_static_assert();
                 if (err) return err;
             } else {
                 // Parse type and name, then decide if it's a function or global
@@ -364,9 +402,50 @@ struct CParser {
     }
 
     // Parse a constant expression for enum values
-    // Supports: integer literals, enum constant references, unary minus, +/-
+    // Supports: integer literals, enum constant references, unary minus, +/-, comparisons
     ConstExprResult parse_enum_const_expr() {
-        return parse_enum_const_additive();
+        return parse_enum_const_equality();
+    }
+
+    ConstExprResult parse_enum_const_equality() {
+        auto result = parse_enum_const_relational();
+        if (result.err) return result;
+
+        while (check(CTokenType.EQUAL_EQUAL) || check(CTokenType.BANG_EQUAL)) {
+            bool is_eq = check(CTokenType.EQUAL_EQUAL);
+            advance();
+            auto right = parse_enum_const_relational();
+            if (right.err) return right;
+            if (is_eq) {
+                result.value = result.value == right.value ? 1 : 0;
+            } else {
+                result.value = result.value != right.value ? 1 : 0;
+            }
+        }
+        return result;
+    }
+
+    ConstExprResult parse_enum_const_relational() {
+        auto result = parse_enum_const_additive();
+        if (result.err) return result;
+
+        while (check(CTokenType.LESS) || check(CTokenType.GREATER) ||
+               check(CTokenType.LESS_EQUAL) || check(CTokenType.GREATER_EQUAL)) {
+            CTokenType op = peek().type;
+            advance();
+            auto right = parse_enum_const_additive();
+            if (right.err) return right;
+            if (op == CTokenType.LESS) {
+                result.value = result.value < right.value ? 1 : 0;
+            } else if (op == CTokenType.GREATER) {
+                result.value = result.value > right.value ? 1 : 0;
+            } else if (op == CTokenType.LESS_EQUAL) {
+                result.value = result.value <= right.value ? 1 : 0;
+            } else {
+                result.value = result.value >= right.value ? 1 : 0;
+            }
+        }
+        return result;
     }
 
     ConstExprResult parse_enum_const_additive() {
@@ -454,6 +533,30 @@ struct CParser {
             return result;
         }
 
+        // sizeof(type) in constant expression
+        if (match(CTokenType.SIZEOF)) {
+            consume(CTokenType.LEFT_PAREN, "Expected '(' after sizeof");
+            if (ERROR_OCCURRED) {
+                result.err = true;
+                return result;
+            }
+
+            CType* type = parse_type();
+            if (type is null) {
+                result.err = true;
+                return result;
+            }
+
+            consume(CTokenType.RIGHT_PAREN, "Expected ')' after type");
+            if (ERROR_OCCURRED) {
+                result.err = true;
+                return result;
+            }
+
+            result.value = cast(long) type.size_of();
+            return result;
+        }
+
         error("Expected constant value in enum expression");
         result.err = true;
         return result;
@@ -532,6 +635,41 @@ struct CParser {
         edef.name = has_name ? name : CToken.init;
         edef.enum_type = enum_type;
         edef.constants = constants[];
+        return 0;
+    }
+
+    // Parse _Static_assert(constant_expr, "message");
+    int parse_static_assert() {
+        consume(CTokenType.LEFT_PAREN, "Expected '(' after _Static_assert");
+        if (ERROR_OCCURRED) return 1;
+
+        // Parse constant expression using the enum constant expression parser
+        auto result = parse_enum_const_expr();
+        if (result.err) return 1;
+
+        consume(CTokenType.COMMA, "Expected ',' after expression");
+        if (ERROR_OCCURRED) return 1;
+
+        CToken message = consume(CTokenType.STRING, "Expected string message");
+        if (ERROR_OCCURRED) return 1;
+
+        consume(CTokenType.RIGHT_PAREN, "Expected ')' after message");
+        if (ERROR_OCCURRED) return 1;
+
+        consume(CTokenType.SEMICOLON, "Expected ';' after _Static_assert");
+        if (ERROR_OCCURRED) return 1;
+
+        // Check the assertion
+        if (result.value == 0) {
+            // Strip quotes from message for error output
+            str msg = message.lexeme;
+            if (msg.length >= 2 && msg[0] == '"' && msg[$ - 1] == '"') {
+                msg = msg[1 .. $ - 1];
+            }
+            error(message, msg);
+            return 1;
+        }
+
         return 0;
     }
 
@@ -1480,6 +1618,44 @@ struct CParser {
             CExpr* operand = parse_unary();
             if (operand is null) return null;
             return CUnary.make(allocator, op.type, operand, true, op);
+        }
+
+        // sizeof operator: sizeof(type) or sizeof expr
+        if (match(CTokenType.SIZEOF)) {
+            CToken op = previous();
+
+            // Check for sizeof(type) - requires parens
+            if (check(CTokenType.LEFT_PAREN)) {
+                // Peek ahead to see if it's a type
+                if (peek_at(1).type == CTokenType.VOID ||
+                    peek_at(1).type == CTokenType.CHAR ||
+                    peek_at(1).type == CTokenType.SHORT ||
+                    peek_at(1).type == CTokenType.INT ||
+                    peek_at(1).type == CTokenType.LONG ||
+                    peek_at(1).type == CTokenType.FLOAT ||
+                    peek_at(1).type == CTokenType.DOUBLE ||
+                    peek_at(1).type == CTokenType.UNSIGNED ||
+                    peek_at(1).type == CTokenType.SIGNED ||
+                    peek_at(1).type == CTokenType.STRUCT ||
+                    peek_at(1).type == CTokenType.UNION ||
+                    peek_at(1).type == CTokenType.ENUM ||
+                    (peek_at(1).type == CTokenType.IDENTIFIER &&
+                     (peek_at(1).lexeme in typedef_types) !is null)) {
+                    // sizeof(type)
+                    advance();  // consume '('
+                    CType* type = parse_type();
+                    if (type is null) return null;
+                    consume(CTokenType.RIGHT_PAREN, "Expected ')' after type");
+                    if (ERROR_OCCURRED) return null;
+                    size_t size = type.size_of();
+                    return CSizeof.make(allocator, type, size, op);
+                }
+            }
+
+            // sizeof expr (unary operator on expression)
+            CExpr* expr = parse_unary();
+            if (expr is null) return null;
+            return CSizeof.make_expr(allocator, expr, op);
         }
 
         return parse_postfix();

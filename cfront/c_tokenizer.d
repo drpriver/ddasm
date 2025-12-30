@@ -66,6 +66,7 @@ enum CTokenType : uint {
     ENUM = 614,
     TYPEDEF = 615,
     SIZEOF = 616,
+    STATIC_ASSERT = 617,
 
     // Control flow keywords
     IF = 700,
@@ -378,8 +379,9 @@ struct CTokenizer {
             case "union":    type = CTokenType.UNION; break;
             case "enum":     type = CTokenType.ENUM; break;
             case "typedef":  type = CTokenType.TYPEDEF; break;
-            case "sizeof":   type = CTokenType.SIZEOF; break;
-            case "if":       type = CTokenType.IF; break;
+            case "sizeof":          type = CTokenType.SIZEOF; break;
+            case "_Static_assert":  type = CTokenType.STATIC_ASSERT; break;
+            case "if":              type = CTokenType.IF; break;
             case "else":     type = CTokenType.ELSE; break;
             case "while":    type = CTokenType.WHILE; break;
             case "for":      type = CTokenType.FOR; break;

@@ -270,6 +270,37 @@ struct CLiteral {
     }
 }
 
+struct CSizeof {
+    CExpr expr;
+    CType* sizeof_type;   // If sizeof(type)
+    CExpr* sizeof_expr;   // If sizeof expr
+    size_t size;          // Precomputed size (if known)
+
+    static CExpr* make(Allocator a, CType* t, size_t sz, CToken tok) {
+        auto data = a.zalloc(typeof(this).sizeof);
+        auto result = cast(typeof(this)*)data.ptr;
+        result.expr.kind = CExprKind.SIZEOF;
+        result.expr.token = tok;
+        result.expr.type = &TYPE_LONG;  // sizeof returns size_t (use long)
+        result.sizeof_type = t;
+        result.sizeof_expr = null;
+        result.size = sz;
+        return &result.expr;
+    }
+
+    static CExpr* make_expr(Allocator a, CExpr* e, CToken tok) {
+        auto data = a.zalloc(typeof(this).sizeof);
+        auto result = cast(typeof(this)*)data.ptr;
+        result.expr.kind = CExprKind.SIZEOF;
+        result.expr.token = tok;
+        result.expr.type = &TYPE_LONG;
+        result.sizeof_type = null;
+        result.sizeof_expr = e;
+        result.size = 0;  // Will be computed during codegen
+        return &result.expr;
+    }
+}
+
 struct CIdentifier {
     CExpr expr;
     CToken name;

@@ -1054,7 +1054,7 @@ struct CDasmWriter {
             case GROUPING:   assert(0);  // Should be ungrouped
             case CAST:       return 0;   // TODO
             case MEMBER_ACCESS: return gen_member_access(cast(CMemberAccess*)e, target);
-            case SIZEOF:     return 0;   // TODO
+            case SIZEOF:     return gen_sizeof(cast(CSizeof*)e, target);
         }
     }
 
@@ -2098,6 +2098,20 @@ struct CDasmWriter {
         }
 
         regallocator.reset_to(before);
+        return 0;
+    }
+
+    int gen_sizeof(CSizeof* expr, int target) {
+        if (target == TARGET_IS_NOTHING) return 0;
+
+        size_t size = expr.size;
+        if (size == 0 && expr.sizeof_expr !is null) {
+            // sizeof expr - compute size from expression type
+            CType* t = get_expr_type(expr.sizeof_expr);
+            size = t ? t.size_of() : 8;
+        }
+
+        sb.writef("    move r% %\n", target, size);
         return 0;
     }
 
