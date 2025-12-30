@@ -251,21 +251,55 @@ struct CParser {
                 CType* type_ = parse_type();
                 if (type_ is null) return 1;
 
-                CToken name = consume(CTokenType.IDENTIFIER, "Expected identifier");
-                if (ERROR_OCCURRED) return 1;
-
+                // Check for function returning function pointer: type (*name(params))(ret_params)
                 if (check(CTokenType.LEFT_PAREN)) {
-                    // It's a function
+                    advance();  // consume '('
+                    if (!match(CTokenType.STAR)) {
+                        error("Expected '*' in function returning function pointer");
+                        return 1;
+                    }
+                    CToken name = consume(CTokenType.IDENTIFIER, "Expected function name");
+                    if (ERROR_OCCURRED) return 1;
+
+                    // Skip function parameters: (params)
+                    skip_balanced_parens();
+
+                    // Consume closing ')' of the wrapper
+                    consume(CTokenType.RIGHT_PAREN, "Expected ')' after function pointer wrapper");
+                    if (ERROR_OCCURRED) return 1;
+
+                    // Skip the return function pointer's parameter list
+                    if (check(CTokenType.LEFT_PAREN)) {
+                        skip_balanced_parens();
+                    }
+
+                    consume(CTokenType.SEMICOLON, "Expected ';' after function declaration");
+                    if (ERROR_OCCURRED) return 1;
+
+                    // Treat as function returning void* (function pointer)
                     CFunction func;
-                    int err = parse_function_rest(type_, name, &func);
-                    if (err) return err;
+                    func.name = name;
+                    func.return_type = make_pointer_type(allocator, &TYPE_VOID);
+                    func.params = null;
+                    func.is_definition = false;
                     functions ~= func;
                 } else {
-                    // It's a global variable
-                    CGlobalVar gvar;
-                    int err = parse_global_var_rest(type_, name, &gvar);
-                    if (err) return err;
-                    globals ~= gvar;
+                    CToken name = consume(CTokenType.IDENTIFIER, "Expected identifier");
+                    if (ERROR_OCCURRED) return 1;
+
+                    if (check(CTokenType.LEFT_PAREN)) {
+                        // It's a function
+                        CFunction func;
+                        int err = parse_function_rest(type_, name, &func);
+                        if (err) return err;
+                        functions ~= func;
+                    } else {
+                        // It's a global variable
+                        CGlobalVar gvar;
+                        int err = parse_global_var_rest(type_, name, &gvar);
+                        if (err) return err;
+                        globals ~= gvar;
+                    }
                 }
             }
         }
@@ -319,10 +353,10 @@ struct CParser {
         size_t offset = 0;
 
         while (!check(CTokenType.RIGHT_BRACE) && !at_end) {
-            // Check for anonymous union/struct: union { ... } or struct { ... }
+            // Check for anonymous union/struct: union { ... } or struct { ... } field_name;
             if ((check(CTokenType.UNION) || check(CTokenType.STRUCT)) &&
                 peek_at(1).type == CTokenType.LEFT_BRACE) {
-                // Skip anonymous union/struct - consume until matching brace and semicolon
+                // Skip anonymous union/struct body - consume until matching brace
                 advance();  // consume union/struct
                 advance();  // consume {
                 int brace_depth = 1;
@@ -331,7 +365,19 @@ struct CParser {
                     else if (check(CTokenType.RIGHT_BRACE)) brace_depth--;
                     advance();
                 }
-                if (check(CTokenType.SEMICOLON)) advance();  // optional trailing ;
+                // Check for field name after the struct body: struct { ... } field_name;
+                if (check(CTokenType.IDENTIFIER)) {
+                    CToken field_name = advance();
+                    // Treat as opaque type (use int as placeholder)
+                    StructField field;
+                    field.name = field_name.lexeme;
+                    field.type = &TYPE_INT;  // Placeholder - anonymous struct field
+                    field.offset = offset;
+                    fields ~= field;
+                    offset += field.type.size_of();
+                }
+                consume(CTokenType.SEMICOLON, "Expected ';' after anonymous struct field");
+                if (ERROR_OCCURRED) return 1;
                 continue;
             }
 
@@ -396,57 +442,73 @@ struct CParser {
                     skip_balanced_parens();
                 }
                 // Treat as void* for simplicity
-                field_type = make_pointer_type(allocator, &TYPE_VOID);
-            } else {
-                // Check for anonymous bit field (e.g., unsigned int :24;)
-                if (check(CTokenType.COLON)) {
-                    advance();  // consume :
-                    auto width_result = parse_enum_const_expr();
-                    if (width_result.err) return 1;
-                    consume(CTokenType.SEMICOLON, "Expected ';' after anonymous bit field");
-                    if (ERROR_OCCURRED) return 1;
-                    // Skip anonymous bit fields - they're just padding
-                    continue;
-                }
+                CType* fptr_type = make_pointer_type(allocator, &TYPE_VOID);
 
-                // Regular field name
-                field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
+                consume(CTokenType.SEMICOLON, "Expected ';' after function pointer field");
                 if (ERROR_OCCURRED) return 1;
 
-                // Handle arrays
-                if (match(CTokenType.LEFT_BRACKET)) {
-                    auto size_result = parse_enum_const_expr();
-                    if (size_result.err) return 1;
-                    if (size_result.value <= 0) {
-                        error("Array size must be positive");
-                        return 1;
+                // Add function pointer field
+                StructField field;
+                field.name = field_name.lexeme;
+                field.type = fptr_type;
+                field.offset = offset;
+                fields ~= field;
+                offset += fptr_type.size_of();
+            } else {
+                // Handle comma-separated declarators (e.g., int x:1, y:2;)
+                CType* base_type = field_type;
+                do {
+                    // Check for anonymous bit field (e.g., unsigned int :24;)
+                    if (check(CTokenType.COLON)) {
+                        advance();  // consume :
+                        auto width_result = parse_enum_const_expr();
+                        if (width_result.err) return 1;
+                        // Skip anonymous bit fields - they're just padding
+                        // Continue to next declarator or end of declaration
+                    } else {
+                        // Regular field name
+                        field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
+                        if (ERROR_OCCURRED) return 1;
+
+                        // Each declarator starts with the base type
+                        CType* decl_type = base_type;
+
+                        // Handle arrays
+                        if (match(CTokenType.LEFT_BRACKET)) {
+                            auto size_result = parse_enum_const_expr();
+                            if (size_result.err) return 1;
+                            if (size_result.value <= 0) {
+                                error("Array size must be positive");
+                                return 1;
+                            }
+                            consume(CTokenType.RIGHT_BRACKET, "Expected ']' after array size");
+                            if (ERROR_OCCURRED) return 1;
+                            decl_type = make_array_type(allocator, decl_type, cast(size_t) size_result.value);
+                        }
+
+                        // Handle bit fields (e.g., unsigned int field:2;)
+                        if (match(CTokenType.COLON)) {
+                            // Just skip the bit width - we'll use the full type size
+                            auto width_result = parse_enum_const_expr();
+                            if (width_result.err) return 1;
+                            // Bit field - just use the underlying type (imprecise but ok for now)
+                        }
+
+                        // Add field with current offset
+                        StructField field;
+                        field.name = field_name.lexeme;
+                        field.type = decl_type;
+                        field.offset = offset;
+                        fields ~= field;
+
+                        // Update offset (simple packing, no alignment)
+                        offset += decl_type.size_of();
                     }
-                    consume(CTokenType.RIGHT_BRACKET, "Expected ']' after array size");
-                    if (ERROR_OCCURRED) return 1;
-                    field_type = make_array_type(allocator, field_type, cast(size_t) size_result.value);
-                }
+                } while (match(CTokenType.COMMA));
 
-                // Handle bit fields (e.g., unsigned int field:2;)
-                if (match(CTokenType.COLON)) {
-                    // Just skip the bit width - we'll use the full type size
-                    auto width_result = parse_enum_const_expr();
-                    if (width_result.err) return 1;
-                    // Bit field - just use the underlying type (imprecise but ok for now)
-                }
+                consume(CTokenType.SEMICOLON, "Expected ';' after field declaration");
+                if (ERROR_OCCURRED) return 1;
             }
-
-            consume(CTokenType.SEMICOLON, "Expected ';' after field declaration");
-            if (ERROR_OCCURRED) return 1;
-
-            // Add field with current offset
-            StructField field;
-            field.name = field_name.lexeme;
-            field.type = field_type;
-            field.offset = offset;
-            fields ~= field;
-
-            // Update offset (simple packing, no alignment)
-            offset += field_type.size_of();
         }
 
         consume(CTokenType.RIGHT_BRACE, "Expected '}' after struct fields");
@@ -479,10 +541,10 @@ struct CParser {
         size_t max_size = 0;
 
         while (!check(CTokenType.RIGHT_BRACE) && !at_end) {
-            // Check for anonymous union/struct: union { ... } or struct { ... }
+            // Check for anonymous union/struct: union { ... } or struct { ... } field_name;
             if ((check(CTokenType.UNION) || check(CTokenType.STRUCT)) &&
                 peek_at(1).type == CTokenType.LEFT_BRACE) {
-                // Skip anonymous union/struct - consume until matching brace and semicolon
+                // Skip anonymous union/struct body - consume until matching brace
                 advance();  // consume union/struct
                 advance();  // consume {
                 int brace_depth = 1;
@@ -491,7 +553,19 @@ struct CParser {
                     else if (check(CTokenType.RIGHT_BRACE)) brace_depth--;
                     advance();
                 }
-                if (check(CTokenType.SEMICOLON)) advance();  // optional trailing ;
+                // Check for field name after the struct body: struct { ... } field_name;
+                if (check(CTokenType.IDENTIFIER)) {
+                    CToken field_name = advance();
+                    // Treat as opaque type (size 0 for now, or use max_size of nested)
+                    StructField field;
+                    field.name = field_name.lexeme;
+                    field.type = &TYPE_INT;  // Placeholder - anonymous struct field
+                    field.offset = 0;
+                    fields ~= field;
+                    if (field.type.size_of() > max_size) max_size = field.type.size_of();
+                }
+                consume(CTokenType.SEMICOLON, "Expected ';' after anonymous struct field");
+                if (ERROR_OCCURRED) return 1;
                 continue;
             }
 
@@ -499,52 +573,97 @@ struct CParser {
             CType* field_type = parse_type();
             if (field_type is null) return 1;
 
-            // Check for anonymous bit field
-            if (check(CTokenType.COLON)) {
-                advance();  // consume :
-                auto width_result = parse_enum_const_expr();
-                if (width_result.err) return 1;
-                consume(CTokenType.SEMICOLON, "Expected ';' after anonymous bit field");
-                if (ERROR_OCCURRED) return 1;
-                continue;  // Skip anonymous bit fields
-            }
-
-            // Parse field name
-            CToken field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
-            if (ERROR_OCCURRED) return 1;
-
-            // Handle arrays
-            if (match(CTokenType.LEFT_BRACKET)) {
-                auto size_result = parse_enum_const_expr();
-                if (size_result.err) return 1;
-                if (size_result.value <= 0) {
-                    error("Array size must be positive");
+            // Check for function pointer field: type (CONV * name) (params)
+            if (check(CTokenType.LEFT_PAREN)) {
+                advance();  // consume '('
+                // Skip calling convention identifiers until we hit '*'
+                while (check(CTokenType.IDENTIFIER)) {
+                    advance();
+                }
+                if (!match(CTokenType.STAR)) {
+                    error("Expected '*' in function pointer field");
                     return 1;
                 }
-                consume(CTokenType.RIGHT_BRACKET, "Expected ']' after array size");
+                // Skip const after * (e.g., (*const funcptr))
+                match(CTokenType.CONST);
+                CToken field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
                 if (ERROR_OCCURRED) return 1;
-                field_type = make_array_type(allocator, field_type, cast(size_t) size_result.value);
+                consume(CTokenType.RIGHT_PAREN, "Expected ')' after field name");
+                if (ERROR_OCCURRED) return 1;
+                // Skip the parameter list
+                if (check(CTokenType.LEFT_PAREN)) {
+                    skip_balanced_parens();
+                }
+                // Treat as void* for simplicity
+                CType* fptr_type = make_pointer_type(allocator, &TYPE_VOID);
+
+                consume(CTokenType.SEMICOLON, "Expected ';' after function pointer field");
+                if (ERROR_OCCURRED) return 1;
+
+                // Add function pointer field
+                StructField field;
+                field.name = field_name.lexeme;
+                field.type = fptr_type;
+                field.offset = 0;  // All union members start at offset 0
+                fields ~= field;
+
+                // Track max size
+                size_t field_size = fptr_type.size_of();
+                if (field_size > max_size) max_size = field_size;
+            } else {
+                // Handle comma-separated declarators (e.g., int x:1, y:2;)
+                CType* base_type = field_type;
+                do {
+                    // Check for anonymous bit field
+                    if (check(CTokenType.COLON)) {
+                        advance();  // consume :
+                        auto width_result = parse_enum_const_expr();
+                        if (width_result.err) return 1;
+                        // Skip anonymous bit fields - they're just padding
+                        // Continue to next declarator or end of declaration
+                    } else {
+                        // Parse field name
+                        CToken field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
+                        if (ERROR_OCCURRED) return 1;
+
+                        // Each declarator starts with the base type
+                        CType* decl_type = base_type;
+
+                        // Handle arrays
+                        if (match(CTokenType.LEFT_BRACKET)) {
+                            auto size_result = parse_enum_const_expr();
+                            if (size_result.err) return 1;
+                            if (size_result.value <= 0) {
+                                error("Array size must be positive");
+                                return 1;
+                            }
+                            consume(CTokenType.RIGHT_BRACKET, "Expected ']' after array size");
+                            if (ERROR_OCCURRED) return 1;
+                            decl_type = make_array_type(allocator, decl_type, cast(size_t) size_result.value);
+                        }
+
+                        // Handle bit fields
+                        if (match(CTokenType.COLON)) {
+                            auto width_result = parse_enum_const_expr();
+                            if (width_result.err) return 1;
+                        }
+
+                        // Add field - all union fields have offset 0
+                        StructField field;
+                        field.name = field_name.lexeme;
+                        field.type = decl_type;
+                        field.offset = 0;  // All union members start at offset 0
+                        fields ~= field;
+
+                        // Track max size
+                        size_t field_size = decl_type.size_of();
+                        if (field_size > max_size) max_size = field_size;
+                    }
+                } while (match(CTokenType.COMMA));
+
+                consume(CTokenType.SEMICOLON, "Expected ';' after field declaration");
+                if (ERROR_OCCURRED) return 1;
             }
-
-            // Handle bit fields
-            if (match(CTokenType.COLON)) {
-                auto width_result = parse_enum_const_expr();
-                if (width_result.err) return 1;
-            }
-
-            consume(CTokenType.SEMICOLON, "Expected ';' after field declaration");
-            if (ERROR_OCCURRED) return 1;
-
-            // Add field - all union fields have offset 0
-            StructField field;
-            field.name = field_name.lexeme;
-            field.type = field_type;
-            field.offset = 0;  // All union members start at offset 0
-            fields ~= field;
-
-            // Track max size
-            size_t field_size = field_type.size_of();
-            if (field_size > max_size) max_size = field_size;
         }
 
         consume(CTokenType.RIGHT_BRACE, "Expected '}' after union fields");
@@ -1127,53 +1246,52 @@ struct CParser {
                         fields ~= field;
                         offset += field.type.size_of();
                     } else {
-                        // Check for anonymous bit field first (before comma loop)
-                        if (check(CTokenType.COLON)) {
-                            advance();  // consume :
-                            auto width_result = parse_enum_const_expr();
-                            if (width_result.err) return 1;
-                            consume(CTokenType.SEMICOLON, "Expected ';' after anonymous bit field");
-                            if (ERROR_OCCURRED) return 1;
-                            continue;  // Skip to next field
-                        }
-
-                        // Handle comma-separated field names: int x, y; or int *x, *y;
+                        // Handle comma-separated field names: int x, y; or int *x, *y; or int :8, x:1;
                         do {
-                            CType* this_field_type = field_type;
-
-                            // Each comma-separated name can have its own pointer levels
-                            while (match(CTokenType.STAR)) {
-                                this_field_type = make_pointer_type(allocator, this_field_type);
-                            }
-
-                            CToken field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
-                            if (ERROR_OCCURRED) return 1;
-
-                            // Handle arrays
-                            if (match(CTokenType.LEFT_BRACKET)) {
-                                auto size_result = parse_enum_const_expr();
-                                if (size_result.err) return 1;
-                                if (size_result.value <= 0) {
-                                    error("Array size must be positive");
-                                    return 1;
-                                }
-                                consume(CTokenType.RIGHT_BRACKET, "Expected ']'");
-                                if (ERROR_OCCURRED) return 1;
-                                this_field_type = make_array_type(allocator, this_field_type, cast(size_t) size_result.value);
-                            }
-
-                            // Handle bit fields
-                            if (match(CTokenType.COLON)) {
+                            // Check for anonymous bit field (e.g., int :8)
+                            if (check(CTokenType.COLON)) {
+                                advance();  // consume :
                                 auto width_result = parse_enum_const_expr();
                                 if (width_result.err) return 1;
-                            }
+                                // Skip anonymous bit fields - they're just padding
+                                // Continue to next declarator or end of declaration
+                            } else {
+                                CType* this_field_type = field_type;
 
-                            StructField field;
-                            field.name = field_name.lexeme;
-                            field.type = this_field_type;
-                            field.offset = offset;
-                            fields ~= field;
-                            offset += this_field_type.size_of();
+                                // Each comma-separated name can have its own pointer levels
+                                while (match(CTokenType.STAR)) {
+                                    this_field_type = make_pointer_type(allocator, this_field_type);
+                                }
+
+                                CToken field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
+                                if (ERROR_OCCURRED) return 1;
+
+                                // Handle arrays
+                                if (match(CTokenType.LEFT_BRACKET)) {
+                                    auto size_result = parse_enum_const_expr();
+                                    if (size_result.err) return 1;
+                                    if (size_result.value <= 0) {
+                                        error("Array size must be positive");
+                                        return 1;
+                                    }
+                                    consume(CTokenType.RIGHT_BRACKET, "Expected ']'");
+                                    if (ERROR_OCCURRED) return 1;
+                                    this_field_type = make_array_type(allocator, this_field_type, cast(size_t) size_result.value);
+                                }
+
+                                // Handle bit fields
+                                if (match(CTokenType.COLON)) {
+                                    auto width_result = parse_enum_const_expr();
+                                    if (width_result.err) return 1;
+                                }
+
+                                StructField field;
+                                field.name = field_name.lexeme;
+                                field.type = this_field_type;
+                                field.offset = offset;
+                                fields ~= field;
+                                offset += this_field_type.size_of();
+                            }
                         } while (match(CTokenType.COMMA));
                     }
 
@@ -1352,47 +1470,51 @@ struct CParser {
                     CType* field_type = parse_type();
                     if (field_type is null) return 1;
 
-                    // Check for anonymous bit field
-                    if (check(CTokenType.COLON)) {
-                        advance();  // consume :
-                        auto width_result = parse_enum_const_expr();
-                        if (width_result.err) return 1;
-                        consume(CTokenType.SEMICOLON, "Expected ';' after anonymous bit field");
-                        if (ERROR_OCCURRED) return 1;
-                        continue;  // Skip anonymous bit fields
-                    }
+                    // Handle comma-separated declarators (e.g., int x:1, y:2;)
+                    CType* base_type = field_type;
+                    do {
+                        // Check for anonymous bit field
+                        if (check(CTokenType.COLON)) {
+                            advance();  // consume :
+                            auto width_result = parse_enum_const_expr();
+                            if (width_result.err) return 1;
+                            // Skip anonymous bit fields - they're just padding
+                        } else {
+                            CToken field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
+                            if (ERROR_OCCURRED) return 1;
 
-                    CToken field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
-                    if (ERROR_OCCURRED) return 1;
+                            CType* decl_type = base_type;
 
-                    if (match(CTokenType.LEFT_BRACKET)) {
-                        auto size_result = parse_enum_const_expr();
-                        if (size_result.err) return 1;
-                        if (size_result.value <= 0) {
-                            error("Array size must be positive");
-                            return 1;
+                            if (match(CTokenType.LEFT_BRACKET)) {
+                                auto size_result = parse_enum_const_expr();
+                                if (size_result.err) return 1;
+                                if (size_result.value <= 0) {
+                                    error("Array size must be positive");
+                                    return 1;
+                                }
+                                consume(CTokenType.RIGHT_BRACKET, "Expected ']'");
+                                if (ERROR_OCCURRED) return 1;
+                                decl_type = make_array_type(allocator, decl_type, cast(size_t) size_result.value);
+                            }
+
+                            // Handle bit fields
+                            if (match(CTokenType.COLON)) {
+                                auto width_result = parse_enum_const_expr();
+                                if (width_result.err) return 1;
+                            }
+
+                            StructField field;
+                            field.name = field_name.lexeme;
+                            field.type = decl_type;
+                            field.offset = 0;  // All union fields at offset 0
+                            fields ~= field;
+                            size_t field_size = decl_type.size_of();
+                            if (field_size > max_size) max_size = field_size;
                         }
-                        consume(CTokenType.RIGHT_BRACKET, "Expected ']'");
-                        if (ERROR_OCCURRED) return 1;
-                        field_type = make_array_type(allocator, field_type, cast(size_t) size_result.value);
-                    }
-
-                    // Handle bit fields
-                    if (match(CTokenType.COLON)) {
-                        auto width_result = parse_enum_const_expr();
-                        if (width_result.err) return 1;
-                    }
+                    } while (match(CTokenType.COMMA));
 
                     consume(CTokenType.SEMICOLON, "Expected ';' after field");
                     if (ERROR_OCCURRED) return 1;
-
-                    StructField field;
-                    field.name = field_name.lexeme;
-                    field.type = field_type;
-                    field.offset = 0;  // All union fields at offset 0
-                    fields ~= field;
-                    size_t field_size = field_type.size_of();
-                    if (field_size > max_size) max_size = field_size;
                 }
 
                 consume(CTokenType.RIGHT_BRACE, "Expected '}'");
@@ -1709,6 +1831,13 @@ struct CParser {
         CToken name = consume(CTokenType.IDENTIFIER, "Expected identifier");
         if (ERROR_OCCURRED) return 1;
 
+        // Handle asm label for symbol renaming on variables: __asm("symbol")
+        if (match(CTokenType.ASM)) {
+            if (check(CTokenType.LEFT_PAREN)) {
+                skip_balanced_parens();
+            }
+        }
+
         // Check if this is a function or variable
         if (check(CTokenType.SEMICOLON)) {
             // extern variable - skip it
@@ -1972,6 +2101,27 @@ struct CParser {
         consume(CTokenType.RIGHT_PAREN, "Expected ')' after parameters");
         if (ERROR_OCCURRED) return 1;
 
+        // Handle asm label for symbol renaming: __asm("symbol_name")
+        if (match(CTokenType.ASM)) {
+            consume(CTokenType.LEFT_PAREN, "Expected '(' after asm");
+            if (ERROR_OCCURRED) return 1;
+            // Skip string literals (may be multiple concatenated: __asm("_" "name"))
+            while (check(CTokenType.STRING)) {
+                advance();
+            }
+            consume(CTokenType.RIGHT_PAREN, "Expected ')' after asm label");
+            if (ERROR_OCCURRED) return 1;
+        }
+
+        // Skip __attribute__((...)) specifiers
+        while (check(CTokenType.IDENTIFIER) && peek().lexeme == "__attribute__") {
+            advance();  // consume __attribute__
+            // __attribute__ uses double parens: __attribute__((...))
+            if (check(CTokenType.LEFT_PAREN)) {
+                skip_balanced_parens();
+            }
+        }
+
         func.name = name;
         func.return_type = ret_type;
         func.params = params[];
@@ -2105,6 +2255,9 @@ struct CParser {
             result = &TYPE_FLOAT;
         } else if (match(CTokenType.DOUBLE)) {
             result = &TYPE_DOUBLE;
+        } else if (match(CTokenType.FLOAT16)) {
+            // _Float16 - treat as float for now
+            result = &TYPE_FLOAT;
         } else if (match(CTokenType.STRUCT)) {
             // struct Name or struct { ... }
             bool has_name = check(CTokenType.IDENTIFIER);
@@ -2123,46 +2276,50 @@ struct CParser {
                     CType* field_type = parse_type();
                     if (field_type is null) return null;
 
-                    // Check for anonymous bit field
-                    if (check(CTokenType.COLON)) {
-                        advance();  // consume :
-                        auto width_result = parse_enum_const_expr();
-                        if (width_result.err) return null;
-                        consume(CTokenType.SEMICOLON, "Expected ';' after anonymous bit field");
-                        if (ERROR_OCCURRED) return null;
-                        continue;  // Skip anonymous bit fields
-                    }
+                    // Handle comma-separated declarators (e.g., int x:1, y:2;)
+                    CType* base_type = field_type;
+                    do {
+                        // Check for anonymous bit field
+                        if (check(CTokenType.COLON)) {
+                            advance();  // consume :
+                            auto width_result = parse_enum_const_expr();
+                            if (width_result.err) return null;
+                            // Skip anonymous bit fields - they're just padding
+                        } else {
+                            CToken field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
+                            if (ERROR_OCCURRED) return null;
 
-                    CToken field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
-                    if (ERROR_OCCURRED) return null;
+                            CType* decl_type = base_type;
 
-                    if (match(CTokenType.LEFT_BRACKET)) {
-                        auto size_result = parse_enum_const_expr();
-                        if (size_result.err) return null;
-                        if (size_result.value <= 0) {
-                            error("Array size must be positive");
-                            return null;
+                            if (match(CTokenType.LEFT_BRACKET)) {
+                                auto size_result = parse_enum_const_expr();
+                                if (size_result.err) return null;
+                                if (size_result.value <= 0) {
+                                    error("Array size must be positive");
+                                    return null;
+                                }
+                                consume(CTokenType.RIGHT_BRACKET, "Expected ']'");
+                                if (ERROR_OCCURRED) return null;
+                                decl_type = make_array_type(allocator, decl_type, cast(size_t) size_result.value);
+                            }
+
+                            // Handle bit fields
+                            if (match(CTokenType.COLON)) {
+                                auto width_result = parse_enum_const_expr();
+                                if (width_result.err) return null;
+                            }
+
+                            StructField field;
+                            field.name = field_name.lexeme;
+                            field.type = decl_type;
+                            field.offset = total_size;
+                            fields ~= field;
+                            total_size += decl_type.size_of();
                         }
-                        consume(CTokenType.RIGHT_BRACKET, "Expected ']'");
-                        if (ERROR_OCCURRED) return null;
-                        field_type = make_array_type(allocator, field_type, cast(size_t) size_result.value);
-                    }
-
-                    // Handle bit fields
-                    if (match(CTokenType.COLON)) {
-                        auto width_result = parse_enum_const_expr();
-                        if (width_result.err) return null;
-                    }
+                    } while (match(CTokenType.COMMA));
 
                     consume(CTokenType.SEMICOLON, "Expected ';' after field");
                     if (ERROR_OCCURRED) return null;
-
-                    StructField field;
-                    field.name = field_name.lexeme;
-                    field.type = field_type;
-                    field.offset = total_size;
-                    fields ~= field;
-                    total_size += field_type.size_of();
                 }
 
                 consume(CTokenType.RIGHT_BRACE, "Expected '}'");
@@ -2211,47 +2368,51 @@ struct CParser {
                     CType* field_type = parse_type();
                     if (field_type is null) return null;
 
-                    // Check for anonymous bit field
-                    if (check(CTokenType.COLON)) {
-                        advance();  // consume :
-                        auto width_result = parse_enum_const_expr();
-                        if (width_result.err) return null;
-                        consume(CTokenType.SEMICOLON, "Expected ';' after anonymous bit field");
-                        if (ERROR_OCCURRED) return null;
-                        continue;  // Skip anonymous bit fields
-                    }
+                    // Handle comma-separated declarators (e.g., int x:1, y:2;)
+                    CType* base_type = field_type;
+                    do {
+                        // Check for anonymous bit field
+                        if (check(CTokenType.COLON)) {
+                            advance();  // consume :
+                            auto width_result = parse_enum_const_expr();
+                            if (width_result.err) return null;
+                            // Skip anonymous bit fields - they're just padding
+                        } else {
+                            CToken field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
+                            if (ERROR_OCCURRED) return null;
 
-                    CToken field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
-                    if (ERROR_OCCURRED) return null;
+                            CType* decl_type = base_type;
 
-                    if (match(CTokenType.LEFT_BRACKET)) {
-                        auto size_result = parse_enum_const_expr();
-                        if (size_result.err) return null;
-                        if (size_result.value <= 0) {
-                            error("Array size must be positive");
-                            return null;
+                            if (match(CTokenType.LEFT_BRACKET)) {
+                                auto size_result = parse_enum_const_expr();
+                                if (size_result.err) return null;
+                                if (size_result.value <= 0) {
+                                    error("Array size must be positive");
+                                    return null;
+                                }
+                                consume(CTokenType.RIGHT_BRACKET, "Expected ']'");
+                                if (ERROR_OCCURRED) return null;
+                                decl_type = make_array_type(allocator, decl_type, cast(size_t) size_result.value);
+                            }
+
+                            // Handle bit fields
+                            if (match(CTokenType.COLON)) {
+                                auto width_result = parse_enum_const_expr();
+                                if (width_result.err) return null;
+                            }
+
+                            StructField field;
+                            field.name = field_name.lexeme;
+                            field.type = decl_type;
+                            field.offset = 0;  // All union fields at offset 0
+                            fields ~= field;
+                            size_t field_size = decl_type.size_of();
+                            if (field_size > max_size) max_size = field_size;
                         }
-                        consume(CTokenType.RIGHT_BRACKET, "Expected ']'");
-                        if (ERROR_OCCURRED) return null;
-                        field_type = make_array_type(allocator, field_type, cast(size_t) size_result.value);
-                    }
-
-                    // Handle bit fields
-                    if (match(CTokenType.COLON)) {
-                        auto width_result = parse_enum_const_expr();
-                        if (width_result.err) return null;
-                    }
+                    } while (match(CTokenType.COMMA));
 
                     consume(CTokenType.SEMICOLON, "Expected ';' after field");
                     if (ERROR_OCCURRED) return null;
-
-                    StructField field;
-                    field.name = field_name.lexeme;
-                    field.type = field_type;
-                    field.offset = 0;  // All union fields at offset 0
-                    fields ~= field;
-                    size_t field_size = field_type.size_of();
-                    if (field_size > max_size) max_size = field_size;
                 }
 
                 consume(CTokenType.RIGHT_BRACE, "Expected '}'");
@@ -2292,6 +2453,9 @@ struct CParser {
                 error("Unknown enum type");
                 return null;
             }
+        } else if (is_unsigned) {
+            // 'unsigned' by itself means 'unsigned int'
+            result = &TYPE_UINT;
         } else if (check(CTokenType.IDENTIFIER)) {
             // Check for typedef name
             CToken name = peek();

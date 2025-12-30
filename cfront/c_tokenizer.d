@@ -69,6 +69,8 @@ enum CTokenType : uint {
     TYPEDEF = 616,
     SIZEOF = 617,
     STATIC_ASSERT = 618,
+    ASM = 619,
+    FLOAT16 = 620,
 
     // Control flow keywords
     IF = 700,
@@ -261,7 +263,6 @@ struct CTokenizer {
         define_macro("__restrict", "");
         define_macro("__restrict__", "");
         define_macro("__volatile__", "");
-        define_macro("__asm__", ""); // NOTE: This will break asm() usage
 
         define_macro("__signed", "signed");
         define_macro("__signed__", "signed");
@@ -1379,6 +1380,10 @@ struct CTokenizer {
             case "typedef":  type = CTokenType.TYPEDEF; break;
             case "sizeof":          type = CTokenType.SIZEOF; break;
             case "_Static_assert":  type = CTokenType.STATIC_ASSERT; break;
+            case "asm":             type = CTokenType.ASM; break;
+            case "__asm":           type = CTokenType.ASM; break;
+            case "__asm__":         type = CTokenType.ASM; break;
+            case "_Float16":        type = CTokenType.FLOAT16; break;
             case "if":              type = CTokenType.IF; break;
             case "else":     type = CTokenType.ELSE; break;
             case "while":    type = CTokenType.WHILE; break;
@@ -1861,6 +1866,10 @@ struct CTokenizer {
                         case "enum":     type = CTokenType.ENUM; break;
                         case "typedef":  type = CTokenType.TYPEDEF; break;
                         case "sizeof":   type = CTokenType.SIZEOF; break;
+                        case "asm":      type = CTokenType.ASM; break;
+                        case "__asm":    type = CTokenType.ASM; break;
+                        case "__asm__":  type = CTokenType.ASM; break;
+                        case "_Float16": type = CTokenType.FLOAT16; break;
                         default: break;
                     }
                     *tokens ~= CToken(type, ident, line, start_column, current_file);
