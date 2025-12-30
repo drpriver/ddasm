@@ -1400,6 +1400,70 @@ struct CDasmWriter {
                 }
                 return 0;
             }
+
+            // Address of member access: &p.x or &pp->x
+            if (CMemberAccess* ma = expr.operand.as_member_access()) {
+                if (target == TARGET_IS_NOTHING) return 0;
+
+                int before = regallocator.alloced;
+                int addr_reg = regallocator.allocate();
+
+                // Get the struct type
+                CType* obj_type = get_expr_type(ma.object);
+                if (obj_type is null) {
+                    error(expr.expr.token, "Cannot determine type for member access");
+                    return 1;
+                }
+
+                CType* struct_type = obj_type;
+                if (ma.is_arrow) {
+                    if (!obj_type.is_pointer()) {
+                        error(expr.expr.token, "'->' requires pointer type");
+                        return 1;
+                    }
+                    struct_type = obj_type.pointed_to;
+                }
+
+                if (struct_type is null || !struct_type.is_struct_or_union()) {
+                    error(expr.expr.token, "Member access requires struct/union type");
+                    return 1;
+                }
+
+                // Find the field offset
+                StructField* field = struct_type.get_field(ma.member.lexeme);
+                if (field is null) {
+                    error(expr.expr.token, "Unknown field");
+                    return 1;
+                }
+
+                if (ma.is_arrow) {
+                    // &pp->x: get pointer value, add offset
+                    int err = gen_expression(ma.object, addr_reg);
+                    if (err) return err;
+                } else {
+                    // &p.x: get address of struct, add offset
+                    int err = gen_struct_address(ma.object, addr_reg);
+                    if (err) return err;
+                }
+
+                // Add field offset
+                if (field.offset != 0) {
+                    sb.writef("    add r% r% %\n", target, addr_reg, field.offset);
+                } else {
+                    sb.writef("    move r% r%\n", target, addr_reg);
+                }
+
+                regallocator.reset_to(before);
+                return 0;
+            }
+
+            // Address of array subscript: &arr[i]
+            if (CSubscript* sub = expr.operand.as_subscript()) {
+                if (target == TARGET_IS_NOTHING) return 0;
+                // Just compute the address without dereferencing
+                return gen_subscript_address(sub, target);
+            }
+
             error(expr.expr.token, "Invalid operand for address-of");
             return 1;
         }
@@ -1954,18 +2018,8 @@ struct CDasmWriter {
                 if (err) return err;
             } else {
                 // For ., we need the address of the struct
-                if (CIdentifier* id = ma.object.as_identifier()) {
-                    str fname = id.name.lexeme;
-                    if (int* offset = fname in stacklocals) {
-                        sb.writef("    add r% rbp %\n", addr_reg, P(*offset));
-                    } else {
-                        error(expr.expr.token, "Cannot take address for '.' assignment");
-                        return 1;
-                    }
-                } else {
-                    error(expr.expr.token, "'.' assignment on complex expressions not supported");
-                    return 1;
-                }
+                int err = gen_struct_address(ma.object, addr_reg);
+                if (err) return err;
             }
 
             // Add field offset
@@ -2021,6 +2075,30 @@ struct CDasmWriter {
         return 0;
     }
 
+    // Generate address of array subscript (for &arr[i])
+    int gen_subscript_address(CSubscript* expr, int target) {
+        int before = regallocator.alloced;
+        int arr_reg = regallocator.allocate();
+        int idx_reg = regallocator.allocate();
+
+        int err = gen_expression(expr.array, arr_reg);
+        if (err) return err;
+
+        err = gen_expression(expr.index, idx_reg);
+        if (err) return err;
+
+        // Scale index by element size
+        CType* arr_type = get_expr_type(expr.array);
+        size_t elem_size = (arr_type && (arr_type.is_pointer() || arr_type.is_array())) ? arr_type.element_size() : 1;
+        if (elem_size > 1) {
+            sb.writef("    mul r% r% %\n", idx_reg, idx_reg, elem_size);
+        }
+        sb.writef("    add r% r% r%\n", target, arr_reg, idx_reg);
+
+        regallocator.reset_to(before);
+        return 0;
+    }
+
     int gen_member_access(CMemberAccess* expr, int target) {
         int before = regallocator.alloced;
         int obj_reg = regallocator.allocate();
@@ -2062,19 +2140,9 @@ struct CDasmWriter {
             if (err) return err;
         } else {
             // For ., we need the address of the struct
-            // If it's an identifier, get its address
-            if (CIdentifier* id = expr.object.as_identifier()) {
-                str name = id.name.lexeme;
-                if (int* offset = name in stacklocals) {
-                    sb.writef("    add r% rbp %\n", obj_reg, P(*offset));
-                } else {
-                    error(expr.expr.token, "Cannot take address of expression for '.' access");
-                    return 1;
-                }
-            } else {
-                error(expr.expr.token, "'.' access on complex expressions not supported");
-                return 1;
-            }
+            // Use gen_struct_address which handles nested member access recursively
+            int err = gen_struct_address(expr.object, obj_reg);
+            if (err) return err;
         }
 
         // Add field offset
@@ -2158,18 +2226,9 @@ struct CDasmWriter {
                 int err = gen_expression(ma.object, target);
                 if (err) return err;
             } else {
-                if (CIdentifier* id = ma.object.as_identifier()) {
-                    str name = id.name.lexeme;
-                    if (int* offset = name in stacklocals) {
-                        sb.writef("    add r% rbp %\n", target, P(*offset));
-                    } else {
-                        error(ma.expr.token, "Cannot take address of non-local struct");
-                        return 1;
-                    }
-                } else {
-                    error(ma.expr.token, "Cannot take address of complex expression");
-                    return 1;
-                }
+                // Recursively get address of the object
+                int err = gen_struct_address(ma.object, target);
+                if (err) return err;
             }
 
             // Add field offset
