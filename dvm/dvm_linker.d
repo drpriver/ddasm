@@ -176,12 +176,14 @@ struct LinkContext {
 
     AsmError
     link_arrays(){
-        foreach(i, abstract_array; unlinked.arrays[]){with(ArgumentKind){
-            auto actual = &prog.arrays[i];
-            foreach(j, v; abstract_array.array[]){
+        foreach(i, const ref AbstractArray abstract_array; unlinked.arrays[]){with(ArgumentKind){
+            IntegerArray* actual = &prog.arrays[i];
+            foreach(j, const ref Argument v; abstract_array.array[]){
                 switch(v.kind){
                     default:
                     case LABEL:
+                        err_print(v.first_char, "BUG: Unknown label");
+                        return AsmError.LINK_ERROR;
                     case UNSET:
                         err_print(v.first_char, "BUG");
                         return AsmError.LINK_ERROR;
@@ -199,7 +201,7 @@ struct LinkContext {
                         (*actual)[j] = v.cmp_mode;
                         break;
                     case FUNCTION:{
-                        auto fi = find_function(v.function_name, v.first_char);
+                        uintptr_t fi = find_function(v.function_name, v.first_char);
                         if(!fi)
                             return AsmError.LINK_ERROR;
                         else
@@ -209,7 +211,7 @@ struct LinkContext {
                         (*actual)[j] = cast(uintptr_t)prog.arrays[i].bdata.data.ptr;
                         break;
                     case VARIABLE:
-                        if(auto var = v.variable in prog.variable_table)
+                        if(uintptr_t** var = v.variable in prog.variable_table)
                             (*actual)[j] = cast(uintptr_t)*var;
                         else {
                             err_print(v.first_char, "Reference to unknown variable: ", Q(v.variable));
@@ -229,11 +231,13 @@ struct LinkContext {
 
     AsmError
     link_variables(){with(ArgumentKind){
-        foreach(i, var; unlinked.variables[]){
+        foreach(i, const ref AbstractVariable var; unlinked.variables[]){
             uintptr_t* dest = &prog.variables.data[i];
             switch(var.value.kind){
                 default:
                 case LABEL:
+                    err_print(var.value.first_char, "BUG LABEL");
+                    return AsmError.LINK_ERROR;
                 case UNSET:
                     err_print(var.value.first_char, "BUG");
                     return AsmError.LINK_ERROR;
@@ -279,9 +283,9 @@ struct LinkContext {
 
     AsmError
     link_functions(){
-        foreach(i, ref func; prog.function_store.data){
-            auto afunc = &unlinked.functions[i];
-            if(auto err = link_function(afunc, &func))
+        foreach(i, ref Function func; prog.function_store.data){
+            AbstractFunction* afunc = &unlinked.functions[i];
+            if(AsmError err = link_function(afunc, &func))
                 return err;
         }
         return AsmError.NO_ERROR;
@@ -295,7 +299,7 @@ struct LinkContext {
         // look for labels
         {
             uintptr_t* ip = func.instructions_;
-            foreach(inst; afunc.instructions[]){
+            foreach(const ref AbstractInstruction inst; afunc.instructions[]){
                 if(inst.label.length){
                     if(inst.label in labels){
                         err_print(inst.first_char, "Duplicate label ", Q(inst.label));
@@ -308,10 +312,10 @@ struct LinkContext {
             }
         }
         uintptr_t* ip = func.instructions_;
-        foreach(inst; afunc.instructions[]){
+        foreach(const ref AbstractInstruction inst; afunc.instructions[]){
             if(inst.label.length) continue;
             *(ip++) = inst.instruction;
-            foreach(arg;inst.args[0..inst.n_args]){
+            foreach(const ref Argument arg;inst.args[0..inst.n_args]){
                 switch(arg.kind)with(ArgumentKind){
                     default:
                     case UNSET:
@@ -331,14 +335,14 @@ struct LinkContext {
                         *(ip++) = arg.cmp_mode;
                         break;
                     case FUNCTION:{
-                        auto fi = find_function(arg.function_name, arg.first_char);
+                        uintptr_t fi = find_function(arg.function_name, arg.first_char);
                         if(!fi)
                             return AsmError.LINK_ERROR;
                         else
                             *(ip++) = fi;
                     }break;
                     case LABEL:{
-                        if(auto label = arg.label_name in labels){
+                        if(uintptr_t* label = arg.label_name in labels){
                             *(ip++) = *label;
                         }
                         else {
@@ -350,7 +354,7 @@ struct LinkContext {
                         *(ip++) = cast(uintptr_t)prog.arrays[arg.array].bdata.data.ptr;
                         break;
                     case VARIABLE:
-                        if(auto var = arg.variable in prog.variable_table){
+                        if(uintptr_t** var = arg.variable in prog.variable_table){
                             *(ip++) = cast(uintptr_t)*var;
                         }
                         else {
@@ -371,17 +375,17 @@ struct LinkContext {
 
     AsmError
     link(){
-        if(auto err = allocate_arrays)
+        if(AsmError err = allocate_arrays)
             return err;
-        if(auto err = allocate_variables)
+        if(AsmError err = allocate_variables)
             return err;
-        if(auto err = allocate_functions)
+        if(AsmError err = allocate_functions)
             return err;
-        if(auto err = link_functions)
+        if(AsmError err = link_functions)
             return err;
-        if(auto err = link_arrays)
+        if(AsmError err = link_arrays)
             return err;
-        if(auto err = link_variables)
+        if(AsmError err = link_variables)
             return err;
         return AsmError.NO_ERROR;
     }
@@ -390,7 +394,7 @@ struct LinkContext {
 size_t
 calculate_function_size(AbstractFunction* func){
     size_t size = 0;
-    foreach(ref inst; func.instructions[]){
+    foreach(const ref AbstractInstruction inst; func.instructions[]){
         if(inst.label.length) continue;
         size += instruction_size(inst.instruction);
     }
