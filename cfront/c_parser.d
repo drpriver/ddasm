@@ -27,18 +27,11 @@ struct CParser {
 
     void error(CToken token, str message) {
         ERROR_OCCURRED = true;
-        if (token.file.length > 0) {
-            fprintf(stderr, "%.*s:%d:%d: Parse Error at '%.*s': %.*s\n",
+        fprintf(stderr, "%.*s:%d:%d: Parse Error at '%.*s': %.*s\n",
                     cast(int)token.file.length, token.file.ptr,
                     token.line, token.column,
                     cast(int)token.lexeme.length, token.lexeme.ptr,
                     cast(int)message.length, message.ptr);
-        } else {
-            fprintf(stderr, "[line %d, col %d]: Parse Error at '%.*s': %.*s\n",
-                    token.line, token.column,
-                    cast(int)token.lexeme.length, token.lexeme.ptr,
-                    cast(int)message.length, message.ptr);
-        }
     }
 
     void error(str message) {

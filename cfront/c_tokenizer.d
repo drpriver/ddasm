@@ -9,7 +9,7 @@ import dlib.aliases;
 import dlib.allocator : Allocator;
 import dlib.barray : Barray, make_barray;
 import dlib.table : Table;
-import dlib.file_util : read_file, FileResult;
+import dlib.file_util : read_file, FileResult, FileFlags;
 
 enum CTokenType : uint {
     // Single character tokens
@@ -161,13 +161,16 @@ struct CTokenizer {
         "/usr/local/include",
         "/usr/lib/gcc/x86_64-linux-gnu/10/include",  // GCC's stddef.h etc
         "/usr/lib/gcc/x86_64-linux-gnu/7/include",   // Fallback for older GCC
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/",
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang/17/include/",
+        "",
     ];
 
     bool ERROR_OCCURRED = false;
 
     // Helper to define an object-like macro
     void define_macro(str name, str replacement) {
-        MacroDef def;
+        MacroDef def = {};
         def.replacement = replacement;
         def.params = null;
         def.is_function_like = false;
@@ -223,6 +226,8 @@ struct CTokenizer {
         // Pretend to be GCC for SDL's compiler detection
         define_macro("__GNUC__", "4");
         define_macro("__GNUC_MINOR__", "0");
+        define_macro("__STDC__", "1");
+        define_macro("__STDC_VERSION__", "199901L");
 
         // Size/type macros
         define_macro("__SIZEOF_POINTER__", "8");  // 64-bit
@@ -257,6 +262,11 @@ struct CTokenizer {
         define_macro("__restrict__", "");
         define_macro("__volatile__", "");
         define_macro("__asm__", ""); // NOTE: This will break asm() usage
+
+        define_macro("__signed", "signed");
+        define_macro("__signed__", "signed");
+        define_macro("__const", "const");
+        define_macro("__const__", "const");
 
         // glibc __REDIRECT macros - expand to just name proto, skip __asm__ alias
         {
@@ -364,14 +374,9 @@ struct CTokenizer {
 
     void error(str message) {
         ERROR_OCCURRED = true;
-        if (current_file.length > 0) {
-            fprintf(stderr, "%.*s:%d:%d: Tokenize Error: %.*s\n",
-                    cast(int)current_file.length, current_file.ptr,
-                    line, column, cast(int)message.length, message.ptr);
-        } else {
-            fprintf(stderr, "[line %d, col %d]: Tokenize Error: %.*s\n",
-                    line, column, cast(int)message.length, message.ptr);
-        }
+        fprintf(stderr, "%.*s:%d:%d: Tokenize Error: %.*s\n",
+                cast(int)current_file.length, current_file.ptr,
+                line, column, cast(int)message.length, message.ptr);
     }
 
     bool at_end() {
@@ -577,6 +582,9 @@ struct CTokenizer {
                     break;
 
                 default:
+                fprintf(stderr, "%.*s:%d:%d: c = 0x%x\n",
+                        cast(int)current_file.length, current_file.ptr,
+                        line, column, cast(uint)c);
                     error("Unexpected character");
                     break;
             }
@@ -662,8 +670,7 @@ struct CTokenizer {
         str full_path = resolve_include_path(filename, is_system);
         if (full_path.length == 0) {
             // For now, just warn and skip - some system headers we can't/won't process
-            // fprintf(stderr, "Warning: Cannot find include file: %.*s\n",
-            //         cast(int)filename.length, filename.ptr);
+            fprintf(stderr, "Warning: Cannot find include file: %.*s\n", cast(int)filename.length, filename.ptr);
             return;
         }
 
@@ -682,10 +689,9 @@ struct CTokenizer {
         path_buf.write(full_path);
         path_buf.nul_terminate();
 
-        auto file_result = read_file(path_buf.borrow().ptr, allocator);
+        auto file_result = read_file(path_buf.borrow().ptr, allocator, FileFlags.NUL_TERMINATE | FileFlags.ZERO_PAD_TO_16);
         if (file_result.errored) {
-            // fprintf(stderr, "Warning: Cannot read include file: %.*s\n",
-            //         cast(int)full_path.length, full_path.ptr);
+            fprintf(stderr, "Warning: Cannot read include file: %.*s\n", cast(int)full_path.length, full_path.ptr);
             return;
         }
         // Save current state and switch to new file
