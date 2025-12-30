@@ -39,15 +39,18 @@ struct LabelAllocator {
 struct CAnalyzer {
     Table!(str, bool) addr_taken;  // Variables whose address is taken
     Table!(str, bool) arrays;      // Array variables (always need stack)
+    Table!(str, bool) structs;     // Struct variables (always need stack)
     Barray!(str) all_vars;         // All local variable names
     Allocator allocator;
 
     void analyze_function(CFunction* func) {
         addr_taken.data.allocator = allocator;
         arrays.data.allocator = allocator;
+        structs.data.allocator = allocator;
         all_vars.bdata.allocator = allocator;
         addr_taken.cleanup();
         arrays.cleanup();
+        structs.cleanup();
         all_vars.clear();
 
         foreach (stmt; func.body) {
@@ -56,8 +59,8 @@ struct CAnalyzer {
     }
 
     bool should_use_stack() {
-        // Use stack if any address is taken, any arrays, or more than 4 variables
-        return addr_taken.count > 0 || arrays.count > 0 || all_vars[].length > 4;
+        // Use stack if any address is taken, any arrays, structs, or more than 4 variables
+        return addr_taken.count > 0 || arrays.count > 0 || structs.count > 0 || all_vars[].length > 4;
     }
 
     void analyze_stmt(CStmt* stmt) {
@@ -98,6 +101,10 @@ struct CAnalyzer {
                 // Track array variables
                 if (decl.var_type && decl.var_type.is_array()) {
                     arrays[decl.name.lexeme] = true;
+                }
+                // Track struct/union variables
+                if (decl.var_type && decl.var_type.is_struct_or_union()) {
+                    structs[decl.name.lexeme] = true;
                 }
                 if (decl.initializer)
                     analyze_expr(decl.initializer);
@@ -178,10 +185,17 @@ struct CDasmWriter {
     Table!(str, bool) addr_taken;    // Variables whose address is taken
     Table!(str, bool) arrays;        // Array variables (need special handling)
     Table!(str, CType*) global_types; // Global variable types
+    Table!(str, CType*) func_return_types; // Function return types (for struct returns)
 
     // Loop control
     int current_continue_target = -1;
     int current_break_target = -1;
+
+    // Current function info
+    CType* current_return_type = null;  // Return type of current function
+    bool returns_struct = false;         // True if current function returns a struct
+    bool uses_hidden_return_ptr = false; // True if struct is too big for registers (> 16 bytes)
+    int return_ptr_slot = -1;            // Stack slot for hidden return pointer (large struct returns)
 
     bool ERROR_OCCURRED = false;
     bool use_stack = false;  // Set true when we need stack-based locals
@@ -191,6 +205,22 @@ struct CDasmWriter {
     enum { TARGET_IS_NOTHING = -1 }
     enum { RARG1 = 10 }  // First argument register (rarg1 = r10)
     // Note: Return value uses named register 'rout1', not a numeric register
+
+    // Check if a struct/union type can be returned in registers (1-2 registers for <= 16 bytes)
+    static bool struct_fits_in_registers(CType* t) {
+        if (t is null || !t.is_struct_or_union()) return false;
+        return t.size_of() <= 16;
+    }
+
+    // Get number of registers needed to return a struct/union (0, 1, or 2)
+    static int struct_return_regs(CType* t) {
+        if (t is null || !t.is_struct_or_union()) return 0;
+        size_t size = t.size_of();
+        if (size == 0) return 0;
+        if (size <= 8) return 1;
+        if (size <= 16) return 2;
+        return 0;  // Too big, use hidden pointer
+    }
 
     // Get the type of an expression (for pointer arithmetic scaling)
     CType* get_expr_type(CExpr* e) {
@@ -245,7 +275,13 @@ struct CDasmWriter {
                 }
                 return get_expr_type(un.operand);
             case CALL:
-                // Would need function return type tracking
+                // Look up function return type
+                auto call = cast(CCall*)e;
+                if (CIdentifier* id = call.callee.as_identifier()) {
+                    if (CType** rt = id.name.lexeme in func_return_types) {
+                        return *rt;
+                    }
+                }
                 return null;
             case ASSIGN:
                 return get_expr_type((cast(CAssign*)e).target);
@@ -254,8 +290,20 @@ struct CDasmWriter {
                 auto at = get_expr_type(sub.array);
                 if (at && (at.is_pointer() || at.is_array())) return at.pointed_to;
                 return null;
-            case CAST:
             case MEMBER_ACCESS:
+                auto ma = e.as_member_access;
+                auto obj_type = get_expr_type(ma.object);
+                if (obj_type is null) return null;
+                // For ->, dereference pointer first
+                if (ma.is_arrow && obj_type.is_pointer()) {
+                    obj_type = obj_type.pointed_to;
+                }
+                if (obj_type && obj_type.is_struct_or_union()) {
+                    auto field = obj_type.get_field(ma.member.lexeme);
+                    if (field) return field.type;
+                }
+                return null;
+            case CAST:
             case SIZEOF:
             case GROUPING:
                 return null;
@@ -408,6 +456,12 @@ struct CDasmWriter {
         }
         if (unit.globals.length > 0) sb.write("\n");
 
+        // First pass: collect function return types for struct return handling
+        func_return_types.data.allocator = allocator;
+        foreach (ref func; unit.functions) {
+            func_return_types[func.name.lexeme] = func.return_type;
+        }
+
         // Generate functions and track if we have main/start
         bool has_main = false;
         bool has_start = false;
@@ -496,7 +550,17 @@ struct CDasmWriter {
             labelallocator.reset();
             use_stack = false;
             stack_offset = 1;  // Reset to 1 (slot 0 is saved RBP)
+            current_return_type = null;
+            returns_struct = false;
+            uses_hidden_return_ptr = false;
+            return_ptr_slot = -1;
         }
+
+        // Track return type for struct/union returns
+        current_return_type = func.return_type;
+        returns_struct = func.return_type !is null && func.return_type.is_struct_or_union();
+        // Only use hidden pointer for structs/unions > 16 bytes (can't fit in 2 registers)
+        uses_hidden_return_ptr = returns_struct && !struct_fits_in_registers(func.return_type);
 
         // Run analysis to detect address-taken variables
         CAnalyzer analyzer;
@@ -514,17 +578,45 @@ struct CDasmWriter {
         // Use stack if any address is taken OR if we have many variables (> 4)
         use_stack = analyzer.should_use_stack();
 
+        // Also force stack if any parameters are structs/unions or we use hidden return pointer
+        if (uses_hidden_return_ptr) use_stack = true;
+        foreach (ref param; func.params) {
+            if (param.type.is_struct_or_union()) {
+                use_stack = true;
+                break;
+            }
+        }
+
         // First, count how many stack slots we need
         int num_stack_slots = 0;
         if (use_stack) {
-            // Count parameters (1 slot each)
-            num_stack_slots = cast(int)func.params.length;
+            // Reserve slot for hidden return pointer if returning large struct
+            if (uses_hidden_return_ptr) {
+                num_stack_slots += 1;
+            }
+            // Count parameters (struct params need multiple slots)
+            foreach (ref param; func.params) {
+                num_stack_slots += cast(int)param.type.stack_slots();
+            }
             // Count local variables, accounting for array sizes
             num_stack_slots += count_var_slots(func.body);
         }
 
-        // Emit function header
-        sb.writef("function % %\n", func.name.lexeme, func.params.length);
+        // For large struct returns, caller passes hidden pointer as first arg
+        int arg_offset = uses_hidden_return_ptr ? 1 : 0;
+
+        // Calculate total register slots needed for parameters
+        int total_param_slots = arg_offset;
+        foreach (ref param; func.params) {
+            if (param.type.is_struct_or_union() && struct_fits_in_registers(param.type)) {
+                total_param_slots += struct_return_regs(param.type);
+            } else {
+                total_param_slots += 1;
+            }
+        }
+
+        // Emit function header with correct number of register slots
+        sb.writef("function % %\n", func.name.lexeme, total_param_slots);
 
         // Set up stack frame if we have address-taken variables
         if (use_stack) {
@@ -534,20 +626,55 @@ struct CDasmWriter {
             sb.writef("    add rsp rsp %\n", P(num_stack_slots + 1));
         }
 
+        // Save hidden return pointer if returning large struct
+        if (uses_hidden_return_ptr && use_stack) {
+            return_ptr_slot = stack_offset++;
+            sb.writef("    local_write % rarg1\n", P(return_ptr_slot));
+        }
+
+        // Calculate register slots for parameters (structs may use 1-2 slots)
+        int current_reg_slot = arg_offset;
+
         // Move arguments from rarg registers to locals
         foreach (i, ref param; func.params) {
             str pname = param.name.lexeme;
             var_types[pname] = param.type;
 
+            int reg_slot = current_reg_slot;
+            int regs_used = 1;
+            if (param.type.is_struct_or_union() && struct_fits_in_registers(param.type)) {
+                regs_used = struct_return_regs(param.type);
+            }
+            current_reg_slot += regs_used;
+
             if (use_stack) {
-                // All parameters go on the stack when use_stack is true
-                int slot = stack_offset++;
+                int slot = stack_offset;
+                int num_slots = cast(int)param.type.stack_slots();
+                stack_offset += num_slots;
                 stacklocals[pname] = slot;
-                sb.writef("    local_write % r%\n", P(slot), RARG1 + cast(int)i);
+
+                if (param.type.is_struct_or_union()) {
+                    if (struct_fits_in_registers(param.type)) {
+                        // Small struct: received in 1-2 registers, store to stack
+                        sb.writef("    add r0 rbp %\n", P(slot));
+                        sb.writef("    write r0 rarg%\n", 1 + reg_slot);
+                        if (regs_used > 1) {
+                            sb.write("    add r0 r0 8\n");
+                            sb.writef("    write r0 rarg%\n", 2 + reg_slot);
+                        }
+                    } else {
+                        // Large struct: caller passed a pointer, we copy to our stack
+                        sb.writef("    add r0 rbp %\n", P(slot));
+                        sb.writef("    memcpy r0 rarg% %\n", 1 + reg_slot, param.type.size_of());
+                    }
+                } else {
+                    // Non-struct: just store the value
+                    sb.writef("    local_write % rarg%\n", P(slot), 1 + reg_slot);
+                }
             } else {
                 int r = regallocator.allocate();
                 reglocals[pname] = r;
-                sb.writef("    move r% r%\n", r, RARG1 + cast(int)i);
+                sb.writef("    move r% rarg%\n", r, 1 + reg_slot);
             }
         }
 
@@ -599,11 +726,48 @@ struct CDasmWriter {
     int gen_return(CReturnStmt* stmt) {
         if (stmt.value !is null) {
             int before = regallocator.alloced;
-            int temp = regallocator.allocate();
-            int err = gen_expression(stmt.value, temp);
-            if (err) return err;
+
+            if (uses_hidden_return_ptr) {
+                // Large struct return (> 16 bytes): copy to hidden return pointer
+                int src_reg = regallocator.allocate();
+                int err = gen_struct_address(stmt.value, src_reg);
+                if (err) return err;
+
+                int dst_reg = regallocator.allocate();
+                sb.writef("    local_read r% %\n", dst_reg, P(return_ptr_slot));
+
+                size_t struct_size = current_return_type.size_of();
+                sb.writef("    memcpy r% r% %\n", dst_reg, src_reg, struct_size);
+
+                // Return the pointer in rout1
+                sb.writef("    move rout1 r%\n", dst_reg);
+            } else if (returns_struct) {
+                // Small struct return (<= 16 bytes): return in registers
+                int src_reg = regallocator.allocate();
+                int err = gen_struct_address(stmt.value, src_reg);
+                if (err) return err;
+
+                size_t struct_size = current_return_type.size_of();
+                int num_regs = struct_return_regs(current_return_type);
+
+                // Load struct data into return registers
+                if (struct_size <= 8) {
+                    // Read 8 bytes into rout1
+                    sb.writef("    read rout1 r%\n", src_reg);
+                } else {
+                    // 9-16 bytes: read 8 bytes into rout1, next 8 into rout2
+                    sb.writef("    read rout1 r%\n", src_reg);
+                    sb.writef("    add r% r% 8\n", src_reg, src_reg);
+                    sb.writef("    read rout2 r%\n", src_reg);
+                }
+            } else {
+                // Non-struct return: just move value to rout1
+                int temp = regallocator.allocate();
+                int err = gen_expression(stmt.value, temp);
+                if (err) return err;
+                sb.writef("    move rout1 r%\n", temp);
+            }
             regallocator.reset_to(before);
-            sb.writef("    move rout1 r%\n", temp);
         }
         if (use_stack) {
             sb.write("    move rsp rbp\n");
@@ -744,14 +908,28 @@ struct CDasmWriter {
         str name = stmt.name.lexeme;
         var_types[name] = stmt.var_type;
 
-        // Check if this is an array
+        // Check if this is an array or struct/union
         bool is_array = stmt.var_type.is_array();
+        bool is_struct = stmt.var_type.is_struct_or_union();
 
         if (use_stack) {
             // All variables go on stack when use_stack is true
             int slot = stack_offset;
 
-            if (is_array) {
+            if (is_struct) {
+                // Structs/unions need multiple slots based on size
+                size_t num_slots = stmt.var_type.stack_slots();
+                stack_offset += cast(int)num_slots;
+
+                // Zero-initialize struct
+                int before = regallocator.alloced;
+                int addr_reg = regallocator.allocate();
+                sb.writef("    add r% rbp %\n", addr_reg, P(slot));
+                sb.writef("    memzero r% %\n", addr_reg, stmt.var_type.size_of());
+                regallocator.reset_to(before);
+
+                // TODO: Handle struct initializers if needed
+            } else if (is_array) {
                 // Arrays need multiple slots
                 size_t arr_size = stmt.var_type.array_size;
                 stack_offset += cast(int)arr_size;
@@ -866,7 +1044,7 @@ struct CDasmWriter {
             case SUBSCRIPT:  return gen_subscript(cast(CSubscript*)e, target);
             case GROUPING:   assert(0);  // Should be ungrouped
             case CAST:       return 0;   // TODO
-            case MEMBER_ACCESS: return 0; // TODO
+            case MEMBER_ACCESS: return gen_member_access(cast(CMemberAccess*)e, target);
             case SIZEOF:     return 0;   // TODO
         }
     }
@@ -1298,19 +1476,105 @@ struct CDasmWriter {
     int gen_call(CCall* expr, int target) {
         int before = regallocator.alloced;
 
-        // Evaluate arguments and push to stack (for preserving across call)
-        foreach (i, arg; expr.args) {
-            int err = gen_expression(arg, RARG1 + cast(int)i);
-            if (err) return err;
-            if (i != expr.args.length - 1) {
-                sb.writef("    push rarg%\n", 1 + i);
+        // Check if callee returns a struct
+        bool callee_returns_struct = false;
+        bool callee_uses_hidden_ptr = false;
+        CType* callee_return_type = null;
+        if (CIdentifier* id = expr.callee.as_identifier()) {
+            if (CType** rt = id.name.lexeme in func_return_types) {
+                callee_return_type = *rt;
+                callee_returns_struct = callee_return_type !is null && callee_return_type.is_struct_or_union();
+                callee_uses_hidden_ptr = callee_returns_struct && !struct_fits_in_registers(callee_return_type);
             }
         }
 
-        // Pop arguments back
-        for (int i = 1; i < expr.args.length; i++) {
-            sb.writef("    pop rarg%\n", 1 + cast(int)expr.args.length - 1 - i);
+        // For large struct/union returns, arg registers shift by 1 (rarg1 = hidden return ptr)
+        int arg_offset = callee_uses_hidden_ptr ? 1 : 0;
+
+        // Helper to get number of register slots for an argument
+        int arg_slots(CExpr* arg) {
+            CType* t = get_expr_type(arg);
+            if (t && t.is_struct_or_union() && struct_fits_in_registers(t)) {
+                return struct_return_regs(t);
+            }
+            return 1;
         }
+
+        // Calculate starting slot for argument i
+        int get_arg_slot(size_t idx) {
+            int slot = arg_offset;
+            foreach (j, arg; expr.args) {
+                if (j == idx) return slot;
+                slot += arg_slots(arg);
+            }
+            return slot;
+        }
+
+        // Calculate total register slots
+        int total_reg_slots = arg_offset;
+        foreach (arg; expr.args) {
+            total_reg_slots += arg_slots(arg);
+        }
+
+        // Evaluate arguments
+        foreach (i, arg; expr.args) {
+            CType* arg_type = get_expr_type(arg);
+            int slot = get_arg_slot(i);
+            int num_slots = arg_slots(arg);
+
+            if (arg_type && arg_type.is_struct_or_union()) {
+                if (struct_fits_in_registers(arg_type)) {
+                    // Small struct: load data into register(s)
+                    int addr_reg = regallocator.allocate();
+                    int err = gen_struct_address(arg, addr_reg);
+                    if (err) return err;
+
+                    size_t struct_size = arg_type.size_of();
+                    sb.writef("    read rarg% r%\n", 1 + slot, addr_reg);
+                    if (struct_size > 8) {
+                        sb.writef("    add r% r% 8\n", addr_reg, addr_reg);
+                        sb.writef("    read rarg% r%\n", 2 + slot, addr_reg);
+                    }
+                    regallocator.reset_to(regallocator.alloced - 1);
+                } else {
+                    // Large struct: pass address (callee copies)
+                    int err = gen_struct_address(arg, RARG1 + slot);
+                    if (err) return err;
+                }
+            } else {
+                int err = gen_expression(arg, RARG1 + slot);
+                if (err) return err;
+            }
+
+            // Push to preserve across subsequent arg evaluation
+            if (i != expr.args.length - 1) {
+                for (int s = 0; s < num_slots; s++) {
+                    sb.writef("    push rarg%\n", 1 + slot + s);
+                }
+            }
+        }
+
+        // Pop arguments back in reverse order
+        for (int i = cast(int)expr.args.length - 2; i >= 0; i--) {
+            int slot = get_arg_slot(i);
+            int num_slots = arg_slots(expr.args[i]);
+            for (int s = num_slots - 1; s >= 0; s--) {
+                sb.writef("    pop rarg%\n", 1 + slot + s);
+            }
+        }
+
+        // For large struct returns, pass destination address in rarg1
+        // We use rsp as the temp location (it points past the allocated frame)
+        int struct_slots_needed = 0;
+        if (callee_uses_hidden_ptr) {
+            struct_slots_needed = cast(int)callee_return_type.stack_slots();
+            // Allocate temp space by advancing rsp
+            sb.writef("    add rsp rsp %\n", P(struct_slots_needed));
+            // Pass address of temp space as rarg1 (rsp - slots = start of temp area)
+            sb.writef("    sub rarg1 rsp %\n", P(struct_slots_needed));
+        }
+
+        int total_args = total_reg_slots;  // Accounts for multi-register struct params
 
         // Generate call
         if (CIdentifier* id = expr.callee.as_identifier()) {
@@ -1321,9 +1585,9 @@ struct CDasmWriter {
 
             // Direct call - use qualified name for extern functions
             if (str* mod_alias = id.name.lexeme in extern_funcs) {
-                sb.writef("    call function %.% %\n", *mod_alias, id.name.lexeme, expr.args.length);
+                sb.writef("    call function %.% %\n", *mod_alias, id.name.lexeme, total_args);
             } else {
-                sb.writef("    call function % %\n", id.name.lexeme, expr.args.length);
+                sb.writef("    call function % %\n", id.name.lexeme, total_args);
             }
 
             // Restore registers
@@ -1340,7 +1604,7 @@ struct CDasmWriter {
                 sb.writef("    push r%\n", i);
             }
 
-            sb.writef("    call r% %\n", func_reg, expr.args.length);
+            sb.writef("    call r% %\n", func_reg, total_args);
 
             for (int i = before - 1; i >= 0; i--) {
                 sb.writef("    pop r%\n", i);
@@ -1348,8 +1612,37 @@ struct CDasmWriter {
         }
 
         if (target != TARGET_IS_NOTHING) {
-            sb.writef("    move r% rout1\n", target);
+            if (callee_uses_hidden_ptr) {
+                // Large struct returns: temp space already allocated, address is at rsp - slots
+                sb.writef("    sub r% rsp %\n", target, P(struct_slots_needed));
+            } else if (callee_returns_struct) {
+                // Small struct returns: allocate temp space and store rout1/rout2 there
+                size_t struct_size = callee_return_type.size_of();
+                int slots = cast(int)callee_return_type.stack_slots();
+
+                // Allocate temp space
+                sb.writef("    add rsp rsp %\n", P(slots));
+                // Get address of temp space
+                sb.writef("    sub r% rsp %\n", target, P(slots));
+
+                // Store rout1 (first 8 bytes)
+                sb.writef("    write r% rout1\n", target);
+
+                // Store rout2 if needed (9-16 bytes)
+                if (struct_size > 8) {
+                    sb.writef("    add r% r% 8\n", target, target);
+                    sb.writef("    write r% rout2\n", target);
+                    // Reset target to start of struct
+                    sb.writef("    sub r% r% 8\n", target, target);
+                }
+            } else {
+                sb.writef("    move r% rout1\n", target);
+            }
         }
+
+        // Note: We don't free the temp struct return space here because:
+        // 1. The caller may still need to read from it (e.g., for nested calls)
+        // 2. It will be cleaned up when the function returns (rsp = rbp)
 
         regallocator.reset_to(before);
         return 0;
@@ -1403,6 +1696,53 @@ struct CDasmWriter {
 
             // Check for stack variable
             if (int* offset = name in stacklocals) {
+                // Check if this is a struct/union assignment
+                CType** var_type_ptr = name in var_types;
+                if (var_type_ptr && (*var_type_ptr).is_struct_or_union()) {
+                    // Struct/union assignment - use memcpy
+                    if (expr.op != CTokenType.EQUAL) {
+                        error(expr.expr.token, "Compound assignment not supported for structs");
+                        return 1;
+                    }
+
+                    int before = regallocator.alloced;
+                    int dst_reg = regallocator.allocate();
+                    int src_reg = regallocator.allocate();
+
+                    // dst = address of target struct
+                    sb.writef("    add r% rbp %\n", dst_reg, P(*offset));
+
+                    // src = address of source struct
+                    CExpr* val = expr.value.ungroup();
+                    if (CIdentifier* src_id = val.as_identifier()) {
+                        // Source is a variable
+                        str src_name = src_id.name.lexeme;
+                        if (int* src_offset = src_name in stacklocals) {
+                            sb.writef("    add r% rbp %\n", src_reg, P(*src_offset));
+                        } else {
+                            error(expr.expr.token, "Source struct must be a local variable");
+                            return 1;
+                        }
+                    } else if (val.kind == CExprKind.CALL) {
+                        // Source is a function call that returns a struct
+                        // Generate the call - it will return pointer to struct in src_reg
+                        int err = gen_expression(val, src_reg);
+                        if (err) return err;
+                        // src_reg now contains pointer to the returned struct
+                    } else {
+                        error(expr.expr.token, "Struct assignment source must be a variable or function call");
+                        return 1;
+                    }
+
+                    // memcpy dst src size
+                    size_t struct_size = (*var_type_ptr).size_of();
+                    sb.writef("    memcpy r% r% %\n", dst_reg, src_reg, struct_size);
+
+                    regallocator.reset_to(before);
+                    return 0;
+                }
+
+                // Regular (non-struct) assignment
                 int before = regallocator.alloced;
                 int val_reg = regallocator.allocate();
 
@@ -1558,6 +1898,82 @@ struct CDasmWriter {
             return 0;
         }
 
+        // Member access assignment: p.x = value or p->x = value
+        if (CMemberAccess* ma = lhs.as_member_access()) {
+            int before = regallocator.alloced;
+            int addr_reg = regallocator.allocate();
+            int val_reg = regallocator.allocate();
+
+            // Get the object type
+            CType* obj_type = get_expr_type(ma.object);
+            if (obj_type is null) {
+                error(expr.expr.token, "Cannot determine type of struct expression");
+                return 1;
+            }
+
+            // For ->, obj_type is a pointer to struct
+            CType* struct_type = obj_type;
+            if (ma.is_arrow) {
+                if (!obj_type.is_pointer()) {
+                    error(expr.expr.token, "'->' requires pointer to struct");
+                    return 1;
+                }
+                struct_type = obj_type.pointed_to;
+            }
+
+            if (struct_type is null || !struct_type.is_struct_or_union()) {
+                error(expr.expr.token, "Member access requires struct/union type");
+                return 1;
+            }
+
+            // Find the field
+            StructField* field = struct_type.get_field(ma.member.lexeme);
+            if (field is null) {
+                error(expr.expr.token, "Unknown struct/union field");
+                return 1;
+            }
+
+            // Get address of struct/object
+            if (ma.is_arrow) {
+                int err = gen_expression(ma.object, addr_reg);
+                if (err) return err;
+            } else {
+                // For ., we need the address of the struct
+                if (CIdentifier* id = ma.object.as_identifier()) {
+                    str fname = id.name.lexeme;
+                    if (int* offset = fname in stacklocals) {
+                        sb.writef("    add r% rbp %\n", addr_reg, P(*offset));
+                    } else {
+                        error(expr.expr.token, "Cannot take address for '.' assignment");
+                        return 1;
+                    }
+                } else {
+                    error(expr.expr.token, "'.' assignment on complex expressions not supported");
+                    return 1;
+                }
+            }
+
+            // Add field offset
+            if (field.offset > 0) {
+                sb.writef("    add r% r% %\n", addr_reg, addr_reg, field.offset);
+            }
+
+            // Generate value
+            int err = gen_expression(expr.value, val_reg);
+            if (err) return err;
+
+            // Write to field
+            size_t field_size = field.type.size_of();
+            sb.writef("    % r% r%\n", write_instr_for_size(field_size), addr_reg, val_reg);
+
+            if (target != TARGET_IS_NOTHING) {
+                sb.writef("    move r% r%\n", target, val_reg);
+            }
+
+            regallocator.reset_to(before);
+            return 0;
+        }
+
         error(expr.expr.token, "Invalid assignment target");
         return 1;
     }
@@ -1588,5 +2004,161 @@ struct CDasmWriter {
 
         regallocator.reset_to(before);
         return 0;
+    }
+
+    int gen_member_access(CMemberAccess* expr, int target) {
+        int before = regallocator.alloced;
+        int obj_reg = regallocator.allocate();
+
+        // Get the object type
+        CType* obj_type = get_expr_type(expr.object);
+        if (obj_type is null) {
+            error(expr.expr.token, "Cannot determine type of struct expression");
+            return 1;
+        }
+
+        // For ->, obj_type is a pointer to struct
+        // For ., obj_type is the struct itself
+        CType* struct_type = obj_type;
+        if (expr.is_arrow) {
+            if (!obj_type.is_pointer()) {
+                error(expr.expr.token, "'->' requires pointer to struct");
+                return 1;
+            }
+            struct_type = obj_type.pointed_to;
+        }
+
+        if (struct_type is null || !struct_type.is_struct_or_union()) {
+            error(expr.expr.token, "Member access requires struct/union type");
+            return 1;
+        }
+
+        // Find the field
+        StructField* field = struct_type.get_field(expr.member.lexeme);
+        if (field is null) {
+            error(expr.expr.token, "Unknown struct/union field");
+            return 1;
+        }
+
+        // Generate code to get address of object
+        if (expr.is_arrow) {
+            // For ->, the expression gives us the pointer directly
+            int err = gen_expression(expr.object, obj_reg);
+            if (err) return err;
+        } else {
+            // For ., we need the address of the struct
+            // If it's an identifier, get its address
+            if (CIdentifier* id = expr.object.as_identifier()) {
+                str name = id.name.lexeme;
+                if (int* offset = name in stacklocals) {
+                    sb.writef("    add r% rbp %\n", obj_reg, P(*offset));
+                } else {
+                    error(expr.expr.token, "Cannot take address of expression for '.' access");
+                    return 1;
+                }
+            } else {
+                error(expr.expr.token, "'.' access on complex expressions not supported");
+                return 1;
+            }
+        }
+
+        // Add field offset
+        if (field.offset > 0) {
+            sb.writef("    add r% r% %\n", obj_reg, obj_reg, field.offset);
+        }
+
+        // For array and struct/union fields, return the address rather than reading
+        // (they decay to pointers in most contexts)
+        if (target != TARGET_IS_NOTHING) {
+            if (field.type.is_array() || field.type.is_struct_or_union()) {
+                // Return address of the array/struct field
+                if (target != obj_reg) {
+                    sb.writef("    move r% r%\n", target, obj_reg);
+                }
+            } else {
+                // Read scalar field value
+                size_t field_size = field.type.size_of();
+                sb.writef("    % r% r%\n", read_instr_for_size(field_size), target, obj_reg);
+            }
+        }
+
+        regallocator.reset_to(before);
+        return 0;
+    }
+
+    // Generate code to get the address of a struct expression (for pass-by-value)
+    int gen_struct_address(CExpr* e, int target) {
+        e = e.ungroup();
+
+        // Identifier - get address of local struct variable
+        if (CIdentifier* id = e.as_identifier()) {
+            str name = id.name.lexeme;
+            if (int* offset = name in stacklocals) {
+                sb.writef("    add r% rbp %\n", target, P(*offset));
+                return 0;
+            }
+            error(id.name, "Cannot take address of non-local variable for struct pass-by-value");
+            return 1;
+        }
+
+        // Member access - get address of struct member
+        if (CMemberAccess* ma = e.as_member_access()) {
+            CType* obj_type = get_expr_type(ma.object);
+            if (obj_type is null) {
+                error(ma.expr.token, "Cannot determine type for member access");
+                return 1;
+            }
+
+            CType* struct_type = obj_type;
+            if (ma.is_arrow) {
+                if (!obj_type.is_pointer()) {
+                    error(ma.expr.token, "'->' requires pointer to struct");
+                    return 1;
+                }
+                struct_type = obj_type.pointed_to;
+            }
+
+            StructField* field = struct_type.get_field(ma.member.lexeme);
+            if (field is null) {
+                error(ma.expr.token, "Unknown struct field");
+                return 1;
+            }
+
+            // Get base address
+            if (ma.is_arrow) {
+                int err = gen_expression(ma.object, target);
+                if (err) return err;
+            } else {
+                if (CIdentifier* id = ma.object.as_identifier()) {
+                    str name = id.name.lexeme;
+                    if (int* offset = name in stacklocals) {
+                        sb.writef("    add r% rbp %\n", target, P(*offset));
+                    } else {
+                        error(ma.expr.token, "Cannot take address of non-local struct");
+                        return 1;
+                    }
+                } else {
+                    error(ma.expr.token, "Cannot take address of complex expression");
+                    return 1;
+                }
+            }
+
+            // Add field offset
+            if (field.offset > 0) {
+                sb.writef("    add r% r% %\n", target, target, field.offset);
+            }
+            return 0;
+        }
+
+        // Function call returning struct/union - gen_expression returns the address
+        if (e.kind == CExprKind.CALL) {
+            CType* call_type = get_expr_type(e);
+            if (call_type && call_type.is_struct_or_union()) {
+                return gen_expression(e, target);
+            }
+        }
+
+        error(e.token, "Cannot pass this expression as struct/union by value");
+        return 1;
     }
 }

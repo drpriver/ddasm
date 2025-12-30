@@ -110,11 +110,11 @@ struct Barray(T){
         bdata.data = null;
         count = 0;
     }
-    T[]
-    opIndex(){return bdata.data[0 .. count];}
+    inout(T)[]
+    opIndex() inout {return bdata.data[0 .. count];}
 
-    ref T
-    opIndex(size_t i){
+    ref inout(T)
+    opIndex(size_t i) inout{
         return bdata.data[0 .. count][i];
     }
     size_t opDollar(){
@@ -122,13 +122,13 @@ struct Barray(T){
     }
 
     size_t[2]
-    opSlice(size_t start, size_t end){
+    opSlice(size_t start, size_t end) inout{
         size_t[2] result = [start, end];
         return result;
     }
 
-    T[]
-    opIndex(size_t[2] slice){
+    inout(T)[]
+    opIndex(size_t[2] slice) inout{
         return bdata.data[0 .. count][slice[0] .. slice[1]];
     }
 

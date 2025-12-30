@@ -8,6 +8,7 @@ import core.stdc.stdio : fprintf, stderr;
 import dlib.aliases;
 import dlib.allocator : Allocator;
 import dlib.barray : Barray, make_barray;
+import dlib.table : Table;
 
 import cfront.c_tokenizer : CToken, CTokenType;
 import cfront.c_ast;
@@ -18,6 +19,8 @@ struct CParser {
     int current = 0;
     bool ERROR_OCCURRED = false;
     str current_library;  // Set by #pragma library("...")
+    Table!(str, CType*) struct_types;  // Defined struct types
+    Table!(str, CType*) union_types;   // Defined union types
 
     void error(CToken token, str message) {
         ERROR_OCCURRED = true;
@@ -39,6 +42,12 @@ struct CParser {
         auto functions = make_barray!CFunction(allocator);
         auto externs = make_barray!CExternDecl(allocator);
         auto globals = make_barray!CGlobalVar(allocator);
+        auto structs = make_barray!CStructDef(allocator);
+        auto unions = make_barray!CUnionDef(allocator);
+
+        // Initialize struct/union types tables
+        struct_types.data.allocator = allocator;
+        union_types.data.allocator = allocator;
 
         while (!at_end) {
             // Handle #pragma
@@ -53,6 +62,66 @@ struct CParser {
                 int err = parse_extern_decl(&ext);
                 if (err) return err;
                 externs ~= ext;
+            } else if (check(CTokenType.STRUCT)) {
+                // Check if this is a struct definition
+                // Look ahead: struct Name { ... means definition
+                // struct Name var... means variable of struct type
+                if (peek_at(1).type == CTokenType.IDENTIFIER &&
+                    peek_at(2).type == CTokenType.LEFT_BRACE) {
+                    CStructDef sdef;
+                    int err = parse_struct_def(&sdef);
+                    if (err) return err;
+                    structs ~= sdef;
+                } else {
+                    // It's a variable/function with struct type
+                    CType* type_ = parse_type();
+                    if (type_ is null) return 1;
+
+                    CToken name = consume(CTokenType.IDENTIFIER, "Expected identifier");
+                    if (ERROR_OCCURRED) return 1;
+
+                    if (check(CTokenType.LEFT_PAREN)) {
+                        CFunction func;
+                        int err = parse_function_rest(type_, name, &func);
+                        if (err) return err;
+                        functions ~= func;
+                    } else {
+                        CGlobalVar gvar;
+                        int err = parse_global_var_rest(type_, name, &gvar);
+                        if (err) return err;
+                        globals ~= gvar;
+                    }
+                }
+            } else if (check(CTokenType.UNION)) {
+                // Check if this is a union definition
+                // Look ahead: union Name { ... means definition
+                // union Name var... means variable of union type
+                if (peek_at(1).type == CTokenType.IDENTIFIER &&
+                    peek_at(2).type == CTokenType.LEFT_BRACE) {
+                    CUnionDef udef;
+                    int err = parse_union_def(&udef);
+                    if (err) return err;
+                    unions ~= udef;
+                } else {
+                    // It's a variable/function with union type
+                    CType* type_ = parse_type();
+                    if (type_ is null) return 1;
+
+                    CToken name = consume(CTokenType.IDENTIFIER, "Expected identifier");
+                    if (ERROR_OCCURRED) return 1;
+
+                    if (check(CTokenType.LEFT_PAREN)) {
+                        CFunction func;
+                        int err = parse_function_rest(type_, name, &func);
+                        if (err) return err;
+                        functions ~= func;
+                    } else {
+                        CGlobalVar gvar;
+                        int err = parse_global_var_rest(type_, name, &gvar);
+                        if (err) return err;
+                        globals ~= gvar;
+                    }
+                }
             } else {
                 // Parse type and name, then decide if it's a function or global
                 CType* type_ = parse_type();
@@ -80,6 +149,8 @@ struct CParser {
         unit.functions = functions[];
         unit.externs = externs[];
         unit.globals = globals[];
+        unit.structs = structs[];
+        unit.unions = unions[];
         unit.current_library = current_library;
         return 0;
     }
@@ -108,6 +179,137 @@ struct CParser {
                 }
             }
         }
+    }
+
+    int parse_struct_def(CStructDef* sdef) {
+        advance();  // consume 'struct'
+        CToken name = consume(CTokenType.IDENTIFIER, "Expected struct name");
+        if (ERROR_OCCURRED) return 1;
+
+        consume(CTokenType.LEFT_BRACE, "Expected '{' after struct name");
+        if (ERROR_OCCURRED) return 1;
+
+        // Parse fields
+        auto fields = make_barray!StructField(allocator);
+        size_t offset = 0;
+
+        while (!check(CTokenType.RIGHT_BRACE) && !at_end) {
+            // Parse field type
+            CType* field_type = parse_type();
+            if (field_type is null) return 1;
+
+            // Parse field name
+            CToken field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
+            if (ERROR_OCCURRED) return 1;
+
+            // Handle arrays
+            if (match(CTokenType.LEFT_BRACKET)) {
+                CToken size_tok = consume(CTokenType.NUMBER, "Expected array size");
+                if (ERROR_OCCURRED) return 1;
+                size_t arr_size = 0;
+                foreach (c; size_tok.lexeme) {
+                    arr_size = arr_size * 10 + (c - '0');
+                }
+                consume(CTokenType.RIGHT_BRACKET, "Expected ']' after array size");
+                if (ERROR_OCCURRED) return 1;
+                field_type = make_array_type(allocator, field_type, arr_size);
+            }
+
+            consume(CTokenType.SEMICOLON, "Expected ';' after field declaration");
+            if (ERROR_OCCURRED) return 1;
+
+            // Add field with current offset
+            StructField field;
+            field.name = field_name.lexeme;
+            field.type = field_type;
+            field.offset = offset;
+            fields ~= field;
+
+            // Update offset (simple packing, no alignment)
+            offset += field_type.size_of();
+        }
+
+        consume(CTokenType.RIGHT_BRACE, "Expected '}' after struct fields");
+        if (ERROR_OCCURRED) return 1;
+
+        consume(CTokenType.SEMICOLON, "Expected ';' after struct definition");
+        if (ERROR_OCCURRED) return 1;
+
+        // Create the struct type
+        CType* struct_type = make_struct_type(allocator, name.lexeme, fields[], offset);
+
+        // Register the struct type
+        struct_types[name.lexeme] = struct_type;
+
+        sdef.name = name;
+        sdef.struct_type = struct_type;
+        return 0;
+    }
+
+    int parse_union_def(CUnionDef* udef) {
+        advance();  // consume 'union'
+        CToken name = consume(CTokenType.IDENTIFIER, "Expected union name");
+        if (ERROR_OCCURRED) return 1;
+
+        consume(CTokenType.LEFT_BRACE, "Expected '{' after union name");
+        if (ERROR_OCCURRED) return 1;
+
+        // Parse fields
+        auto fields = make_barray!StructField(allocator);
+        size_t max_size = 0;
+
+        while (!check(CTokenType.RIGHT_BRACE) && !at_end) {
+            // Parse field type
+            CType* field_type = parse_type();
+            if (field_type is null) return 1;
+
+            // Parse field name
+            CToken field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
+            if (ERROR_OCCURRED) return 1;
+
+            // Handle arrays
+            if (match(CTokenType.LEFT_BRACKET)) {
+                CToken size_tok = consume(CTokenType.NUMBER, "Expected array size");
+                if (ERROR_OCCURRED) return 1;
+                size_t arr_size = 0;
+                foreach (c; size_tok.lexeme) {
+                    arr_size = arr_size * 10 + (c - '0');
+                }
+                consume(CTokenType.RIGHT_BRACKET, "Expected ']' after array size");
+                if (ERROR_OCCURRED) return 1;
+                field_type = make_array_type(allocator, field_type, arr_size);
+            }
+
+            consume(CTokenType.SEMICOLON, "Expected ';' after field declaration");
+            if (ERROR_OCCURRED) return 1;
+
+            // Add field - all union fields have offset 0
+            StructField field;
+            field.name = field_name.lexeme;
+            field.type = field_type;
+            field.offset = 0;  // All union members start at offset 0
+            fields ~= field;
+
+            // Track max size
+            size_t field_size = field_type.size_of();
+            if (field_size > max_size) max_size = field_size;
+        }
+
+        consume(CTokenType.RIGHT_BRACE, "Expected '}' after union fields");
+        if (ERROR_OCCURRED) return 1;
+
+        consume(CTokenType.SEMICOLON, "Expected ';' after union definition");
+        if (ERROR_OCCURRED) return 1;
+
+        // Create the union type
+        CType* union_type = make_union_type(allocator, name.lexeme, fields[], max_size);
+
+        // Register the union type
+        union_types[name.lexeme] = union_type;
+
+        udef.name = name;
+        udef.union_type = union_type;
+        return 0;
     }
 
     int parse_extern_decl(CExternDecl* decl) {
@@ -304,6 +506,26 @@ struct CParser {
             result = is_unsigned ? &TYPE_UINT : &TYPE_INT;
         } else if (match(CTokenType.LONG)) {
             result = is_unsigned ? &TYPE_ULONG : &TYPE_LONG;
+        } else if (match(CTokenType.STRUCT)) {
+            // struct Name
+            CToken name = consume(CTokenType.IDENTIFIER, "Expected struct name");
+            // Look up struct in defined structs
+            if (CType** found = name.lexeme in struct_types) {
+                result = *found;
+            } else {
+                error("Unknown struct type");
+                return null;
+            }
+        } else if (match(CTokenType.UNION)) {
+            // union Name
+            CToken name = consume(CTokenType.IDENTIFIER, "Expected union name");
+            // Look up union in defined unions
+            if (CType** found = name.lexeme in union_types) {
+                result = *found;
+            } else {
+                error("Unknown union type");
+                return null;
+            }
         } else {
             error("Expected type specifier");
             return null;
@@ -355,7 +577,8 @@ struct CParser {
         with (CTokenType) {
             return type == VOID || type == CHAR || type == SHORT ||
                    type == INT || type == LONG || type == UNSIGNED ||
-                   type == SIGNED || type == CONST || type == STRUCT;
+                   type == SIGNED || type == CONST || type == STRUCT ||
+                   type == UNION;
         }
     }
 
@@ -738,6 +961,18 @@ struct CParser {
                 consume(CTokenType.RIGHT_BRACKET, "Expected ']' after subscript");
                 if (ERROR_OCCURRED) return null;
                 expr = CSubscript.make(allocator, expr, index, bracket);
+            } else if (match(CTokenType.DOT)) {
+                // Member access: expr.member
+                CToken dot = previous();
+                CToken member = consume(CTokenType.IDENTIFIER, "Expected member name after '.'");
+                if (ERROR_OCCURRED) return null;
+                expr = CMemberAccess.make(allocator, expr, member, false, dot);
+            } else if (match(CTokenType.ARROW)) {
+                // Pointer member access: expr->member
+                CToken arrow = previous();
+                CToken member = consume(CTokenType.IDENTIFIER, "Expected member name after '->'");
+                if (ERROR_OCCURRED) return null;
+                expr = CMemberAccess.make(allocator, expr, member, true, arrow);
             } else if (match(CTokenType.PLUS_PLUS) || match(CTokenType.MINUS_MINUS)) {
                 // Postfix increment/decrement
                 CToken op = previous();
@@ -839,6 +1074,12 @@ struct CParser {
 
     CToken peek() {
         return tokens[current];
+    }
+
+    CToken peek_at(int offset) {
+        if (current + offset >= tokens.length)
+            return tokens[$ - 1];  // Return EOF
+        return tokens[current + offset];
     }
 
     CToken previous() {

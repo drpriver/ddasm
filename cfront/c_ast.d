@@ -23,7 +23,15 @@ enum CTypeKind {
     POINTER,
     ARRAY,
     FUNCTION,
-    // STRUCT,  // Future
+    STRUCT,
+    UNION,
+}
+
+// Struct field definition
+struct StructField {
+    str name;
+    CType* type;
+    size_t offset;  // Byte offset from start of struct
 }
 
 struct CType {
@@ -35,6 +43,10 @@ struct CType {
     CType*[] param_types;  // For functions
     bool is_varargs;       // For functions
     size_t array_size;     // For arrays
+    // Struct fields
+    str struct_name;       // For named structs
+    StructField[] fields;  // For structs
+    size_t struct_size;    // Cached total size of struct
 
     // Get size in bytes (for pointer arithmetic)
     size_t size_of() {
@@ -47,6 +59,8 @@ struct CType {
             case CTypeKind.POINTER:  return 8;  // 64-bit
             case CTypeKind.ARRAY:    return pointed_to ? pointed_to.size_of() * array_size : 0;
             case CTypeKind.FUNCTION: return 8;  // Function pointer size
+            case CTypeKind.STRUCT:   return struct_size;
+            case CTypeKind.UNION:    return struct_size;  // Union size is max of all members
         }
     }
 
@@ -62,9 +76,21 @@ struct CType {
     bool is_void() { return kind == CTypeKind.VOID; }
     bool is_pointer() { return kind == CTypeKind.POINTER; }
     bool is_array() { return kind == CTypeKind.ARRAY; }
+    bool is_struct() { return kind == CTypeKind.STRUCT; }
+    bool is_union() { return kind == CTypeKind.UNION; }
+    bool is_struct_or_union() { return kind == CTypeKind.STRUCT || kind == CTypeKind.UNION; }
     bool is_integer() {
         return kind == CTypeKind.CHAR || kind == CTypeKind.SHORT ||
                kind == CTypeKind.INT || kind == CTypeKind.LONG;
+    }
+
+    // Get a struct/union field by name
+    StructField* get_field(str name) {
+        if (kind != CTypeKind.STRUCT && kind != CTypeKind.UNION) return null;
+        foreach (ref f; fields) {
+            if (f.name == name) return &f;
+        }
+        return null;
     }
 
     // Get element type for arrays/pointers
@@ -79,6 +105,10 @@ struct CType {
         if (kind == CTypeKind.ARRAY) {
             // Array needs one slot per element
             return array_size;
+        }
+        if (kind == CTypeKind.STRUCT || kind == CTypeKind.UNION) {
+            // Struct/union needs enough slots for its size (8 bytes per slot)
+            return (struct_size + 7) / 8;
         }
         return 1;  // Everything else is one slot (pointer-sized)
     }
@@ -113,6 +143,26 @@ CType* make_array_type(Allocator a, CType* element_type, size_t size) {
     result.kind = CTypeKind.ARRAY;
     result.pointed_to = element_type;  // Element type stored in pointed_to
     result.array_size = size;
+    return result;
+}
+
+CType* make_struct_type(Allocator a, str name, StructField[] fields, size_t total_size) {
+    auto data = a.alloc(CType.sizeof);
+    auto result = cast(CType*)data.ptr;
+    result.kind = CTypeKind.STRUCT;
+    result.struct_name = name;
+    result.fields = fields;
+    result.struct_size = total_size;
+    return result;
+}
+
+CType* make_union_type(Allocator a, str name, StructField[] fields, size_t total_size) {
+    auto data = a.alloc(CType.sizeof);
+    auto result = cast(CType*)data.ptr;
+    result.kind = CTypeKind.UNION;
+    result.struct_name = name;
+    result.fields = fields;  // All fields have offset 0 in a union
+    result.struct_size = total_size;
     return result;
 }
 
@@ -162,6 +212,9 @@ struct CExpr {
     }
     inout(CSubscript)* as_subscript() inout {
         return kind == CExprKind.SUBSCRIPT ? cast(typeof(return))&this : null;
+    }
+    inout(CMemberAccess)* as_member_access() inout {
+        return kind == CExprKind.MEMBER_ACCESS ? cast(typeof(return))&this : null;
     }
 
     CExpr* ungroup() {
@@ -310,6 +363,26 @@ struct CSubscript {
         result.expr.token = t;
         result.array_ = arr;
         result.index_ = idx;
+        return &result.expr;
+    }
+}
+
+struct CMemberAccess {
+    CExpr expr;
+    CExpr* object_;
+    CToken member;
+    bool is_arrow;  // true for ->, false for .
+
+    CExpr* object() { return object_.ungroup(); }
+
+    static CExpr* make(Allocator a, CExpr* obj, CToken member_, bool arrow, CToken t) {
+        auto data = a.zalloc(typeof(this).sizeof);
+        auto result = cast(typeof(this)*)data.ptr;
+        result.expr.kind = CExprKind.MEMBER_ACCESS;
+        result.expr.token = t;
+        result.object_ = obj;
+        result.member = member_;
+        result.is_arrow = arrow;
         return &result.expr;
     }
 }
@@ -517,9 +590,21 @@ struct CGlobalVar {
     CExpr* initializer;  // null if uninitialized (will be zero-initialized)
 }
 
+struct CStructDef {
+    CToken name;
+    CType* struct_type;  // The fully defined struct type
+}
+
+struct CUnionDef {
+    CToken name;
+    CType* union_type;  // The fully defined union type
+}
+
 struct CTranslationUnit {
     CFunction[] functions;
     CExternDecl[] externs;
     CGlobalVar[] globals;
+    CStructDef[] structs;
+    CUnionDef[] unions;
     str current_library;  // Set by #pragma library
 }
