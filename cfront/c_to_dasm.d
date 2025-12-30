@@ -186,6 +186,7 @@ struct CDasmWriter {
     Table!(str, bool) arrays;        // Array variables (need special handling)
     Table!(str, CType*) global_types; // Global variable types
     Table!(str, CType*) func_return_types; // Function return types (for struct returns)
+    Table!(str, long) enum_constants; // Enum constant values (name -> value)
 
     // Loop control
     int current_continue_target = -1;
@@ -460,6 +461,14 @@ struct CDasmWriter {
         func_return_types.data.allocator = allocator;
         foreach (ref func; unit.functions) {
             func_return_types[func.name.lexeme] = func.return_type;
+        }
+
+        // Load enum constants
+        enum_constants.data.allocator = allocator;
+        foreach (ref edef; unit.enums) {
+            foreach (ref ec; edef.constants) {
+                enum_constants[ec.name] = ec.value;
+            }
         }
 
         // Generate functions and track if we have main/start
@@ -1096,6 +1105,12 @@ struct CDasmWriter {
         if (int* offset = name in stacklocals) {
             // Read from stack
             sb.writef("    local_read r% %\n", target, P(*offset));
+            return 0;
+        }
+
+        // Check for enum constant
+        if (long* val = name in enum_constants) {
+            sb.writef("    move r% %\n", target, *val);
             return 0;
         }
 

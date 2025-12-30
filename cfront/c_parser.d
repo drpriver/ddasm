@@ -21,6 +21,8 @@ struct CParser {
     str current_library;  // Set by #pragma library("...")
     Table!(str, CType*) struct_types;  // Defined struct types
     Table!(str, CType*) union_types;   // Defined union types
+    Table!(str, CType*) enum_types;    // Defined enum types
+    Table!(str, long) enum_constants;  // Enum constant values (name -> value)
 
     void error(CToken token, str message) {
         ERROR_OCCURRED = true;
@@ -44,10 +46,13 @@ struct CParser {
         auto globals = make_barray!CGlobalVar(allocator);
         auto structs = make_barray!CStructDef(allocator);
         auto unions = make_barray!CUnionDef(allocator);
+        auto enums = make_barray!CEnumDef(allocator);
 
-        // Initialize struct/union types tables
+        // Initialize type tables
         struct_types.data.allocator = allocator;
         union_types.data.allocator = allocator;
+        enum_types.data.allocator = allocator;
+        enum_constants.data.allocator = allocator;
 
         while (!at_end) {
             // Handle #pragma
@@ -122,6 +127,36 @@ struct CParser {
                         globals ~= gvar;
                     }
                 }
+            } else if (check(CTokenType.ENUM)) {
+                // Check if this is an enum definition
+                // Look ahead: enum Name { ... means definition
+                // enum Name var... means variable of enum type
+                if (peek_at(1).type == CTokenType.IDENTIFIER &&
+                    peek_at(2).type == CTokenType.LEFT_BRACE) {
+                    CEnumDef edef;
+                    int err = parse_enum_def(&edef);
+                    if (err) return err;
+                    enums ~= edef;
+                } else {
+                    // It's a variable/function with enum type
+                    CType* type_ = parse_type();
+                    if (type_ is null) return 1;
+
+                    CToken name = consume(CTokenType.IDENTIFIER, "Expected identifier");
+                    if (ERROR_OCCURRED) return 1;
+
+                    if (check(CTokenType.LEFT_PAREN)) {
+                        CFunction func;
+                        int err = parse_function_rest(type_, name, &func);
+                        if (err) return err;
+                        functions ~= func;
+                    } else {
+                        CGlobalVar gvar;
+                        int err = parse_global_var_rest(type_, name, &gvar);
+                        if (err) return err;
+                        globals ~= gvar;
+                    }
+                }
             } else {
                 // Parse type and name, then decide if it's a function or global
                 CType* type_ = parse_type();
@@ -151,6 +186,7 @@ struct CParser {
         unit.globals = globals[];
         unit.structs = structs[];
         unit.unions = unions[];
+        unit.enums = enums[];
         unit.current_library = current_library;
         return 0;
     }
@@ -309,6 +345,158 @@ struct CParser {
 
         udef.name = name;
         udef.union_type = union_type;
+        return 0;
+    }
+
+    // Result type for constant expression parsing
+    struct ConstExprResult {
+        long value;
+        bool err;
+    }
+
+    // Parse a constant expression for enum values
+    // Supports: integer literals, enum constant references, unary minus, +/-
+    ConstExprResult parse_enum_const_expr() {
+        return parse_enum_const_additive();
+    }
+
+    ConstExprResult parse_enum_const_additive() {
+        auto result = parse_enum_const_unary();
+        if (result.err) return result;
+
+        while (check(CTokenType.PLUS) || check(CTokenType.MINUS)) {
+            bool is_plus = check(CTokenType.PLUS);
+            advance();
+            auto right = parse_enum_const_unary();
+            if (right.err) return right;
+            if (is_plus) {
+                result.value = result.value + right.value;
+            } else {
+                result.value = result.value - right.value;
+            }
+        }
+        return result;
+    }
+
+    ConstExprResult parse_enum_const_unary() {
+        if (match(CTokenType.MINUS)) {
+            auto result = parse_enum_const_primary();
+            if (result.err) return result;
+            result.value = -result.value;
+            return result;
+        }
+        if (match(CTokenType.PLUS)) {
+            return parse_enum_const_primary();
+        }
+        return parse_enum_const_primary();
+    }
+
+    ConstExprResult parse_enum_const_primary() {
+        ConstExprResult result;
+        result.err = false;
+
+        if (match(CTokenType.NUMBER)) {
+            CToken tok = previous();
+            long value = 0;
+            foreach (c; tok.lexeme) {
+                value = value * 10 + (c - '0');
+            }
+            result.value = value;
+            return result;
+        }
+
+        if (match(CTokenType.IDENTIFIER)) {
+            CToken tok = previous();
+            // Look up in already-defined enum constants
+            if (long* val = tok.lexeme in enum_constants) {
+                result.value = *val;
+                return result;
+            }
+            error(tok, "Unknown enum constant in expression");
+            result.err = true;
+            return result;
+        }
+
+        if (match(CTokenType.LEFT_PAREN)) {
+            result = parse_enum_const_expr();
+            if (result.err) return result;
+            consume(CTokenType.RIGHT_PAREN, "Expected ')' after expression");
+            if (ERROR_OCCURRED) {
+                result.err = true;
+            }
+            return result;
+        }
+
+        error("Expected constant value in enum expression");
+        result.err = true;
+        return result;
+    }
+
+    int parse_enum_def(CEnumDef* edef) {
+        advance();  // consume 'enum'
+        CToken name = consume(CTokenType.IDENTIFIER, "Expected enum name");
+        if (ERROR_OCCURRED) return 1;
+
+        consume(CTokenType.LEFT_BRACE, "Expected '{' after enum name");
+        if (ERROR_OCCURRED) return 1;
+
+        // Parse enum constants
+        auto constants = make_barray!EnumConstant(allocator);
+        long next_value = 0;
+
+        while (!check(CTokenType.RIGHT_BRACE) && !at_end) {
+            // Parse constant name
+            CToken const_name = consume(CTokenType.IDENTIFIER, "Expected enum constant name");
+            if (ERROR_OCCURRED) return 1;
+
+            // Check for explicit value assignment
+            long value = next_value;
+            if (match(CTokenType.EQUAL)) {
+                // Parse constant expression (supports literals, enum constants, +/-)
+                auto result = parse_enum_const_expr();
+                if (result.err) return 1;
+                value = result.value;
+            }
+
+            // Add constant
+            EnumConstant ec;
+            ec.name = const_name.lexeme;
+            ec.value = value;
+            constants ~= ec;
+
+            // Register in global constants table
+            enum_constants[const_name.lexeme] = value;
+
+            // Next implicit value is one more
+            next_value = value + 1;
+
+            // Optional comma between constants
+            if (!check(CTokenType.RIGHT_BRACE)) {
+                if (!match(CTokenType.COMMA)) {
+                    // Allow trailing comma or no comma before }
+                    if (!check(CTokenType.RIGHT_BRACE)) {
+                        error("Expected ',' or '}' after enum constant");
+                        return 1;
+                    }
+                }
+            }
+        }
+
+        consume(CTokenType.RIGHT_BRACE, "Expected '}' after enum constants");
+        if (ERROR_OCCURRED) return 1;
+
+        consume(CTokenType.SEMICOLON, "Expected ';' after enum definition");
+        if (ERROR_OCCURRED) return 1;
+
+        // Create the enum type
+        CType* enum_type = make_enum_type(allocator, name.lexeme);
+
+        // Register the enum type
+        enum_types[name.lexeme] = enum_type;
+
+        edef.name = name;
+        edef.enum_type = enum_type;
+        edef.constants = constants[];
         return 0;
     }
 
@@ -526,6 +714,16 @@ struct CParser {
                 error("Unknown union type");
                 return null;
             }
+        } else if (match(CTokenType.ENUM)) {
+            // enum Name
+            CToken name = consume(CTokenType.IDENTIFIER, "Expected enum name");
+            // Look up enum in defined enums
+            if (CType** found = name.lexeme in enum_types) {
+                result = *found;
+            } else {
+                error("Unknown enum type");
+                return null;
+            }
         } else {
             error("Expected type specifier");
             return null;
@@ -578,7 +776,7 @@ struct CParser {
             return type == VOID || type == CHAR || type == SHORT ||
                    type == INT || type == LONG || type == UNSIGNED ||
                    type == SIGNED || type == CONST || type == STRUCT ||
-                   type == UNION;
+                   type == UNION || type == ENUM;
         }
     }
 

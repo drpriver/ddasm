@@ -25,6 +25,7 @@ enum CTypeKind {
     FUNCTION,
     STRUCT,
     UNION,
+    ENUM,
 }
 
 // Struct field definition
@@ -61,6 +62,7 @@ struct CType {
             case CTypeKind.FUNCTION: return 8;  // Function pointer size
             case CTypeKind.STRUCT:   return struct_size;
             case CTypeKind.UNION:    return struct_size;  // Union size is max of all members
+            case CTypeKind.ENUM:     return 4;  // Enums are ints
         }
     }
 
@@ -79,9 +81,11 @@ struct CType {
     bool is_struct() { return kind == CTypeKind.STRUCT; }
     bool is_union() { return kind == CTypeKind.UNION; }
     bool is_struct_or_union() { return kind == CTypeKind.STRUCT || kind == CTypeKind.UNION; }
+    bool is_enum() { return kind == CTypeKind.ENUM; }
     bool is_integer() {
         return kind == CTypeKind.CHAR || kind == CTypeKind.SHORT ||
-               kind == CTypeKind.INT || kind == CTypeKind.LONG;
+               kind == CTypeKind.INT || kind == CTypeKind.LONG ||
+               kind == CTypeKind.ENUM;  // Enums are integer-compatible
     }
 
     // Get a struct/union field by name
@@ -164,6 +168,20 @@ CType* make_union_type(Allocator a, str name, StructField[] fields, size_t total
     result.fields = fields;  // All fields have offset 0 in a union
     result.struct_size = total_size;
     return result;
+}
+
+CType* make_enum_type(Allocator a, str name) {
+    auto data = a.alloc(CType.sizeof);
+    auto result = cast(CType*)data.ptr;
+    result.kind = CTypeKind.ENUM;
+    result.struct_name = name;  // Reuse struct_name for enum name
+    return result;
+}
+
+// Enum constant (name -> value)
+struct EnumConstant {
+    str name;
+    long value;
 }
 
 // =============================================================================
@@ -600,11 +618,18 @@ struct CUnionDef {
     CType* union_type;  // The fully defined union type
 }
 
+struct CEnumDef {
+    CToken name;
+    CType* enum_type;          // The enum type
+    EnumConstant[] constants;  // The enum constants (name -> value)
+}
+
 struct CTranslationUnit {
     CFunction[] functions;
     CExternDecl[] externs;
     CGlobalVar[] globals;
     CStructDef[] structs;
     CUnionDef[] unions;
+    CEnumDef[] enums;
     str current_library;  // Set by #pragma library
 }
