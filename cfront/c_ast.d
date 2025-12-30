@@ -190,6 +190,16 @@ CType* make_enum_type(Allocator a, str name) {
     return result;
 }
 
+CType* make_function_type(Allocator a, CType* ret_type, CType*[] param_types, bool is_varargs) {
+    auto data = a.alloc(CType.sizeof);
+    auto result = cast(CType*)data.ptr;
+    result.kind = CTypeKind.FUNCTION;
+    result.return_type = ret_type;
+    result.param_types = param_types;
+    result.is_varargs = is_varargs;
+    return result;
+}
+
 // Enum constant (name -> value)
 struct EnumConstant {
     str name;

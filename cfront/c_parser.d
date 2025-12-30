@@ -948,9 +948,96 @@ struct CParser {
             return 0;
 
         } else {
-            // Simple typedef: typedef <type> <name>;
+            // Could be simple typedef or function pointer typedef
+            // Simple: typedef <type> <name>;
+            // Function pointer: typedef <ret_type> (* <name>)(<params>);
+            // Function pointer with calling conv: typedef <ret_type> (SDLCALL * <name>)(<params>);
+
             CType* base_type = parse_type();
             if (base_type is null) return 1;
+
+            // Check for function pointer syntax: starts with '('
+            if (check(CTokenType.LEFT_PAREN)) {
+                advance();  // consume '('
+
+                // Skip any calling convention identifiers until we hit '*'
+                while (check(CTokenType.IDENTIFIER)) {
+                    advance();  // skip calling convention like SDLCALL
+                }
+
+                if (!match(CTokenType.STAR)) {
+                    error("Expected '*' in function pointer typedef");
+                    return 1;
+                }
+
+                CToken typedef_name = consume(CTokenType.IDENTIFIER, "Expected typedef name");
+                if (ERROR_OCCURRED) return 1;
+
+                consume(CTokenType.RIGHT_PAREN, "Expected ')' after function pointer name");
+                if (ERROR_OCCURRED) return 1;
+
+                // Now parse the parameter list
+                consume(CTokenType.LEFT_PAREN, "Expected '(' for function parameters");
+                if (ERROR_OCCURRED) return 1;
+
+                auto param_types = make_barray!(CType*)(allocator);
+                bool is_varargs = false;
+
+                if (!check(CTokenType.RIGHT_PAREN)) {
+                    do {
+                        // Check for ...
+                        if (check(CTokenType.ELLIPSIS)) {
+                            advance();
+                            is_varargs = true;
+                            break;
+                        }
+
+                        // Check for void with no name (means no parameters)
+                        if (check(CTokenType.VOID)) {
+                            CToken void_tok = advance();
+                            if (check(CTokenType.RIGHT_PAREN)) {
+                                // Just "void" - no parameters
+                                break;
+                            }
+                            // void* or void *name - put it back conceptually and parse as type
+                            // Actually we already consumed void, so we need to handle this
+                            CType* param_type = &TYPE_VOID;
+                            // Check for pointer
+                            while (match(CTokenType.STAR)) {
+                                param_type = make_pointer_type(allocator, param_type);
+                            }
+                            // Skip optional parameter name
+                            if (check(CTokenType.IDENTIFIER)) {
+                                advance();
+                            }
+                            param_types ~= param_type;
+                        } else {
+                            CType* param_type = parse_type();
+                            if (param_type is null) return 1;
+
+                            // Skip optional parameter name
+                            if (check(CTokenType.IDENTIFIER)) {
+                                advance();
+                            }
+
+                            param_types ~= param_type;
+                        }
+                    } while (match(CTokenType.COMMA));
+                }
+
+                consume(CTokenType.RIGHT_PAREN, "Expected ')' after parameters");
+                if (ERROR_OCCURRED) return 1;
+
+                consume(CTokenType.SEMICOLON, "Expected ';' after typedef");
+                if (ERROR_OCCURRED) return 1;
+
+                // Create function type then wrap in pointer
+                CType* func_type = make_function_type(allocator, base_type, param_types[], is_varargs);
+                CType* func_ptr_type = make_pointer_type(allocator, func_type);
+
+                typedef_types[typedef_name.lexeme] = func_ptr_type;
+                return 0;
+            }
 
             CToken typedef_name = consume(CTokenType.IDENTIFIER, "Expected typedef name");
             if (ERROR_OCCURRED) return 1;
