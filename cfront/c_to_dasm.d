@@ -390,14 +390,19 @@ struct CDasmWriter {
 
             int lib_counter = 0;
             foreach (ref ext; unit.externs) {
+                str fname = ext.name.lexeme;
+                // Only use SDL library for SDL_ prefixed functions
                 str lib = ext.library.length ? ext.library : "libc.so.6";
+                if (lib == "libSDL2.so" && (fname.length < 4 || fname[0..4] != "SDL_")) {
+                    lib = "libc.so.6";
+                }
                 if (lib !in lib_to_alias) {
                     // Generate alias from library name
                     str alias_name = make_alias(lib, lib_counter++);
                     lib_to_alias[lib] = alias_name;
                 }
                 // Track function -> module alias mapping
-                extern_funcs[ext.name.lexeme] = lib_to_alias[lib];
+                extern_funcs[fname] = lib_to_alias[lib];
             }
 
             // Second pass: generate dlimport blocks per library
@@ -423,10 +428,22 @@ struct CDasmWriter {
 
                     // Emit all functions for this library
                     foreach (ref func_ext; unit.externs) {
+                        str fname = func_ext.name.lexeme;
+                        // Only use SDL library for SDL_ prefixed functions
                         str func_lib = func_ext.library.length ? func_ext.library : "libc.so.6";
+                        if (func_lib == "libSDL2.so" && (fname.length < 4 || fname[0..4] != "SDL_")) {
+                            func_lib = "libc.so.6";
+                        }
                         if (func_lib == lib) {
+                            if (func_ext.return_type is null) continue;  // Skip incomplete externs
+                            // Skip compiler builtins and special symbols
+                            if (fname == "alloca") continue;
+                            if (fname == "atexit") continue;  // In crt0, not directly in libc
+                            if (fname == "SDL_main") continue;  // User-provided, not in SDL lib
                             ubyte n_ret = func_ext.return_type.is_void() ? 0 : 1;
-                            sb.writef("  % % %", func_ext.name.lexeme, func_ext.params.length, n_ret);
+                            // Cap params at 8 (ddasm limit)
+                            auto n_params = func_ext.params.length > 8 ? 8 : func_ext.params.length;
+                            sb.writef("  % % %", fname, n_params, n_ret);
                             if (func_ext.is_varargs) sb.write(" varargs");
                             sb.write("\n");
                         }
@@ -1070,11 +1087,29 @@ struct CDasmWriter {
             // Character literal - parse the value
             sb.writef("    move r% %\n", target, parse_char_literal(lex));
         } else if (expr.value.type == CTokenType.HEX) {
-            // Hex literal - DASM should handle 0x prefix
-            sb.writef("    move r% %\n", target, lex);
+            // Hex literal - strip suffix (u, U, l, L) if present
+            str hex_val = lex;
+            while (hex_val.length > 0) {
+                ubyte last = hex_val[$ - 1];
+                if (last == 'u' || last == 'U' || last == 'l' || last == 'L') {
+                    hex_val = hex_val[0 .. $ - 1];
+                } else {
+                    break;
+                }
+            }
+            sb.writef("    move r% %\n", target, hex_val);
         } else {
-            // Integer literal
-            sb.writef("    move r% %\n", target, lex);
+            // Integer literal - strip suffix (u, U, l, L) if present
+            str int_val = lex;
+            while (int_val.length > 0) {
+                ubyte last = int_val[$ - 1];
+                if (last == 'u' || last == 'U' || last == 'l' || last == 'L') {
+                    int_val = int_val[0 .. $ - 1];
+                } else {
+                    break;
+                }
+            }
+            sb.writef("    move r% %\n", target, int_val);
         }
 
         return 0;

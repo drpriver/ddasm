@@ -15,7 +15,7 @@ import cfront.c_parser : CParser;
 import cfront.c_ast : CTranslationUnit;
 import cfront.c_to_dasm : CDasmWriter;
 
-int compile_c_to_dasm(const(ubyte)[] source, Box!(char[])* progtext) {
+int compile_c_to_dasm(const(ubyte)[] source, Box!(char[])* progtext, str source_file = "") {
     ArenaAllocator arena = ArenaAllocator(MALLOCATOR);
     scope(exit) arena.free_all();
 
@@ -23,6 +23,7 @@ int compile_c_to_dasm(const(ubyte)[] source, Box!(char[])* progtext) {
     Barray!CToken tokens = make_barray!CToken(arena.allocator());
     CTokenizer tokenizer = CTokenizer(source, &tokens, arena.allocator());
     tokenizer.init();
+    tokenizer.current_file = source_file;  // Set source file for relative includes
     int err = tokenizer.tokenize_tokens();
     if (err) return 1;
     tokens.bdata.resize(tokens.count);

@@ -1,9 +1,34 @@
-// Snek game
-#pragma library("libc.so.6")
-  #include <stdlib.h>
-  #include <string.h>
+// Snek game using dlimport
 #pragma library("SDL2")
-  #include <SDL2/SDL.h>
+    extern int SDL_Init(int flags);
+    extern void* SDL_CreateWindow(void* title, int x, int y, int w, int h, int flags);
+    extern void* SDL_CreateRenderer(void* window, int idx, int flags);
+    extern void SDL_Quit();
+    extern int SDL_PollEvent(void* event);
+    extern int SDL_WaitEvent(void* event);
+    extern int SDL_SetRenderDrawColor(void* renderer, int r, int g, int b, int a);
+    extern int SDL_RenderClear(void* renderer);
+    extern int SDL_RenderFillRect(void* renderer, void* rect);
+    extern void SDL_RenderPresent(void* renderer);
+    extern void SDL_DestroyRenderer(void* renderer);
+    extern void SDL_DestroyWindow(void* window);
+    extern void SDL_GetWindowSize(void* window, void* pw, void* ph);
+    extern void SDL_SetWindowSize(void* window, int w, int h);
+    extern void SDL_Delay(int ms);
+    extern int SDL_GetTicks();
+    extern int SDL_SetRenderDrawBlendMode(void* renderer, int mode);
+    extern void SDL_Log(char* fmt, ...);
+
+#pragma library("libc.so.6")
+    extern int printf(char*, ...);
+    extern void* malloc(long sz);
+    extern void* calloc(long count, long sz);
+    extern void abort();
+    extern void exit(int);
+    extern void free(void* p);
+    extern int rand();
+    extern void srand(int seed);
+    extern void* memset(void* p, int val, long sz);
 
 void* gwindow;
 void* grenderer;
@@ -21,7 +46,7 @@ int start(int width, int height){
   if(!height) height = 400;
   if(height > 1200) height = 1200;
   int INIT_VIDEO = 0x20;
-  SDL_Init(SDL_INIT_VIDEO);
+  SDL_Init(INIT_VIDEO);
   //           WINDOW_SHOWN | HIGHDPI    | RESIZABLE
   int flags = 0x00000004 | 0x00002000 | 0x00000020;
   int WINDOWPOS_UNDEFINED = 0x1FFF0000;
@@ -128,7 +153,7 @@ void simulate(long* board, int x, int y){
 
 void main_loop(){
   long* board = gboard;
-  SDL_Event* event = calloc(1, sizeof(SDL_Event));
+  void* event = calloc(0x10, 8);
   int poll = 1;
   int t = SDL_GetTicks();
   int trigger = 10;
@@ -173,78 +198,72 @@ void main_loop(){
       SDL_WaitEvent(event);
       poll = 1;
     }
-    int type = event->type;
-    // int* ptype = event;
-    // int type = *ptype;
-    if(type == SDL_QUIT){
+    int* ptype = event;
+    int type = *ptype;
+    if(type == 0x100){
       break;
     }
-    else if(type == SDL_MOUSEBUTTONDOWN){ // mousedown
+    else if(type == 0x401){ // mousedown
       char* pbutton = event;
       char button = pbutton[16];
       // io.printf("button: %zd\n", button)
     }
-    else if(type == SDL_KEYDOWN){ //keydown
-      // int* key = event->key;
-      // printf("key: %d\n", key);
-      // SDL_Keysym sym = key.keysym;
-      // SDL_Keycode code = sym.sym;
-      // int* psym = event;
-      // SDL_Keycode code = psym[4+1];
-      SDL_Keycode code = event->key.keysym.sym;
-      if(code == 'q') break;
-      else if(code == ' ') gpaused = !gpaused;
-      else if(code == '=') grow_window();
-      else if(code == '-') shrink_window();
-      else if(code == 'a'){
+    else if(type == 0x300){ //keydown
+      int* psym = event;
+      int sym = psym[4+1];
+      if(sym == 'q') break;
+      else if(sym == 32) gpaused = !gpaused;
+      else if(sym == 61) grow_window();
+      else if(sym == 45) shrink_window();
+      else if(sym == 'a'){
         if(dx != 1){
           dx = -1;
           dy = 0;
         }
       }
-      else if(code == 0x40000050){
+      else if(sym == 0x40000050){
         if(dx != 1){
           dx = -1;
           dy = 0;
         }
       }
-      else if(code == 's'){
+      else if(sym == 's'){
         if(dy != -1){
           dx = 0;
           dy = 1;
         }
       }
-      else if(code == 0x40000051){
+      else if(sym == 0x40000051){
         if(dy != -1){
           dx = 0;
           dy = 1;
         }
       }
-      else if(code == 'd'){
+      else if(sym == 'd'){
         if(dx != -1){
           dx = 1;
           dy = 0;
         }
       }
-      else if(code == 0x4000004f){
+      else if(sym == 0x4000004f){
         if(dx != -1){
           dx = 1;
           dy = 0;
         }
       }
-      else if(code == 'w'){
+      else if(sym == 'w'){
         if(dy != 1){
           dx = 0;
           dy = -1;
         }
       }
-      else if(code == 0x40000052){
+      else if(sym == 0x40000052){
         if(dy != 1){
           dx = 0;
           dy = -1;
         }
       }
-      else if(code == 'r'){
+      else if(sym == 'r'){
         gwinlose = 0;
         tick = trigger-1;
         memset(board, 0, 10*10*8);
@@ -265,7 +284,7 @@ void draw_rect(void* renderer, int x, int y, int w, int h){
     p[1] = y;
     p[2] = w;
     p[3] = h;
-    return SDL_RenderFillRect(renderer, p);
+    SDL_RenderFillRect(renderer, p);
 }
 
 void render_and_present(int sx, int sy, int dx, int dy){
