@@ -262,6 +262,26 @@ struct CDasmWriter {
         }
     }
 
+    // Get the read instruction for a given type size
+    static str read_instr_for_size(size_t size) {
+        switch (size) {
+            case 1: return "read1";
+            case 2: return "read2";
+            case 4: return "read4";
+            default: return "read";
+        }
+    }
+
+    // Get the write instruction for a given type size
+    static str write_instr_for_size(size_t size) {
+        switch (size) {
+            case 1: return "write1";
+            case 2: return "write2";
+            case 4: return "write4";
+            default: return "write";
+        }
+    }
+
     @disable this();
 
     this(StringBuilder* s, Allocator a) {
@@ -735,8 +755,46 @@ struct CDasmWriter {
                 // Arrays need multiple slots
                 size_t arr_size = stmt.var_type.array_size;
                 stack_offset += cast(int)arr_size;
-                // Arrays are not initialized by default (stack memory is uninitialized)
-                // Note: We could add array initializer support later
+
+                // Handle array initializer (string literal for char arrays)
+                if (stmt.initializer !is null) {
+                    if (CLiteral* lit = stmt.initializer.as_literal()) {
+                        if (lit.value.type == CTokenType.STRING) {
+                            // String literal initializer for char array
+                            // Compute string length (excluding quotes, accounting for escapes)
+                            str lex = lit.value.lexeme;
+                            size_t str_len = 0;
+                            for (size_t i = 1; i < lex.length - 1; i++) {
+                                if (lex[i] == '\\' && i + 1 < lex.length - 1) i++;  // Skip escape
+                                str_len++;
+                            }
+                            str_len++;  // Include null terminator
+
+                            size_t copy_size = str_len < arr_size ? str_len : arr_size;
+
+                            int before = regallocator.alloced;
+                            int dst_reg = regallocator.allocate();
+                            int src_reg = regallocator.allocate();
+
+                            // dst = address of array on stack
+                            sb.writef("    add r% rbp %\n", dst_reg, P(slot));
+                            // Zero-initialize the array first (for when string is shorter than array)
+                            sb.writef("    memzero r% %\n", dst_reg, arr_size);
+                            // src = string literal address
+                            sb.writef("    move r% %\n", src_reg, lex);
+                            // memcpy dst src size
+                            sb.writef("    memcpy r% r% %\n", dst_reg, src_reg, copy_size);
+
+                            regallocator.reset_to(before);
+                        } else {
+                            error(stmt.stmt.token, "Array initializers must be string literals");
+                            return 1;
+                        }
+                    } else {
+                        error(stmt.stmt.token, "Array initializers must be string literals");
+                        return 1;
+                    }
+                }
             } else {
                 // Regular variable needs one slot
                 stack_offset++;
@@ -864,7 +922,19 @@ struct CDasmWriter {
         }
 
         // Must be a global or function
-        sb.writef("    read r% var %\n", target, name);
+        // Get the global's type for sized read
+        if (CType** gtype = name in global_types) {
+            size_t var_size = (*gtype) ? (*gtype).size_of() : 8;
+            // Get address into a temp register, then do sized read
+            int before = regallocator.alloced;
+            int addr_reg = regallocator.allocate();
+            sb.writef("    move r% var %\n", addr_reg, name);
+            sb.writef("    % r% r%\n", read_instr_for_size(var_size), target, addr_reg);
+            regallocator.reset_to(before);
+        } else {
+            // Unknown global (function pointer?) - use regular read
+            sb.writef("    read r% var %\n", target, name);
+        }
         return 0;
     }
 
@@ -1148,7 +1218,10 @@ struct CDasmWriter {
             int err = gen_expression(expr.operand, ptr_reg);
             if (err) return err;
             if (target != TARGET_IS_NOTHING) {
-                sb.writef("    read r% r%\n", target, ptr_reg);
+                // Get the pointed-to type's size for proper sized read
+                CType* ptr_type = get_expr_type(expr.operand);
+                size_t elem_size = (ptr_type && ptr_type.is_pointer()) ? ptr_type.element_size() : 8;
+                sb.writef("    % r% r%\n", read_instr_for_size(elem_size), target, ptr_reg);
             }
             regallocator.reset_to(before);
             return 0;
@@ -1374,13 +1447,14 @@ struct CDasmWriter {
             }
 
             // Check for global variable
-            if (name in global_types) {
+            if (CType** gtype = name in global_types) {
                 int before = regallocator.alloced;
                 int addr_reg = regallocator.allocate();
                 int val_reg = regallocator.allocate();
 
-                // Get address of global
+                // Get address of global and its size
                 sb.writef("    move r% var %\n", addr_reg, name);
+                size_t var_size = (*gtype) ? (*gtype).size_of() : 8;
 
                 if (expr.op == CTokenType.EQUAL) {
                     // Simple assignment
@@ -1389,7 +1463,7 @@ struct CDasmWriter {
                 } else {
                     // Compound assignment - read current value first
                     int cur_reg = regallocator.allocate();
-                    sb.writef("    read r% var %\n", cur_reg, name);
+                    sb.writef("    % r% r%\n", read_instr_for_size(var_size), cur_reg, addr_reg);
 
                     int err = gen_expression(expr.value, val_reg);
                     if (err) return err;
@@ -1413,7 +1487,7 @@ struct CDasmWriter {
                     }
                 }
 
-                sb.writef("    write r% r%\n", addr_reg, val_reg);
+                sb.writef("    % r% r%\n", write_instr_for_size(var_size), addr_reg, val_reg);
 
                 if (target != TARGET_IS_NOTHING) {
                     sb.writef("    move r% r%\n", target, val_reg);
@@ -1436,7 +1510,10 @@ struct CDasmWriter {
                 err = gen_expression(expr.value, val_reg);
                 if (err) return err;
 
-                sb.writef("    write r% r%\n", ptr_reg, val_reg);
+                // Get pointed-to type's size for proper sized write
+                CType* ptr_type = get_expr_type(deref.operand);
+                size_t elem_size = (ptr_type && ptr_type.is_pointer()) ? ptr_type.element_size() : 8;
+                sb.writef("    % r% r%\n", write_instr_for_size(elem_size), ptr_reg, val_reg);
 
                 if (target != TARGET_IS_NOTHING) {
                     sb.writef("    move r% r%\n", target, val_reg);
@@ -1471,7 +1548,7 @@ struct CDasmWriter {
             err = gen_expression(expr.value, val_reg);
             if (err) return err;
 
-            sb.writef("    write r% r%\n", ptr_reg, val_reg);
+            sb.writef("    % r% r%\n", write_instr_for_size(elem_size), ptr_reg, val_reg);
 
             if (target != TARGET_IS_NOTHING) {
                 sb.writef("    move r% r%\n", target, val_reg);
@@ -1506,7 +1583,7 @@ struct CDasmWriter {
         sb.writef("    add r% r% r%\n", arr_reg, arr_reg, idx_reg);
 
         if (target != TARGET_IS_NOTHING) {
-            sb.writef("    read r% r%\n", target, arr_reg);
+            sb.writef("    % r% r%\n", read_instr_for_size(elem_size), target, arr_reg);
         }
 
         regallocator.reset_to(before);

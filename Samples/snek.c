@@ -199,18 +199,18 @@ void main_loop(){
       poll = 1;
     }
     int* ptype = event;
-    int type = *ptype &0xffffffff;
+    int type = *ptype;
     if(type == 0x100){
       break;
     }
     else if(type == 0x401){ // mousedown
       char* pbutton = event;
-      char button = pbutton[16] & 0xff;
+      char button = pbutton[16];
       // io.printf("button: %zd\n", button)
     }
     else if(type == 0x300){ //keydown
       int* psym = event;
-      int sym = psym[4+1] &0xffffffff;
+      int sym = psym[4+1];
       if(sym == 'q') break;
       else if(sym == 32) gpaused = !gpaused;
       else if(sym == 61) grow_window();

@@ -70,6 +70,8 @@ enum Instruction: uintptr_t {
     DEBUG_OP,
     MEMCPY_I,
     MEMCPY_R,
+    MEMZERO_I,
+    MEMZERO_R,
     BACKTRACE,
     ITOF,
     FTOI,
@@ -77,6 +79,12 @@ enum Instruction: uintptr_t {
     NEG,
     BINNEG,
     LEA,
+    READ1,
+    READ2,
+    READ4,
+    WRITE1,
+    WRITE2,
+    WRITE4,
 }
 
 struct InstructionInfo {
@@ -154,6 +162,8 @@ immutable InstructionInfo[Instruction.max+1] INSTRUCTION_INFOS = [
     InstructionInfo(Instruction.DEBUG_OP,         "DEBUG_OP",         "debug"),
     InstructionInfo(Instruction.MEMCPY_I,         "MEMCPY_I",         "memcpy", [AK.REGISTER, AK.REGISTER, IMM]),
     InstructionInfo(Instruction.MEMCPY_R,         "MEMCPY_R",         "memcpy", [AK.REGISTER, AK.REGISTER, AK.REGISTER]),
+    InstructionInfo(Instruction.MEMZERO_I,        "MEMZERO_I",        "memzero", [AK.REGISTER, IMM]),
+    InstructionInfo(Instruction.MEMZERO_R,        "MEMZERO_R",        "memzero", [AK.REGISTER, AK.REGISTER]),
     InstructionInfo(Instruction.BACKTRACE,        "BACKTRACE",        "bt"),
     InstructionInfo(Instruction.ITOF,             "ITOF",             "itof", [AK.REGISTER,AK.REGISTER]),
     InstructionInfo(Instruction.FTOI,             "FTOI",             "ftoi", [AK.REGISTER,AK.REGISTER]),
@@ -161,6 +171,12 @@ immutable InstructionInfo[Instruction.max+1] INSTRUCTION_INFOS = [
     InstructionInfo(Instruction.NEG,              "NEG",              "neg", [AK.REGISTER,AK.REGISTER]),
     InstructionInfo(Instruction.BINNEG,           "BINNEG",           "binneg", [AK.REGISTER,AK.REGISTER]),
     InstructionInfo(Instruction.LEA,              "LEA",              "lea", [AK.REGISTER, AK.REGISTER, IMM, AK.REGISTER, IMM]),
+    InstructionInfo(Instruction.READ1,            "READ1",            "read1", [AK.REGISTER, AK.REGISTER]),
+    InstructionInfo(Instruction.READ2,            "READ2",            "read2", [AK.REGISTER, AK.REGISTER]),
+    InstructionInfo(Instruction.READ4,            "READ4",            "read4", [AK.REGISTER, AK.REGISTER]),
+    InstructionInfo(Instruction.WRITE1,           "WRITE1",           "write1", [AK.REGISTER, AK.REGISTER]),
+    InstructionInfo(Instruction.WRITE2,           "WRITE2",           "write2", [AK.REGISTER, AK.REGISTER]),
+    InstructionInfo(Instruction.WRITE4,           "WRITE4",           "write4", [AK.REGISTER, AK.REGISTER]),
 ];
 
 Table!(string, Barray!(InstructionInfo))

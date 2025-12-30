@@ -3,7 +3,7 @@
  */
 module dvm.dvm_machine;
 import core.stdc.stdio: fprintf, stderr;
-import core.stdc.string: memcpy;
+import core.stdc.string: memcpy, memset;
 
 import dlib.allocator;
 import dlib.get_input;
@@ -998,6 +998,18 @@ struct Machine {
                         default : memcpy(dst, src, n); break;
                     }
                 }break;
+                case MEMZERO_I:{
+                    if(int b = begin(MEMZERO_I)) return b;
+                    void* dst = cast(void*)read_reg;
+                    uintptr_t n = get_unsigned;
+                    memset(dst, 0, n);
+                }break;
+                case MEMZERO_R:{
+                    if(int b = begin(MEMZERO_R)) return b;
+                    void* dst = cast(void*)read_reg;
+                    uintptr_t n = read_reg;
+                    memset(dst, 0, n);
+                }break;
                 case PAUSE:
                     if(int b = begin(PAUSE)) return b;
                     paused = true;
@@ -1020,6 +1032,42 @@ struct Machine {
                     uintptr_t* y = get_reg();
                     uintptr_t z = get_unsigned();
                     *dst = *x + a*(*y) + z;
+                }break;
+                case READ1:{
+                    if(int b = begin(READ1)) return b;
+                    uintptr_t* dst = get_reg();
+                    ubyte* src = cast(ubyte*)read_reg();
+                    *dst = *src;
+                }break;
+                case READ2:{
+                    if(int b = begin(READ2)) return b;
+                    uintptr_t* dst = get_reg();
+                    ushort* src = cast(ushort*)read_reg();
+                    *dst = *src;
+                }break;
+                case READ4:{
+                    if(int b = begin(READ4)) return b;
+                    uintptr_t* dst = get_reg();
+                    uint* src = cast(uint*)read_reg();
+                    *dst = *src;
+                }break;
+                case WRITE1:{
+                    if(int b = begin(WRITE1)) return b;
+                    ubyte* dst = cast(ubyte*)read_reg();
+                    uintptr_t val = read_reg();
+                    *dst = cast(ubyte)val;
+                }break;
+                case WRITE2:{
+                    if(int b = begin(WRITE2)) return b;
+                    ushort* dst = cast(ushort*)read_reg();
+                    uintptr_t val = read_reg();
+                    *dst = cast(ushort)val;
+                }break;
+                case WRITE4:{
+                    if(int b = begin(WRITE4)) return b;
+                    uint* dst = cast(uint*)read_reg();
+                    uintptr_t val = read_reg();
+                    *dst = cast(uint)val;
                 }break;
             }
         }
