@@ -17,9 +17,9 @@ int start(int width, int height){
   srand(420);
   void* window;
   void* renderer;
-  if(!width) width = 400;
+  if(width < 400) width = 400;
   if(width > 1200) width = 1200;
-  if(!height) height = 400;
+  if(height < 400) height = 400;
   if(height > 1200) height = 1200;
   int INIT_VIDEO = 0x20;
   SDL_Init(SDL_INIT_VIDEO);
@@ -31,8 +31,10 @@ int start(int width, int height){
     SDL_WINDOW_SHOWN | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE
   );
   if(!window) {printf("no window\n"); abort();}
+  else printf("window %p\n", window);
   renderer = SDL_CreateRenderer(window, -1, 0);
   if(!renderer) {printf("no renderer\n"); abort();}
+  else printf("renderer %p\n", renderer);
   // Set blend mode (SDL_BLENDMODE_BLEND = 1)
   SDL_SetRenderDrawBlendMode(renderer, 1);
   gwindow = window;
@@ -282,81 +284,35 @@ void render_and_present(int sx, int sy, int dx, int dy){
   int hh = h/20;
   if(winlose == 1){
     SDL_SetRenderDrawColor(renderer, 0, 0xff, 0, 0xff);
-    draw_rect(renderer, 3*ww, 1*hh, ww, hh);
-    draw_rect(renderer, 3*ww, 2*hh, ww, hh);
-    draw_rect(renderer, 3*ww, 3*hh, ww, hh);
-    draw_rect(renderer, 5*ww, 1*hh, ww, hh);
-    draw_rect(renderer, 5*ww, 2*hh, ww, hh);
-    draw_rect(renderer, 5*ww, 3*hh, ww, hh);
-    draw_rect(renderer, 4*ww, 4*hh, ww, hh);
-    draw_rect(renderer, 4*ww, 5*hh, ww, hh);
+    draw_rect(renderer, 3*ww, 1*hh, ww, 3*hh);
+    draw_rect(renderer, 5*ww, 1*hh, ww, 3*hh);
+    draw_rect(renderer, 4*ww, 4*hh, ww, 2*hh);
 
-    draw_rect(renderer, 7*ww, 1*hh, ww, hh);
-    draw_rect(renderer, 7*ww, 2*hh, ww, hh);
-    draw_rect(renderer, 7*ww, 3*hh, ww, hh);
-    draw_rect(renderer, 7*ww, 4*hh, ww, hh);
-    draw_rect(renderer, 7*ww, 5*hh, ww, hh);
-    draw_rect(renderer, 8*ww, 1*hh, ww, hh);
-    draw_rect(renderer, 8*ww, 5*hh, ww, hh);
-    draw_rect(renderer, 9*ww, 1*hh, ww, hh);
-    draw_rect(renderer, 9*ww, 2*hh, ww, hh);
-    draw_rect(renderer, 9*ww, 3*hh, ww, hh);
-    draw_rect(renderer, 9*ww, 4*hh, ww, hh);
-    draw_rect(renderer, 9*ww, 5*hh, ww, hh);
+    draw_rect(renderer, 7*ww, 1*hh, ww, 5*hh);
+    draw_rect(renderer, 8*ww, 1*hh, ww, 2*hh);
+    draw_rect(renderer, 9*ww, 1*hh, ww, 5*hh);
 
-    draw_rect(renderer, 11*ww, 1*hh, ww, hh);
-    draw_rect(renderer, 11*ww, 2*hh, ww, hh);
-    draw_rect(renderer, 11*ww, 3*hh, ww, hh);
-    draw_rect(renderer, 11*ww, 4*hh, ww, hh);
-    draw_rect(renderer, 11*ww, 5*hh, ww, hh);
+    draw_rect(renderer, 11*ww, 1*hh, ww, 5*hh);
     draw_rect(renderer, 12*ww, 5*hh, ww, hh);
-    draw_rect(renderer, 13*ww, 1*hh, ww, hh);
-    draw_rect(renderer, 13*ww, 2*hh, ww, hh);
-    draw_rect(renderer, 13*ww, 3*hh, ww, hh);
-    draw_rect(renderer, 13*ww, 4*hh, ww, hh);
-    draw_rect(renderer, 13*ww, 5*hh, ww, hh);
+    draw_rect(renderer, 13*ww, 1*hh, ww, 5*hh);
 
-    draw_rect(renderer, 2*ww, 7*hh, ww, hh);
-    draw_rect(renderer, 2*ww, 8*hh, ww, hh);
-    draw_rect(renderer, 2*ww, 9*hh, ww, hh);
-    draw_rect(renderer, 2*ww, 10*hh, ww, hh);
-    draw_rect(renderer, 2*ww, 11*hh, ww, hh);
+    draw_rect(renderer, 2*ww, 7*hh, ww, 5*hh);
     draw_rect(renderer, 3*ww, 11*hh, ww, hh);
-    draw_rect(renderer, 4*ww, 7*hh, ww, hh);
-    draw_rect(renderer, 4*ww, 8*hh, ww, hh);
-    draw_rect(renderer, 4*ww, 9*hh, ww, hh);
-    draw_rect(renderer, 4*ww, 10*hh, ww, hh);
-    draw_rect(renderer, 4*ww, 11*hh, ww, hh);
+    draw_rect(renderer, 4*ww, 7*hh, ww, 5*hh);
     draw_rect(renderer, 5*ww, 11*hh, ww, hh);
-    draw_rect(renderer, 6*ww, 7*hh, ww, hh);
-    draw_rect(renderer, 6*ww, 8*hh, ww, hh);
-    draw_rect(renderer, 6*ww, 9*hh, ww, hh);
-    draw_rect(renderer, 6*ww, 10*hh, ww, hh);
-    draw_rect(renderer, 6*ww, 11*hh, ww, hh);
+    draw_rect(renderer, 6*ww, 7*hh, ww, 5*hh);
 
     draw_rect(renderer, 8*ww, 7*hh, ww, hh);
     draw_rect(renderer, 10*ww, 7*hh, ww, hh);
-    draw_rect(renderer, 9*ww, 7*hh, ww, hh);
-    draw_rect(renderer, 9*ww, 8*hh, ww, hh);
-    draw_rect(renderer, 9*ww, 9*hh, ww, hh);
-    draw_rect(renderer, 9*ww, 10*hh, ww, hh);
-    draw_rect(renderer, 9*ww, 11*hh, ww, hh);
+    draw_rect(renderer, 9*ww, 7*hh, ww, 5*hh);
     draw_rect(renderer, 8*ww, 11*hh, ww, hh);
     draw_rect(renderer, 10*ww, 11*hh, ww, hh);
 
-    draw_rect(renderer, 12*ww, 7*hh, ww, hh);
-    draw_rect(renderer, 12*ww, 8*hh, ww, hh);
-    draw_rect(renderer, 12*ww, 9*hh, ww, hh);
-    draw_rect(renderer, 12*ww, 10*hh, ww, hh);
-    draw_rect(renderer, 12*ww, 11*hh, ww, hh);
+    draw_rect(renderer, 12*ww, 7*hh, ww, 5*hh);
     draw_rect(renderer, 13*ww, 8*hh, ww, hh);
     draw_rect(renderer, 14*ww, 9*hh, ww, hh);
     draw_rect(renderer, 15*ww, 10*hh, ww, hh);
-    draw_rect(renderer, 16*ww, 7*hh, ww, hh);
-    draw_rect(renderer, 16*ww, 8*hh, ww, hh);
-    draw_rect(renderer, 16*ww, 9*hh, ww, hh);
-    draw_rect(renderer, 16*ww, 10*hh, ww, hh);
-    draw_rect(renderer, 16*ww, 11*hh, ww, hh);
+    draw_rect(renderer, 16*ww, 7*hh, ww, 5*hh);
   }
   else if(winlose == 2){
     SDL_SetRenderDrawColor(renderer, 0xff, 0, 0, 0xff);
@@ -380,78 +336,35 @@ void render_and_present(int sx, int sy, int dx, int dy){
     //....................
     //....................
     //....................
-    draw_rect(renderer, 3*ww, 1*hh, ww, hh);
-    draw_rect(renderer, 3*ww, 2*hh, ww, hh);
-    draw_rect(renderer, 3*ww, 3*hh, ww, hh);
-    draw_rect(renderer, 5*ww, 1*hh, ww, hh);
-    draw_rect(renderer, 5*ww, 2*hh, ww, hh);
-    draw_rect(renderer, 5*ww, 3*hh, ww, hh);
-    draw_rect(renderer, 4*ww, 4*hh, ww, hh);
-    draw_rect(renderer, 4*ww, 5*hh, ww, hh);
+    draw_rect(renderer, 3*ww, 1*hh, ww, 3*hh);
+    draw_rect(renderer, 5*ww, 1*hh, ww, 3*hh);
+    draw_rect(renderer, 4*ww, 4*hh, ww, 2*hh);
 
-    draw_rect(renderer, 7*ww, 1*hh, ww, hh);
-    draw_rect(renderer, 7*ww, 2*hh, ww, hh);
-    draw_rect(renderer, 7*ww, 3*hh, ww, hh);
-    draw_rect(renderer, 7*ww, 4*hh, ww, hh);
-    draw_rect(renderer, 7*ww, 5*hh, ww, hh);
-    draw_rect(renderer, 8*ww, 1*hh, ww, hh);
-    draw_rect(renderer, 8*ww, 5*hh, ww, hh);
-    draw_rect(renderer, 9*ww, 1*hh, ww, hh);
-    draw_rect(renderer, 9*ww, 2*hh, ww, hh);
-    draw_rect(renderer, 9*ww, 3*hh, ww, hh);
-    draw_rect(renderer, 9*ww, 4*hh, ww, hh);
-    draw_rect(renderer, 9*ww, 5*hh, ww, hh);
+    draw_rect(renderer, 7*ww, 1*hh, ww, 5*hh);
+    draw_rect(renderer, 8*ww, 1*hh, ww, 2*hh);
+    draw_rect(renderer, 9*ww, 1*hh, ww, 5*hh);
 
-    draw_rect(renderer, 11*ww, 1*hh, ww, hh);
-    draw_rect(renderer, 11*ww, 2*hh, ww, hh);
-    draw_rect(renderer, 11*ww, 3*hh, ww, hh);
-    draw_rect(renderer, 11*ww, 4*hh, ww, hh);
-    draw_rect(renderer, 11*ww, 5*hh, ww, hh);
+    draw_rect(renderer, 11*ww, 1*hh, ww, 5*hh);
     draw_rect(renderer, 12*ww, 5*hh, ww, hh);
-    draw_rect(renderer, 13*ww, 1*hh, ww, hh);
-    draw_rect(renderer, 13*ww, 2*hh, ww, hh);
-    draw_rect(renderer, 13*ww, 3*hh, ww, hh);
-    draw_rect(renderer, 13*ww, 4*hh, ww, hh);
-    draw_rect(renderer, 13*ww, 5*hh, ww, hh);
+    draw_rect(renderer, 13*ww, 1*hh, ww, 5*hh);
 
-    draw_rect(renderer, 2*ww, 7*hh, ww, hh);
-    draw_rect(renderer, 2*ww, 8*hh, ww, hh);
-    draw_rect(renderer, 2*ww, 9*hh, ww, hh);
-    draw_rect(renderer, 2*ww, 10*hh, ww, hh);
-    draw_rect(renderer, 2*ww, 11*hh, ww, hh);
+    draw_rect(renderer, 2*ww, 7*hh, ww, 5*hh);
     draw_rect(renderer, 3*ww, 11*hh, ww, hh);
     draw_rect(renderer, 4*ww, 11*hh, ww, hh);
 
-    draw_rect(renderer, 6*ww, 7*hh, ww, hh);
-    draw_rect(renderer, 6*ww, 8*hh, ww, hh);
-    draw_rect(renderer, 6*ww, 9*hh, ww, hh);
-    draw_rect(renderer, 6*ww, 10*hh, ww, hh);
-    draw_rect(renderer, 6*ww, 11*hh, ww, hh);
+    draw_rect(renderer, 6*ww, 7*hh, ww, 5*hh);
     draw_rect(renderer, 7*ww, 7*hh, ww, hh);
     draw_rect(renderer, 7*ww, 11*hh, ww, hh);
-    draw_rect(renderer, 8*ww, 7*hh, ww, hh);
-    draw_rect(renderer, 8*ww, 8*hh, ww, hh);
-    draw_rect(renderer, 8*ww, 9*hh, ww, hh);
-    draw_rect(renderer, 8*ww, 10*hh, ww, hh);
-    draw_rect(renderer, 8*ww, 11*hh, ww, hh);
+    draw_rect(renderer, 8*ww, 7*hh, ww, 5*hh);
 
-    draw_rect(renderer, 10*ww, 7*hh, ww, hh);
-    draw_rect(renderer, 10*ww, 8*hh, ww, hh);
-    draw_rect(renderer, 10*ww, 9*hh, ww, hh);
-    draw_rect(renderer, 10*ww, 11*hh, ww, hh);
+    draw_rect(renderer, 10*ww, 7*hh, ww, 4*hh);
     draw_rect(renderer, 11*ww, 7*hh, ww, hh);
     draw_rect(renderer, 11*ww, 9*hh, ww, hh);
     draw_rect(renderer, 11*ww, 11*hh, ww, hh);
     draw_rect(renderer, 12*ww, 7*hh, ww, hh);
-    draw_rect(renderer, 12*ww, 9*hh, ww, hh);
-    draw_rect(renderer, 12*ww, 10*hh, ww, hh);
-    draw_rect(renderer, 12*ww, 11*hh, ww, hh);
+    draw_rect(renderer, 12*ww, 9*hh, ww, 3*hh);
 
-    draw_rect(renderer, 14*ww, 7*hh, ww, hh);
-    draw_rect(renderer, 14*ww, 8*hh, ww, hh);
-    draw_rect(renderer, 14*ww, 9*hh, ww, hh);
-    draw_rect(renderer, 14*ww, 10*hh, ww, hh);
-    draw_rect(renderer, 14*ww, 11*hh, ww, hh);
+    draw_rect(renderer, 14*ww, 7*hh, ww, 5*hh);
     draw_rect(renderer, 15*ww, 7*hh, ww, hh);
     draw_rect(renderer, 15*ww, 9*hh, ww, hh);
     draw_rect(renderer, 15*ww, 11*hh, ww, hh);

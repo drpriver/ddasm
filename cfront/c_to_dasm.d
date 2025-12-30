@@ -1075,7 +1075,7 @@ struct CDasmWriter {
             case ASSIGN:     return gen_assign(cast(CAssign*)e, target);
             case SUBSCRIPT:  return gen_subscript(cast(CSubscript*)e, target);
             case GROUPING:   assert(0);  // Should be ungrouped
-            case CAST:       return 0;   // TODO
+            case CAST:       return gen_cast(cast(CCast*)e, target);
             case MEMBER_ACCESS: return gen_member_access(cast(CMemberAccess*)e, target);
             case SIZEOF:     return gen_sizeof(cast(CSizeof*)e, target);
         }
@@ -1119,6 +1119,11 @@ struct CDasmWriter {
         }
 
         return 0;
+    }
+
+    int gen_cast(CCast* expr, int target) {
+        // Cast just generates the operand - type conversion is implicit at this level
+        return gen_expression(expr.operand, target);
     }
 
     int gen_identifier(CIdentifier* expr, int target) {

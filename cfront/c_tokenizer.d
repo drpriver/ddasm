@@ -158,7 +158,9 @@ struct CTokenizer {
         "/usr/include/SDL2",
         "/usr/include/x86_64-linux-gnu",  // glibc arch-specific headers
         "/usr/include",
-        "/usr/local/include"
+        "/usr/local/include",
+        "/usr/lib/gcc/x86_64-linux-gnu/10/include",  // GCC's stddef.h etc
+        "/usr/lib/gcc/x86_64-linux-gnu/7/include",   // Fallback for older GCC
     ];
 
     bool ERROR_OCCURRED = false;
@@ -226,7 +228,6 @@ struct CTokenizer {
         define_macro("__SIZEOF_POINTER__", "8");  // 64-bit
         define_macro("__x86_64__", "1");
         define_macro("__LP64__", "1");  // Long and Pointer are 64-bit (standard 64-bit Linux data model)
-        define_macro("NULL", "0");
 
         // Disable complex number types (not needed for SDL)
         define_macro("__HAVE_FLOAT128", "0");
@@ -244,7 +245,8 @@ struct CTokenizer {
         define_macro("__wur", "");  // warn_unused_result
 
         // glibc compatibility - va_list support
-        define_macro("__gnuc_va_list", "void*");
+        // __builtin_va_list is a GCC built-in, maps to void* for simplicity
+        define_macro("__builtin_va_list", "void*");
 
         // glibc bits/types.h support
         define_macro("__STD_TYPE", "typedef");
@@ -281,6 +283,16 @@ struct CTokenizer {
         define_macro("_MATH_H", "1");
         // Skip ctype.h (complex ternary macros in enum values not worth the effort)
         define_macro("_CTYPE_H", "1");
+        // Skip MMX/SSE intrinsic headers (can't handle __attribute__((vector_size)))
+        define_macro("_MMINTRIN_H_INCLUDED", "1");
+        define_macro("_XMMINTRIN_H_INCLUDED", "1");
+        define_macro("_EMMINTRIN_H_INCLUDED", "1");
+        define_macro("_PMMINTRIN_H_INCLUDED", "1");
+        define_macro("_TMMINTRIN_H_INCLUDED", "1");
+        define_macro("_SMMINTRIN_H_INCLUDED", "1");
+        define_macro("_NMMINTRIN_H_INCLUDED", "1");
+        define_macro("_IMMINTRIN_H_INCLUDED", "1");
+        define_macro("_AVX512FINTRIN_H_INCLUDED", "1");
         // Skip genobject.h (uses ## token pasting in _PyGenObject_HEAD)
         define_macro("Py_GENOBJECT_H", "1");
         // Skip pyerrors.h (cpython/pyerrors.h uses _PyErr_StackItem before pystate.h defines it)
@@ -733,13 +745,29 @@ struct CTokenizer {
     }
 
     void skip_to_eol() {
-        // Skip to end of line, handling line continuations
+        // Skip to end of line, handling line continuations and block comments
         while (!at_end) {
             if (peek == '\\' && peekNext == '\n') {
                 advance(); // skip backslash
                 advance(); // skip newline
                 line++;
                 column = 1;
+                continue;
+            }
+            // Handle block comments that may span multiple lines
+            if (peek == '/' && peekNext == '*') {
+                advance(); advance();  // skip /*
+                while (!at_end) {
+                    if (peek == '*' && peekNext == '/') {
+                        advance(); advance();  // skip */
+                        break;
+                    }
+                    if (peek == '\n') {
+                        line++;
+                        column = 0;
+                    }
+                    advance();
+                }
                 continue;
             }
             if (peek == '\n') break;
@@ -1072,10 +1100,20 @@ struct CTokenizer {
             bool is_variadic = false;
 
             while (!at_end && peek != ')') {
-                // Skip whitespace
-                while (peek == ' ' || peek == '\t') advance();
+                // Skip whitespace and line continuations
+                while (peek == ' ' || peek == '\t' || (peek == '\\' && peekNext == '\n')) {
+                    if (peek == '\\') {
+                        advance(); advance();
+                        line++; column = 1;
+                    } else {
+                        advance();
+                    }
+                }
 
                 if (peek == ')') break;
+
+                // Bare newline in macro params - malformed, bail out
+                if (peek == '\n') break;
 
                 // Handle variadic ...
                 if (peek == '.' && peekNext == '.') {
@@ -1097,7 +1135,14 @@ struct CTokenizer {
                 }
 
                 // Skip whitespace after param
-                while (peek == ' ' || peek == '\t') advance();
+                while (peek == ' ' || peek == '\t' || (peek == '\\' && peekNext == '\n')) {
+                    if (peek == '\\') {
+                        advance(); advance();
+                        line++; column = 1;
+                    } else {
+                        advance();
+                    }
+                }
 
                 // Skip comma if present
                 if (peek == ',') advance();

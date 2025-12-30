@@ -2074,22 +2074,38 @@ struct CParser {
         } else if (match(CTokenType.CHAR)) {
             result = is_unsigned ? &TYPE_UCHAR : &TYPE_CHAR;
         } else if (match(CTokenType.SHORT)) {
+            // Handle trailing modifiers (e.g., 'short unsigned int')
+            while (match(CTokenType.UNSIGNED)) is_unsigned = true;
+            while (match(CTokenType.SIGNED)) is_unsigned = false;
+            match(CTokenType.INT);  // optional trailing int
             // Allocate new type for short
             auto data = allocator.alloc(CType.sizeof);
             result = cast(CType*)data.ptr;
             result.kind = CTypeKind.SHORT;
             result.is_unsigned = is_unsigned;
         } else if (match(CTokenType.INT)) {
+            // Handle trailing modifiers (e.g., 'int unsigned')
+            while (match(CTokenType.UNSIGNED)) is_unsigned = true;
+            while (match(CTokenType.SIGNED)) is_unsigned = false;
             result = is_unsigned ? &TYPE_UINT : &TYPE_INT;
         } else if (match(CTokenType.LONG)) {
             // Check for 'long long' or 'long double'
+            // Also handle trailing unsigned/signed and int (e.g., 'long unsigned int')
             if (match(CTokenType.LONG)) {
                 // long long - same as long on 64-bit
+                // Consume trailing unsigned/signed/int
+                while (match(CTokenType.UNSIGNED)) is_unsigned = true;
+                while (match(CTokenType.SIGNED)) is_unsigned = false;
+                match(CTokenType.INT);  // optional trailing int
                 result = is_unsigned ? &TYPE_ULONG : &TYPE_LONG;
             } else if (match(CTokenType.DOUBLE)) {
                 // long double - treat as double for simplicity
                 result = &TYPE_DOUBLE;
             } else {
+                // Consume trailing unsigned/signed/int (e.g., 'long unsigned int')
+                while (match(CTokenType.UNSIGNED)) is_unsigned = true;
+                while (match(CTokenType.SIGNED)) is_unsigned = false;
+                match(CTokenType.INT);  // optional trailing int
                 result = is_unsigned ? &TYPE_ULONG : &TYPE_LONG;
             }
         } else if (match(CTokenType.FLOAT)) {
@@ -2833,6 +2849,19 @@ struct CParser {
         }
 
         if (match(CTokenType.LEFT_PAREN)) {
+            // Check if this is a cast expression: (type)value
+            if (is_type_specifier(peek())) {
+                // It's a cast
+                CType* cast_type = parse_type();
+                if (cast_type is null) return null;
+                consume(CTokenType.RIGHT_PAREN, "Expected ')' after cast type");
+                if (ERROR_OCCURRED) return null;
+                // Parse the value being cast
+                CExpr* operand = parse_unary();
+                if (operand is null) return null;
+                return CCast.make(allocator, cast_type, operand, tok);
+            }
+            // Regular parenthesized expression
             CExpr* expr = parse_expression();
             if (expr is null) return null;
             consume(CTokenType.RIGHT_PAREN, "Expected ')' after expression");

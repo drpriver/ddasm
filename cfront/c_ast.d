@@ -250,6 +250,9 @@ struct CExpr {
     inout(CGrouping)* as_grouping() inout {
         return kind == CExprKind.GROUPING ? cast(typeof(return))&this : null;
     }
+    inout(CCast)* as_cast() inout {
+        return kind == CExprKind.CAST ? cast(typeof(return))&this : null;
+    }
     inout(CSubscript)* as_subscript() inout {
         return kind == CExprKind.SUBSCRIPT ? cast(typeof(return))&this : null;
     }
@@ -415,6 +418,25 @@ struct CGrouping {
         result.expr.kind = CExprKind.GROUPING;
         result.expr.token = t;
         result.expression = e;
+        return &result.expr;
+    }
+}
+
+struct CCast {
+    CExpr expr;
+    CType* cast_type;
+    CExpr* operand_;
+
+    CExpr* operand() { return operand_.ungroup(); }
+
+    static CExpr* make(Allocator a, CType* t, CExpr* e, CToken tok) {
+        auto data = a.zalloc(typeof(this).sizeof);
+        auto result = cast(typeof(this)*)data.ptr;
+        result.expr.kind = CExprKind.CAST;
+        result.expr.token = tok;
+        result.expr.type = t;
+        result.cast_type = t;
+        result.operand_ = e;
         return &result.expr;
     }
 }
