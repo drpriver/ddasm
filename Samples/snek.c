@@ -37,8 +37,7 @@ int gwinlose = 0;
 long** gsnake;
 int glen;
 int gpaused;
-int start(){
-  int width = 640; int height = 640;
+int start(int width, int height){
   srand(420);
   void* window;
   void* renderer;
@@ -506,5 +505,5 @@ void render_and_present(int sx, int sy, int dx, int dy){
   SDL_RenderPresent(renderer);
 }
 int main(){
-    start();
+    start(640, 640);
 }
