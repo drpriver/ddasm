@@ -118,36 +118,8 @@ struct CParser {
                 advance();
                 saw_inline = true;
             }
-            // Skip __attribute__((...)) specifiers
-            // while (check(CTokenType.IDENTIFIER) && peek().lexeme == "__attribute__") {
-            //     advance();
-            //     if (check(CTokenType.LEFT_PAREN)) {
-            //         skip_balanced_parens();
-            //     }
-            // }
-
-            // If we saw inline, skip the entire function (including body if present)
-            // Inline functions defined in headers can't be dlimported
-            if (saw_inline) {
-                // Skip until we hit a brace (body) or semicolon (declaration)
-                int brace_depth = 0;
-                while (!at_end) {
-                    if (check(CTokenType.LEFT_BRACE)) {
-                        brace_depth++;
-                        advance();
-                    } else if (check(CTokenType.RIGHT_BRACE)) {
-                        brace_depth--;
-                        advance();
-                        if (brace_depth == 0) break;
-                    } else if (check(CTokenType.SEMICOLON) && brace_depth == 0) {
-                        advance();
-                        break;
-                    } else {
-                        advance();
-                    }
-                }
-                continue;
-            }
+            // Note: saw_inline is tracked but we now parse inline functions normally
+            // The code generator will handle any unsupported constructs
 
             if (check(CTokenType.STRUCT)) {
                 // Check if this is a struct definition or forward declaration
@@ -2981,12 +2953,15 @@ struct CParser {
     }
 
     CExpr* parse_assignment() {
-        CExpr* expr = parse_logical_or();
+        CExpr* expr = parse_ternary();
         if (expr is null) return null;
 
         if (check(CTokenType.EQUAL) || check(CTokenType.PLUS_EQUAL) ||
             check(CTokenType.MINUS_EQUAL) || check(CTokenType.STAR_EQUAL) ||
-            check(CTokenType.SLASH_EQUAL)) {
+            check(CTokenType.SLASH_EQUAL) || check(CTokenType.PERCENT_EQUAL) ||
+            check(CTokenType.AMP_EQUAL) || check(CTokenType.PIPE_EQUAL) ||
+            check(CTokenType.CARET_EQUAL) || check(CTokenType.LESS_LESS_EQUAL) ||
+            check(CTokenType.GREATER_GREATER_EQUAL)) {
             CToken op_tok = advance();
             CExpr* value = parse_assignment();  // Right associative
             if (value is null) return null;
@@ -2994,6 +2969,36 @@ struct CParser {
         }
 
         return expr;
+    }
+
+    // (6.5.15) conditional-expression:
+    //     logical-OR-expression
+    //     logical-OR-expression ? expression : conditional-expression
+    CExpr* parse_ternary() {
+        CExpr* condition = parse_logical_or();
+        if (condition is null) return null;
+
+        if (!check(CTokenType.QUESTION)) {
+            return condition;
+        }
+
+        CToken question_tok = advance();  // consume '?'
+
+        // After '?', parse full expression (allows comma operator)
+        CExpr* if_true = parse_expression();
+        if (if_true is null) return null;
+
+        if (!check(CTokenType.COLON)) {
+            error("Expected ':' in ternary expression");
+            return null;
+        }
+        advance();  // consume ':'
+
+        // After ':', parse conditional-expression (right-associative)
+        CExpr* if_false = parse_ternary();
+        if (if_false is null) return null;
+
+        return CTernary.make(allocator, condition, if_true, if_false, question_tok);
     }
 
     CExpr* parse_logical_or() {

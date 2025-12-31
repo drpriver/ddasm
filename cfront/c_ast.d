@@ -261,6 +261,7 @@ enum CExprKind {
     ASSIGN,
     SIZEOF,
     GROUPING,
+    TERNARY,
 }
 
 struct CExpr {
@@ -297,6 +298,9 @@ struct CExpr {
     }
     inout(CMemberAccess)* as_member_access() inout {
         return kind == CExprKind.MEMBER_ACCESS ? cast(typeof(return))&this : null;
+    }
+    inout(CTernary)* as_ternary() inout {
+        return kind == CExprKind.TERNARY ? cast(typeof(return))&this : null;
     }
 
     CExpr* ungroup() {
@@ -457,6 +461,28 @@ struct CGrouping {
         result.expr.kind = CExprKind.GROUPING;
         result.expr.token = t;
         result.expression = e;
+        return &result.expr;
+    }
+}
+
+struct CTernary {
+    CExpr expr;
+    CExpr* condition_;
+    CExpr* if_true_;
+    CExpr* if_false_;
+
+    CExpr* condition() { return condition_.ungroup(); }
+    CExpr* if_true() { return if_true_.ungroup(); }
+    CExpr* if_false() { return if_false_.ungroup(); }
+
+    static CExpr* make(Allocator a, CExpr* cond, CExpr* t, CExpr* f, CToken tok) {
+        auto data = a.zalloc(typeof(this).sizeof);
+        auto result = cast(typeof(this)*)data.ptr;
+        result.expr.kind = CExprKind.TERNARY;
+        result.expr.token = tok;
+        result.condition_ = cond;
+        result.if_true_ = t;
+        result.if_false_ = f;
         return &result.expr;
     }
 }

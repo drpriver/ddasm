@@ -181,6 +181,12 @@ struct CAnalyzer {
             case MEMBER_ACCESS:
             case SIZEOF:
                 break;
+            case TERNARY:
+                auto e = cast(CTernary*)expr;
+                analyze_expr(e.condition);
+                analyze_expr(e.if_true);
+                analyze_expr(e.if_false);
+                break;
         }
     }
 
@@ -331,6 +337,12 @@ struct CDasmWriter {
             case SIZEOF:
             case GROUPING:
                 return null;
+            case TERNARY:
+                auto tern = cast(CTernary*)e;
+                // Type of ternary is the common type of branches
+                auto tt = get_expr_type(tern.if_true);
+                if (tt) return tt;
+                return get_expr_type(tern.if_false);
         }
     }
 
@@ -386,10 +398,17 @@ struct CDasmWriter {
 
     void error(CToken token, str message) {
         ERROR_OCCURRED = true;
-        fprintf(stderr, "[line %d]: Code gen error at '%.*s': %.*s\n",
+        fprintf(stderr, "%.*s:%d:%d: Code gen error at '%.*s': %.*s\n",
+                cast(int)token.file.length, token.file.ptr,
                 token.line,
+                token.column,
                 cast(int)token.lexeme.length, token.lexeme.ptr,
                 cast(int)message.length, message.ptr);
+        if(token.expansion_file){
+            fprintf(stderr, "  note: expanded from macro defined at %.*s:%d:%d\n",
+                cast(int)token.expansion_file.length, token.expansion_file.ptr,
+                token.expansion_line, token.expansion_column);
+        }
     }
 
     // Generate a module alias from library name
@@ -1193,6 +1212,7 @@ struct CDasmWriter {
             case CAST:       return gen_cast(cast(CCast*)e, target);
             case MEMBER_ACCESS: return gen_member_access(cast(CMemberAccess*)e, target);
             case SIZEOF:     return gen_sizeof(cast(CSizeof*)e, target);
+            case TERNARY:    return gen_ternary(cast(CTernary*)e, target);
         }
     }
 
@@ -1944,6 +1964,24 @@ struct CDasmWriter {
                         case SLASH_EQUAL:
                             sb.writef("    div r% rjunk r% r%\n", *r, *r, rhs_reg);
                             break;
+                        case PERCENT_EQUAL:
+                            sb.writef("    div rjunk r% r% r%\n", *r, *r, rhs_reg);
+                            break;
+                        case AMP_EQUAL:
+                            sb.writef("    and r% r% r%\n", *r, *r, rhs_reg);
+                            break;
+                        case PIPE_EQUAL:
+                            sb.writef("    or r% r% r%\n", *r, *r, rhs_reg);
+                            break;
+                        case CARET_EQUAL:
+                            sb.writef("    xor r% r% r%\n", *r, *r, rhs_reg);
+                            break;
+                        case LESS_LESS_EQUAL:
+                            sb.writef("    shl r% r% r%\n", *r, *r, rhs_reg);
+                            break;
+                        case GREATER_GREATER_EQUAL:
+                            sb.writef("    shr r% r% r%\n", *r, *r, rhs_reg);
+                            break;
                         default:
                             error(expr.expr.token, "Unhandled compound assignment");
                             return 1;
@@ -2034,6 +2072,24 @@ struct CDasmWriter {
                         case SLASH_EQUAL:
                             sb.writef("    div r% rjunk r% r%\n", val_reg, cur_reg, val_reg);
                             break;
+                        case PERCENT_EQUAL:
+                            sb.writef("    div rjunk r% r% r%\n", val_reg, cur_reg, val_reg);
+                            break;
+                        case AMP_EQUAL:
+                            sb.writef("    and r% r% r%\n", val_reg, cur_reg, val_reg);
+                            break;
+                        case PIPE_EQUAL:
+                            sb.writef("    or r% r% r%\n", val_reg, cur_reg, val_reg);
+                            break;
+                        case CARET_EQUAL:
+                            sb.writef("    xor r% r% r%\n", val_reg, cur_reg, val_reg);
+                            break;
+                        case LESS_LESS_EQUAL:
+                            sb.writef("    shl r% r% r%\n", val_reg, cur_reg, val_reg);
+                            break;
+                        case GREATER_GREATER_EQUAL:
+                            sb.writef("    shr r% r% r%\n", val_reg, cur_reg, val_reg);
+                            break;
                         default:
                             error(expr.expr.token, "Unhandled compound assignment");
                             return 1;
@@ -2093,6 +2149,24 @@ struct CDasmWriter {
                             break;
                         case SLASH_EQUAL:
                             sb.writef("    div r% rjunk r% r%\n", val_reg, cur_reg, val_reg);
+                            break;
+                        case PERCENT_EQUAL:
+                            sb.writef("    div rjunk r% r% r%\n", val_reg, cur_reg, val_reg);
+                            break;
+                        case AMP_EQUAL:
+                            sb.writef("    and r% r% r%\n", val_reg, cur_reg, val_reg);
+                            break;
+                        case PIPE_EQUAL:
+                            sb.writef("    or r% r% r%\n", val_reg, cur_reg, val_reg);
+                            break;
+                        case CARET_EQUAL:
+                            sb.writef("    xor r% r% r%\n", val_reg, cur_reg, val_reg);
+                            break;
+                        case LESS_LESS_EQUAL:
+                            sb.writef("    shl r% r% r%\n", val_reg, cur_reg, val_reg);
+                            break;
+                        case GREATER_GREATER_EQUAL:
+                            sb.writef("    shr r% r% r%\n", val_reg, cur_reg, val_reg);
                             break;
                         default:
                             error(expr.expr.token, "Unhandled compound assignment");
@@ -2374,6 +2448,36 @@ struct CDasmWriter {
         }
 
         sb.writef("    move r% %\n", target, size);
+        return 0;
+    }
+
+    int gen_ternary(CTernary* expr, int target) {
+        // condition ? if_true : if_false
+        int else_label = labelallocator.allocate();
+        int after_label = labelallocator.allocate();
+
+        // Generate condition
+        int before = regallocator.alloced;
+        int cond = (target == TARGET_IS_NOTHING) ? regallocator.allocate() : target;
+        int err = gen_expression(expr.condition, cond);
+        if (err) return err;
+
+        sb.writef("    cmp r% 0\n", cond);
+        sb.writef("    jump eq label L%\n", else_label);  // Jump to else if condition is false
+
+        // Generate true branch
+        err = gen_expression(expr.if_true, target);
+        if (err) return err;
+
+        sb.writef("    move rip label L%\n", after_label);  // Skip else branch
+
+        // Generate false branch
+        sb.writef("  label L%\n", else_label);
+        err = gen_expression(expr.if_false, target);
+        if (err) return err;
+
+        sb.writef("  label L%\n", after_label);
+        regallocator.reset_to(before);
         return 0;
     }
 
