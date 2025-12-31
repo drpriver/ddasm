@@ -679,6 +679,7 @@ struct CPreprocessor {
         // Check for already included (pragma once)
         foreach (item; pragma_once_files.items) {
             if (str_eq(item.key, full_path)) {
+                if(0)fprintf(stderr, "Skipping due to pragma once: '%.*s'\n", cast(int)full_path.length, full_path.ptr);
                 return line_end + 1;
             }
         }
@@ -686,6 +687,7 @@ struct CPreprocessor {
         // Check for include guard - if we know the guard macro and it's defined, skip
         if (str* guard = full_path in include_guards) {
             if (is_defined(*guard)) {
+                if(0)fprintf(stderr, "Skipping '%.*s' due to include guard '%.*s'\n", cast(int)full_path.length, full_path.ptr, cast(int)guard.length, guard.ptr);
                 return line_end + 1;
             }
         }
