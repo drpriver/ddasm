@@ -20,7 +20,7 @@ import cfront.c_parser : CParser;
 import cfront.c_ast : CTranslationUnit;
 import cfront.c_to_dasm : CDasmWriter;
 
-// Default system include paths
+// Default system include paths (compile-time)
 version(OSX) {
     enum str[] DEFAULT_INCLUDE_PATHS = [
         "/usr/local/include",
@@ -43,6 +43,25 @@ version(OSX) {
         "/usr/local/include",
     ];
     enum str[] DEFAULT_FRAMEWORK_PATHS = [];
+}
+
+// Default library search paths (runtime, for dlopen)
+version(OSX) {
+    enum str[] DEFAULT_LIBRARY_PATHS = [
+        "/usr/local/lib",
+        "/usr/lib",
+    ];
+} else version(linux) {
+    enum str[] DEFAULT_LIBRARY_PATHS = [
+        "/usr/local/lib",
+        "/usr/lib",
+        "/lib",
+    ];
+} else {
+    enum str[] DEFAULT_LIBRARY_PATHS = [
+        "/usr/local/lib",
+        "/usr/lib",
+    ];
 }
 
 int compile_c_to_dasm(const(ubyte)[] source, Box!(char[])* progtext, str source_file = "", str[] include_paths = [], str[] framework_paths = []) {

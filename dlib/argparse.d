@@ -273,13 +273,19 @@ print_argparse_help(const ArgParser* p, int columns){
         }
         else {
             if(arg.altname.length){
-                auto tn = ArgTypeNames[arg.dest.type];
+                const(char)[] tn = ArgTypeNames[arg.dest.type];
+                if(arg.dest.type == ArgType.USER_DEFINED && arg.dest.ut.type_name.length){
+                    tn = arg.dest.ut.type_name;
+                }
                 auto to_print = " [%.*s | %.*s <%.*s>%s]".length - "%.*s%.*s%.*s%s".length + arg.name.length + arg.altname.length + tn.length + (arg.num.max != 1?" ...".length: 0);
                 hs.update(cast(int)to_print);
                 printf(" [%.*s | %.*s <%.*s>%s]", cast(int)arg.name.length, arg.name.ptr, cast(int)arg.altname.length, arg.altname.ptr, cast(int)tn.length, tn.ptr, arg.num.max != 1?" ...".ptr:"".ptr);
             }
             else{
-                auto tn = ArgTypeNames[arg.dest.type];
+                const(char)[] tn = ArgTypeNames[arg.dest.type];
+                if(arg.dest.type == ArgType.USER_DEFINED && arg.dest.ut.type_name.length){
+                    tn = arg.dest.ut.type_name;
+                }
                 auto to_print = " [%.*s <%.*s>%s]".length - 10 + arg.name.length + tn.length + (arg.num.max != 1?" ...".length:0);
                 hs.update(cast(int)to_print);
                 printf(" [%.*s <%.*s>%s]", cast(int)arg.name.length, arg.name.ptr, cast(int)tn.length, tn.ptr, arg.num.max != 1?" ...".ptr:"".ptr);

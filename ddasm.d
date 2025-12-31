@@ -62,6 +62,9 @@ int main(int argc, char** argv){
     Barray!str framework_paths;
     framework_paths.bdata.allocator = MALLOCATOR;
     scope(exit) framework_paths.cleanup();
+    Barray!str lib_paths;
+    lib_paths.bdata.allocator = MALLOCATOR;
+    scope(exit) lib_paths.cleanup();
 
     with(ArgParseFlags) with(ArgToParseFlags) {
     ArgToParse[1] pos_args = [
@@ -72,11 +75,17 @@ int main(int argc, char** argv){
             dest: ARGDEST(&sourcefile),
         },
     ];
-    ArgToParse[10] _kw_args = [
+    ArgToParse[11] _kw_args = [
         {
             name: "-I",
             help: "Add directory to include search path (for C files). Can be specified multiple times.",
             dest: ArgUser((str path) { include_paths ~= path; return 0; }, "path"),
+            num: NumRequired(0, int.max),
+        },
+        {
+            name: "-L",
+            help: "Add directory to library search path (for dlopen). Can be specified multiple times.",
+            dest: ArgUser((str path) { lib_paths ~= path; return 0; }, "path"),
             num: NumRequired(0, int.max),
         },
         {
@@ -244,7 +253,7 @@ int main(int argc, char** argv){
         dscript.dscript.powerdown;
     }
     else if(sourcefile[].endswith(".c")){
-        import cfront.cfront : DEFAULT_INCLUDE_PATHS, DEFAULT_FRAMEWORK_PATHS;
+        import cfront.cfront : DEFAULT_INCLUDE_PATHS, DEFAULT_FRAMEWORK_PATHS, DEFAULT_LIBRARY_PATHS;
         static import cfront.cfront;
         // Add default paths
         foreach (p; DEFAULT_INCLUDE_PATHS)
@@ -312,10 +321,15 @@ int main(int argc, char** argv){
         }
         // Load dynamic libraries from dlimport declarations
         import dvm_modules.dynload;
+        import cfront.cfront : DEFAULT_LIBRARY_PATHS, DEFAULT_FRAMEWORK_PATHS;
+        foreach (p; DEFAULT_LIBRARY_PATHS)
+            lib_paths ~= p;
+        foreach (p; DEFAULT_FRAMEWORK_PATHS)
+            framework_paths ~= p;
         foreach(ref dlimport; prog.dlimports[]){
             LinkedModule* dyn_mod = cast(LinkedModule*)MALLOCATOR.alloc(LinkedModule.sizeof).ptr;
             *dyn_mod = LinkedModule.init;
-            auto dl_err = load_dynamic_module(MALLOCATOR, dlimport, dyn_mod);
+            auto dl_err = load_dynamic_module(MALLOCATOR, dlimport, dyn_mod, lib_paths[], framework_paths[]);
             if(dl_err.errored){
                 fprintf(stderr, "Failed to load '%.*s': %.*s\n",
                     cast(int)dlimport.alias_name.length, dlimport.alias_name.ptr,

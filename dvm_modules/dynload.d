@@ -50,9 +50,9 @@ private void* try_dlopen(const(char)* path){
     }
 }
 
-// Find and open a library by name, searching standard paths if needed
+// Find and open a library by name, using provided search paths
 // Returns null if not found
-private void* find_library(str name){
+private void* find_library(str name, str[] lib_paths, str[] fw_paths){
     __gshared char[512] buf;
 
     // Check if absolute or relative path - use as-is
@@ -67,38 +67,54 @@ private void* find_library(str name){
     void* h = try_dlopen(to_cstr(name));
     if(h) return h;
 
-    // Platform-specific search
+    // Try framework paths (macOS)
     version(OSX){
-        // Try framework
-        snprintf(buf.ptr, buf.length, "/Library/Frameworks/%.*s.framework/%.*s",
-            cast(int)name.length, name.ptr, cast(int)name.length, name.ptr);
-        h = try_dlopen(buf.ptr);
-        if(h) return h;
+        foreach(fw_path; fw_paths){
+            snprintf(buf.ptr, buf.length, "%.*s/%.*s.framework/%.*s",
+                cast(int)fw_path.length, fw_path.ptr,
+                cast(int)name.length, name.ptr,
+                cast(int)name.length, name.ptr);
+            h = try_dlopen(buf.ptr);
+            if(h) return h;
+        }
+    }
 
-        // Try homebrew (Apple Silicon)
-        snprintf(buf.ptr, buf.length, "/opt/homebrew/lib/lib%.*s.dylib",
-            cast(int)name.length, name.ptr);
+    // Try library paths
+    foreach(lib_path; lib_paths){
+        version(OSX){
+            snprintf(buf.ptr, buf.length, "%.*s/lib%.*s.dylib",
+                cast(int)lib_path.length, lib_path.ptr,
+                cast(int)name.length, name.ptr);
+        }
+        else version(linux){
+            snprintf(buf.ptr, buf.length, "%.*s/lib%.*s.so",
+                cast(int)lib_path.length, lib_path.ptr,
+                cast(int)name.length, name.ptr);
+        }
+        else version(Windows){
+            snprintf(buf.ptr, buf.length, "%.*s/%.*s.dll",
+                cast(int)lib_path.length, lib_path.ptr,
+                cast(int)name.length, name.ptr);
+        }
         h = try_dlopen(buf.ptr);
         if(h) return h;
+    }
 
-        // Try homebrew (Intel)
-        snprintf(buf.ptr, buf.length, "/usr/local/lib/lib%.*s.dylib",
+    // Try with lib prefix and extension for dlopen's default search
+    version(OSX){
+        snprintf(buf.ptr, buf.length, "lib%.*s.dylib",
             cast(int)name.length, name.ptr);
-        h = try_dlopen(buf.ptr);
-        if(h) return h;
     }
     else version(linux){
         snprintf(buf.ptr, buf.length, "lib%.*s.so",
             cast(int)name.length, name.ptr);
-        h = try_dlopen(buf.ptr);
-        if(h) return h;
     }
     else version(Windows){
         snprintf(buf.ptr, buf.length, "%.*s.dll",
             cast(int)name.length, name.ptr);
-        h = try_dlopen(buf.ptr);
-        if(h) return h;
     }
+    h = try_dlopen(buf.ptr);
+    if(h) return h;
 
     return null;
 }
@@ -108,14 +124,16 @@ DynLoadError
 load_dynamic_module(
     Allocator allocator,
     ref DlimportDecl decl,
-    LinkedModule* result
+    LinkedModule* result,
+    str[] lib_paths,
+    str[] fw_paths
 ){
     DynLoadError err;
 
     // Try each library path in order until one succeeds
     void* handle = null;
-    foreach(lib_path; decl.library_paths[]){
-        handle = find_library(lib_path);
+    foreach(lib_name; decl.library_paths[]){
+        handle = find_library(lib_name, lib_paths, fw_paths);
         if(handle) break;
     }
     if(!handle){
