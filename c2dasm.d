@@ -15,7 +15,7 @@ import dlib.term_util : stdin_is_interactive, get_cols;
 import dlib.get_input : LineHistory, get_input_line;
 import dlib.file_util : read_file, FileFlags;
 import dlib.aliases : str;
-import cfront.cfront : DEFAULT_INCLUDE_PATHS;
+import cfront.cfront : DEFAULT_INCLUDE_PATHS, DEFAULT_FRAMEWORK_PATHS;
 
 static import core.stdc.string;
 
@@ -26,6 +26,9 @@ int main(int argc, char** argv) {
     Barray!str include_paths;
     include_paths.bdata.allocator = MALLOCATOR;
     scope(exit) include_paths.cleanup();
+    Barray!str framework_paths;
+    framework_paths.bdata.allocator = MALLOCATOR;
+    scope(exit) framework_paths.cleanup();
 
     with (dlib.argparse) with (ArgParseFlags) with (ArgToParseFlags) {
         import core.stdc.stdio : fprintf, stdout, stderr;
@@ -37,7 +40,7 @@ int main(int argc, char** argv) {
                 dest: ARGDEST(&sourcefile),
             ),
         ];
-        ArgToParse[2] kw_args = [
+        ArgToParse[3] _kw_args = [
             ArgToParse(
                 name: "-I",
                 help: "Add directory to include search path. Can be specified multiple times.",
@@ -49,7 +52,15 @@ int main(int argc, char** argv) {
                 help: "Force interactive command history mode when reading from stdin.",
                 dest: ARGDEST(&force_interactive),
             ),
+            ArgToParse(
+                name: "-F",
+                help: "Add directory to framework search path. Can be specified multiple times.",
+                dest: ArgUser((str path) { framework_paths ~= path; return 0; }, "path"),
+                num: NumRequired(0, int.max),
+            ),
         ];
+        version(OSX) ArgToParse[] kw_args = _kw_args[];
+        else ArgToParse[] kw_args = _kw_args[0..$-1];
         enum { HELP = 0, VERSION = 1 }
         ArgToParse[2] early_args = [
             ArgToParse(
@@ -139,16 +150,18 @@ int main(int argc, char** argv) {
         bscript = sb.detach.as!(const(ubyte)[]);
     }
 
-    // Add default include paths after user-specified ones
+    // Add default paths after user-specified ones
     foreach (p; DEFAULT_INCLUDE_PATHS)
         include_paths ~= p;
+    foreach (p; DEFAULT_FRAMEWORK_PATHS)
+        framework_paths ~= p;
 
     FixedAllocator f = FixedAllocator.fixed!(1024 * 1024);
     Box!(char[]) progtext = {
         f.allocator(),
     };
     scope(exit) progtext.dealloc;
-    int err = cfront.cfront.compile_c_to_dasm(bscript.data, &progtext, sourcefile[], include_paths[]);
+    int err = cfront.cfront.compile_c_to_dasm(bscript.data, &progtext, sourcefile[], include_paths[], framework_paths[]);
     if (err) return err;
     fprintf(stdout, "%.*s\n", cast(int)progtext.data.length, progtext.data.ptr);
     return 0;

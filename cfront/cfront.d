@@ -27,19 +27,25 @@ version(OSX) {
         "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include",
         "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang/17/include",
     ];
+    enum str[] DEFAULT_FRAMEWORK_PATHS = [
+        "/System/Library/Frameworks",
+        "/Library/Frameworks",
+    ];
 } else version(linux) {
     enum str[] DEFAULT_INCLUDE_PATHS = [
         "/usr/include",
         "/usr/local/include",
     ];
+    enum str[] DEFAULT_FRAMEWORK_PATHS = [];  // No frameworks on Linux
 } else {
     enum str[] DEFAULT_INCLUDE_PATHS = [
         "/usr/include",
         "/usr/local/include",
     ];
+    enum str[] DEFAULT_FRAMEWORK_PATHS = [];
 }
 
-int compile_c_to_dasm(const(ubyte)[] source, Box!(char[])* progtext, str source_file = "", str[] include_paths = []) {
+int compile_c_to_dasm(const(ubyte)[] source, Box!(char[])* progtext, str source_file = "", str[] include_paths = [], str[] framework_paths = []) {
     ArenaAllocator arena = ArenaAllocator(MALLOCATOR);
     scope(exit) arena.free_all();
 
@@ -61,6 +67,7 @@ int compile_c_to_dasm(const(ubyte)[] source, Box!(char[])* progtext, str source_
     preprocessor.allocator = arena.allocator();
     preprocessor.current_file = source_file;
     preprocessor.include_paths = include_paths;
+    preprocessor.framework_paths = framework_paths;
     preprocessor.init();
     err = preprocessor.process(pp_tokens[], &processed);
     if (err) return 1;

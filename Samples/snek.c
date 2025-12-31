@@ -1,10 +1,11 @@
 // Snek game
-#pragma library("libc.so.6")
+#pragma library("libc")
   #include <stdlib.h>
   #include <string.h>
   #include <stdio.h>
+  #include <time.h>
 #pragma library("SDL2")
-  #include </Library/Frameworks/SDL2.framework/Headers/SDL.h>
+  #include <SDL2/SDL.h>
 
 void* gwindow;
 void* grenderer;
@@ -14,27 +15,23 @@ long** gsnake;
 int glen;
 int gpaused;
 int start(int width, int height){
-  srand(420);
+  srand(time(NULL));
   void* window;
   void* renderer;
   if(width < 400) width = 400;
   if(width > 1200) width = 1200;
   if(height < 400) height = 400;
   if(height > 1200) height = 1200;
-  int INIT_VIDEO = 0x20;
   SDL_Init(SDL_INIT_VIDEO);
-  int WINDOWPOS_UNDEFINED = 0x1FFF0000;
   window = SDL_CreateWindow(
     "Snek!",
-    WINDOWPOS_UNDEFINED, WINDOWPOS_UNDEFINED,
+    SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
     width, height,
     SDL_WINDOW_SHOWN | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE
   );
   if(!window) {printf("no window\n"); abort();}
-  else printf("window %p\n", window);
   renderer = SDL_CreateRenderer(window, -1, 0);
   if(!renderer) {printf("no renderer\n"); abort();}
-  else printf("renderer %p\n", renderer);
   // Set blend mode (SDL_BLENDMODE_BLEND = 1)
   SDL_SetRenderDrawBlendMode(renderer, 1);
   gwindow = window;
@@ -203,7 +200,7 @@ void main_loop(){
           dy = 0;
         }
       }
-      else if(code == 0x40000050){
+      else if(code == SDLK_LEFT){
         if(dx != 1){
           dx = -1;
           dy = 0;
@@ -215,7 +212,7 @@ void main_loop(){
           dy = 1;
         }
       }
-      else if(code == 0x40000051){
+      else if(code == SDLK_DOWN){
         if(dy != -1){
           dx = 0;
           dy = 1;
@@ -227,7 +224,7 @@ void main_loop(){
           dy = 0;
         }
       }
-      else if(code == 0x4000004f){
+      else if(code == SDLK_RIGHT){
         if(dx != -1){
           dx = 1;
           dy = 0;
@@ -239,7 +236,7 @@ void main_loop(){
           dy = -1;
         }
       }
-      else if(code == 0x40000052){
+      else if(code == SDLK_UP){
         if(dy != 1){
           dx = 0;
           dy = -1;

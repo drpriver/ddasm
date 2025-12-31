@@ -59,6 +59,9 @@ int main(int argc, char** argv){
     Barray!str include_paths;
     include_paths.bdata.allocator = MALLOCATOR;
     scope(exit) include_paths.cleanup();
+    Barray!str framework_paths;
+    framework_paths.bdata.allocator = MALLOCATOR;
+    scope(exit) framework_paths.cleanup();
 
     with(ArgParseFlags) with(ArgToParseFlags) {
     ArgToParse[1] pos_args = [
@@ -69,7 +72,7 @@ int main(int argc, char** argv){
             dest: ARGDEST(&sourcefile),
         },
     ];
-    ArgToParse[9] kw_args = [
+    ArgToParse[10] _kw_args = [
         {
             name: "-I",
             help: "Add directory to include search path (for C files). Can be specified multiple times.",
@@ -118,9 +121,17 @@ int main(int argc, char** argv){
             name: "-y", altname: "--dry-run",
             help: "Compile and link, but don't run the script/dasm",
             dest: ARGDEST(&no_run),
-        }
-
+        },
+        {
+            name: "-F",
+            help: "Add directory to framework search path (for C files). Can be specified multiple times.",
+            dest: ArgUser((str path) { framework_paths ~= path; return 0; }, "path"),
+            num: NumRequired(0, int.max),
+        },
     ];
+    // Only have -F arg on macos
+    version(OSX) ArgToParse[] kw_args = _kw_args[];
+    else ArgToParse[] kw_args = _kw_args[0..$-1];
     enum {HELP=0, VERSION=1}
     ArgToParse[2] early_args = [
         {
@@ -233,14 +244,16 @@ int main(int argc, char** argv){
         dscript.dscript.powerdown;
     }
     else if(sourcefile[].endswith(".c")){
-        import cfront.cfront : DEFAULT_INCLUDE_PATHS;
+        import cfront.cfront : DEFAULT_INCLUDE_PATHS, DEFAULT_FRAMEWORK_PATHS;
         static import cfront.cfront;
-        // Add default include paths
+        // Add default paths
         foreach (p; DEFAULT_INCLUDE_PATHS)
             include_paths ~= p;
+        foreach (p; DEFAULT_FRAMEWORK_PATHS)
+            framework_paths ~= p;
         Box!(char[]) dasmtext = {allocator:MALLOCATOR};
         ubyte[] data = btext.as!(ubyte[]).data;
-        int err = cfront.cfront.compile_c_to_dasm(data, &dasmtext, sourcefile[], include_paths[]);
+        int err = cfront.cfront.compile_c_to_dasm(data, &dasmtext, sourcefile[], include_paths[], framework_paths[]);
         if(err) return err;
         btext.dealloc();
         btext = Box!str(btext.allocator, dasmtext.data);

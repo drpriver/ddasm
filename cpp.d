@@ -16,13 +16,16 @@ static import dlib.argparse;
 import cfront.c_pp_token;
 import cfront.c_pp_lexer : pp_tokenize;
 import cfront.c_preprocessor : CPreprocessor;
-import cfront.cfront : DEFAULT_INCLUDE_PATHS;
+import cfront.cfront : DEFAULT_INCLUDE_PATHS, DEFAULT_FRAMEWORK_PATHS;
 
 extern(C) int main(int argc, char** argv) {
     ZString sourcefile;
     Barray!str include_paths;
     include_paths.bdata.allocator = MALLOCATOR;
     scope(exit) include_paths.cleanup();
+    Barray!str framework_paths;
+    framework_paths.bdata.allocator = MALLOCATOR;
+    scope(exit) framework_paths.cleanup();
 
     with (dlib.argparse) {
         ArgToParse[1] pos_args = [
@@ -32,11 +35,17 @@ extern(C) int main(int argc, char** argv) {
                 dest: ARGDEST(&sourcefile),
             ),
         ];
-        ArgToParse[1] kw_args = [
+        ArgToParse[2] _kw_args = [
             ArgToParse(
                 name: "-I",
                 help: "Add directory to include search path. Can be specified multiple times.",
                 dest: ArgUser((str path) { include_paths ~= path; return 0; }, "path"),
+                num: NumRequired(0, int.max),
+            ),
+            ArgToParse(
+                name: "-F",
+                help: "Add directory to framework search path. Can be specified multiple times.",
+                dest: ArgUser((str path) { framework_paths ~= path; return 0; }, "path"),
                 num: NumRequired(0, int.max),
             ),
         ];
@@ -52,6 +61,9 @@ extern(C) int main(int argc, char** argv) {
             ),
         ];
         int columns = get_cols();
+        // Only have -F arg on macos
+        version(OSX) ArgToParse[] kw_args = _kw_args[];
+        else ArgToParse[] kw_args = _kw_args[0..$-1];
         ArgParser parser = {
             name: argc ? argv[0][0 .. core.stdc.string.strlen(argv[0])] : "cpp",
             description: "A C preprocessor (like gcc -E)",
@@ -82,9 +94,11 @@ extern(C) int main(int argc, char** argv) {
         return 1;
     }
 
-    // Add default include paths
+    // Add default paths
     foreach (p; DEFAULT_INCLUDE_PATHS)
         include_paths ~= p;
+    foreach (p; DEFAULT_FRAMEWORK_PATHS)
+        framework_paths ~= p;
 
     Allocator alloc = Mallocator.allocator();
 
@@ -117,6 +131,7 @@ extern(C) int main(int argc, char** argv) {
     pp.allocator = alloc;
     pp.current_file = sourcefile[];
     pp.include_paths = include_paths[];
+    pp.framework_paths = framework_paths[];
     pp.init();
 
     Barray!PPToken output = make_barray!PPToken(alloc);

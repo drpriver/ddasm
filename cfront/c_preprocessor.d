@@ -29,6 +29,7 @@ struct CPreprocessor {
     Table!(str, bool) pragma_once_files;
     Table!(str, str) include_guards;  // filename -> guard macro name
     str[] include_paths;
+    str[] framework_paths;  // -F paths for framework lookup
     str current_file;
 
     bool error_occurred = false;
@@ -759,9 +760,50 @@ struct CPreprocessor {
             }
         }
 
+        version(OSX){
+            // Try framework paths (e.g., Foo/Bar.h -> Foo.framework/Headers/Bar.h)
+            str framework_result = resolve_framework_include(filename);
+            if (framework_result.length > 0) return framework_result;
+        }
+
         // Try configured include paths
         foreach (base; include_paths) {
             str path = concat_path(base, filename);
+            if (file_exists(path)) return path;
+        }
+
+        return "";
+    }
+
+    // Try to resolve an include as a framework include
+    // e.g., "CoreFoundation/CFBase.h" -> "/System/Library/Frameworks/CoreFoundation.framework/Headers/CFBase.h"
+    str resolve_framework_include(str filename) {
+        // Find first '/' to split framework name from rest of path
+        size_t slash_pos = 0;
+        bool found_slash = false;
+        foreach (i, c; filename) {
+            if (c == '/') {
+                slash_pos = i;
+                found_slash = true;
+                break;
+            }
+        }
+        if (!found_slash || slash_pos == 0) return "";
+
+        str framework_name = filename[0 .. slash_pos];
+        str rest_of_path = filename[slash_pos + 1 .. $];
+
+        // Try each framework path
+        foreach (base; framework_paths) {
+            // Build: <base>/<framework_name>.framework/Headers/<rest_of_path>
+            StringBuilder sb;
+            sb.allocator = allocator;
+            sb.write(base);
+            sb.write('/');
+            sb.write(framework_name);
+            sb.write(".framework/Headers/");
+            sb.write(rest_of_path);
+            str path = sb.borrow();
             if (file_exists(path)) return path;
         }
 
