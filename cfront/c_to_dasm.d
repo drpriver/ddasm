@@ -104,6 +104,11 @@ struct CAnalyzer {
                 analyze_expr(s.condition);
                 analyze_stmt(s.body);
                 break;
+            case DO_WHILE:
+                auto s = cast(CDoWhileStmt*)stmt;
+                analyze_stmt(s.body);
+                analyze_expr(s.condition);
+                break;
             case FOR:
                 auto s = cast(CForStmt*)stmt;
                 if (s.init_stmt) analyze_stmt(s.init_stmt);
@@ -128,6 +133,20 @@ struct CAnalyzer {
                 }
                 if (decl.initializer)
                     analyze_expr(decl.initializer);
+                break;
+            case SWITCH:
+                auto s = cast(CSwitchStmt*)stmt;
+                analyze_expr(s.condition);
+                foreach (ref c; s.cases) {
+                    if (c.case_value) analyze_expr(c.case_value);
+                    foreach (cs; c.statements) analyze_stmt(cs);
+                }
+                break;
+            case GOTO:
+                break;  // goto doesn't need analysis
+            case LABEL:
+                auto s = cast(CLabelStmt*)stmt;
+                analyze_stmt(s.statement);
                 break;
             case BREAK:
             case CONTINUE:
@@ -187,6 +206,11 @@ struct CAnalyzer {
                 analyze_expr(e.if_true);
                 analyze_expr(e.if_false);
                 break;
+            case INIT_LIST:
+                auto e = cast(CInitList*)expr;
+                foreach (elem; e.elements)
+                    analyze_expr(elem);
+                break;
         }
     }
 
@@ -222,6 +246,9 @@ struct CDasmWriter {
     // Loop control
     int current_continue_target = -1;
     int current_break_target = -1;
+
+    // Goto/label support
+    Table!(str, int) label_table;  // Map label names to label numbers
 
     // Current function info
     CType* current_return_type = null;  // Return type of current function
@@ -345,6 +372,9 @@ struct CDasmWriter {
                 auto tt = get_expr_type(tern.if_true);
                 if (tt) return tt;
                 return get_expr_type(tern.if_false);
+            case INIT_LIST:
+                // Init list type is determined by context (array/struct type)
+                return null;
         }
     }
 
@@ -385,6 +415,7 @@ struct CDasmWriter {
         addr_taken.data.allocator = a;
         arrays.data.allocator = a;
         global_types.data.allocator = a;
+        label_table.data.allocator = a;
     }
 
     void cleanup() {
@@ -753,6 +784,7 @@ struct CDasmWriter {
             arrays.cleanup();
             regallocator.reset();
             labelallocator.reset();
+            if (label_table.count > 0) label_table.cleanup();  // Reset label mappings for new function
             use_stack = false;
             stack_offset = 1;  // Reset to 1 (slot 0 is saved RBP)
             current_return_type = null;
@@ -912,12 +944,16 @@ struct CDasmWriter {
             case RETURN:   return gen_return(cast(CReturnStmt*)stmt);
             case IF:       return gen_if(cast(CIfStmt*)stmt);
             case WHILE:    return gen_while(cast(CWhileStmt*)stmt);
+            case DO_WHILE: return gen_do_while(cast(CDoWhileStmt*)stmt);
             case FOR:      return gen_for(cast(CForStmt*)stmt);
             case BLOCK:    return gen_block(cast(CBlock*)stmt);
             case VAR_DECL: return gen_var_decl(cast(CVarDecl*)stmt);
             case BREAK:    return gen_break(cast(CBreakStmt*)stmt);
             case CONTINUE: return gen_continue(cast(CContinueStmt*)stmt);
             case EMPTY:    return 0;
+            case SWITCH:   return gen_switch(cast(CSwitchStmt*)stmt);
+            case GOTO:     return gen_goto(cast(CGotoStmt*)stmt);
+            case LABEL:    return gen_label(cast(CLabelStmt*)stmt);
         }
     }
 
@@ -1049,6 +1085,41 @@ struct CDasmWriter {
         return 0;
     }
 
+    int gen_do_while(CDoWhileStmt* stmt) {
+        int prev_continue = current_continue_target;
+        int prev_break = current_break_target;
+        scope(exit) {
+            current_continue_target = prev_continue;
+            current_break_target = prev_break;
+        }
+
+        int top_label = labelallocator.allocate();
+        int cond_label = labelallocator.allocate();
+        int after_label = labelallocator.allocate();
+        current_continue_target = cond_label;  // continue goes to condition check
+        current_break_target = after_label;
+
+        // Body executes first (at least once)
+        sb.writef("  label L%\n", top_label);
+
+        int err = gen_statement(stmt.body);
+        if (err) return err;
+
+        // Condition check
+        sb.writef("  label L%\n", cond_label);
+        int before = regallocator.alloced;
+        int cond = regallocator.allocate();
+        err = gen_expression(stmt.condition, cond);
+        if (err) return err;
+        regallocator.reset_to(before);
+
+        sb.writef("    cmp r% 0\n", cond);
+        sb.writef("    jump ne label L%\n", top_label);  // Loop if condition is true
+
+        sb.writef("  label L%\n", after_label);
+        return 0;
+    }
+
     int gen_for(CForStmt* stmt) {
         int prev_continue = current_continue_target;
         int prev_break = current_break_target;
@@ -1101,6 +1172,99 @@ struct CDasmWriter {
         return 0;
     }
 
+    int gen_switch(CSwitchStmt* stmt) {
+        int prev_break = current_break_target;
+        scope(exit) {
+            current_break_target = prev_break;
+        }
+
+        int end_label = labelallocator.allocate();
+        current_break_target = end_label;
+
+        // Evaluate switch expression once
+        int before = regallocator.alloced;
+        int cond_reg = regallocator.allocate();
+        int err = gen_expression(stmt.condition, cond_reg);
+        if (err) return err;
+
+        // Allocate labels for each case
+        auto case_labels = make_barray!int(allocator);
+        int default_label = -1;  // -1 means no default
+
+        foreach (ref c; stmt.cases) {
+            int lbl = labelallocator.allocate();
+            case_labels ~= lbl;
+            if (c.is_default) {
+                default_label = lbl;
+            }
+        }
+
+        // Generate jump table: compare and jump to matching case
+        foreach (i, ref c; stmt.cases) {
+            if (!c.is_default) {
+                // Generate comparison
+                int case_reg = regallocator.allocate();
+                err = gen_expression(c.case_value, case_reg);
+                if (err) return err;
+
+                sb.writef("    cmp r% r%\n", cond_reg, case_reg);
+                sb.writef("    jump eq label L%\n", case_labels[i]);
+                regallocator.reset_to(before + 1);  // Keep cond_reg
+            }
+        }
+
+        // If no case matched, jump to default or end
+        if (default_label >= 0) {
+            sb.writef("    move rip label L%\n", default_label);
+        } else {
+            sb.writef("    move rip label L%\n", end_label);
+        }
+
+        regallocator.reset_to(before);
+
+        // Generate case bodies (fallthrough behavior)
+        foreach (i, ref c; stmt.cases) {
+            sb.writef("  label L%\n", case_labels[i]);
+            foreach (s; c.statements) {
+                err = gen_statement(s);
+                if (err) return err;
+            }
+            // Note: no implicit jump here - fallthrough to next case
+        }
+
+        sb.writef("  label L%\n", end_label);
+        return 0;
+    }
+
+    // Get or allocate a label number for a named label
+    int get_label_number(str name) {
+        if (auto p = name in label_table) {
+            return *p;
+        }
+        int lbl = labelallocator.allocate();
+        label_table[name] = lbl;
+        return lbl;
+    }
+
+    int gen_goto(CGotoStmt* stmt) {
+        str label_name = stmt.label.lexeme;
+        int lbl = get_label_number(label_name);
+        sb.writef("    move rip label L%\n", lbl);
+        return 0;
+    }
+
+    int gen_label(CLabelStmt* stmt) {
+        str label_name = stmt.label.lexeme;
+        int lbl = get_label_number(label_name);
+        sb.writef("  label L%\n", lbl);
+
+        // Generate the statement following the label
+        if (stmt.statement !is null) {
+            return gen_statement(stmt.statement);
+        }
+        return 0;
+    }
+
     int gen_block(CBlock* stmt) {
         foreach (s; stmt.statements) {
             int err = gen_statement(s);
@@ -1133,13 +1297,43 @@ struct CDasmWriter {
                 sb.writef("    memzero r% %\n", addr_reg, stmt.var_type.size_of());
                 regallocator.reset_to(before);
 
-                // TODO: Handle struct initializers if needed
+                // Handle struct initializer if present
+                if (stmt.initializer !is null) {
+                    if (CInitList* init_list = stmt.initializer.as_init_list()) {
+                        before = regallocator.alloced;
+                        addr_reg = regallocator.allocate();
+                        int val_reg = regallocator.allocate();
+
+                        // Get struct field info
+                        auto fields = stmt.var_type.fields;
+                        size_t num_elems = init_list.elements.length;
+                        if (num_elems > fields.length) num_elems = fields.length;
+
+                        for (size_t i = 0; i < num_elems; i++) {
+                            int err = gen_expression(init_list.elements[i], val_reg);
+                            if (err) return err;
+                            // Write value at field offset
+                            size_t offset = fields[i].offset;
+                            int field_slot = slot + cast(int)(offset / 8);  // Convert byte offset to slot offset
+                            sb.writef("    add r% rbp %\n", addr_reg, P(field_slot));
+                            if (offset % 8 != 0) {
+                                sb.writef("    add r% r% %\n", addr_reg, addr_reg, offset % 8);
+                            }
+                            sb.writef("    write r% r%\n", addr_reg, val_reg);
+                        }
+
+                        regallocator.reset_to(before);
+                    } else {
+                        error(stmt.stmt.token, "Struct initializers must be brace-enclosed");
+                        return 1;
+                    }
+                }
             } else if (is_array) {
                 // Arrays need multiple slots
                 size_t arr_size = stmt.var_type.array_size;
                 stack_offset += cast(int)arr_size;
 
-                // Handle array initializer (string literal for char arrays)
+                // Handle array initializer
                 if (stmt.initializer !is null) {
                     if (CLiteral* lit = stmt.initializer.as_literal()) {
                         if (lit.value.type == CTokenType.STRING) {
@@ -1170,11 +1364,43 @@ struct CDasmWriter {
 
                             regallocator.reset_to(before);
                         } else {
-                            error(stmt.stmt.token, "Array initializers must be string literals");
+                            error(stmt.stmt.token, "Array initializers must be string literals or initializer lists");
                             return 1;
                         }
+                    } else if (CInitList* init_list = stmt.initializer.as_init_list()) {
+                        // Brace-enclosed initializer list for array
+                        int before = regallocator.alloced;
+                        int addr_reg = regallocator.allocate();
+                        int val_reg = regallocator.allocate();
+
+                        // Get address of array on stack
+                        sb.writef("    add r% rbp %\n", addr_reg, P(slot));
+                        // Zero-initialize the array first
+                        sb.writef("    memzero r% %\n", addr_reg, arr_size * stmt.var_type.element_size());
+
+                        // Get element size
+                        size_t elem_size = stmt.var_type.element_size();
+
+                        // Write each element
+                        size_t num_elems = init_list.elements.length;
+                        if (num_elems > arr_size) num_elems = arr_size;  // Truncate if too many
+
+                        for (size_t i = 0; i < num_elems; i++) {
+                            int err = gen_expression(init_list.elements[i], val_reg);
+                            if (err) return err;
+                            // Write value at offset
+                            size_t offset = i * elem_size;
+                            int elem_slot = slot + cast(int)(offset / 8);
+                            sb.writef("    add r% rbp %\n", addr_reg, P(elem_slot));
+                            if (offset % 8 != 0) {
+                                sb.writef("    add r% r% %\n", addr_reg, addr_reg, offset % 8);
+                            }
+                            sb.writef("    write r% r%\n", addr_reg, val_reg);
+                        }
+
+                        regallocator.reset_to(before);
                     } else {
-                        error(stmt.stmt.token, "Array initializers must be string literals");
+                        error(stmt.stmt.token, "Array initializers must be string literals or initializer lists");
                         return 1;
                     }
                 }
@@ -1252,6 +1478,10 @@ struct CDasmWriter {
             case MEMBER_ACCESS: return gen_member_access(cast(CMemberAccess*)e, target);
             case SIZEOF:     return gen_sizeof(cast(CSizeof*)e, target);
             case TERNARY:    return gen_ternary(cast(CTernary*)e, target);
+            case INIT_LIST:
+                // Init lists are handled specially in gen_var_decl
+                error(e.token, "Initializer list cannot be used as expression");
+                return 1;
         }
     }
 

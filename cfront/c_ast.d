@@ -262,6 +262,7 @@ enum CExprKind {
     SIZEOF,
     GROUPING,
     TERNARY,
+    INIT_LIST,
 }
 
 struct CExpr {
@@ -301,6 +302,9 @@ struct CExpr {
     }
     inout(CTernary)* as_ternary() inout {
         return kind == CExprKind.TERNARY ? cast(typeof(return))&this : null;
+    }
+    inout(CInitList)* as_init_list() inout {
+        return kind == CExprKind.INIT_LIST ? cast(typeof(return))&this : null;
     }
 
     CExpr* ungroup() {
@@ -487,6 +491,21 @@ struct CTernary {
     }
 }
 
+// (6.7.9) initializer-list: { initializer, initializer, ... }
+struct CInitList {
+    CExpr expr;
+    CExpr*[] elements;
+
+    static CExpr* make(Allocator a, CExpr*[] elems, CToken tok) {
+        auto data = a.zalloc(typeof(this).sizeof);
+        auto result = cast(typeof(this)*)data.ptr;
+        result.expr.kind = CExprKind.INIT_LIST;
+        result.expr.token = tok;
+        result.elements = elems;
+        return &result.expr;
+    }
+}
+
 struct CCast {
     CExpr expr;
     CType* cast_type;
@@ -554,12 +573,16 @@ enum CStmtKind {
     RETURN,
     IF,
     WHILE,
+    DO_WHILE,
     FOR,
     BLOCK,
     VAR_DECL,
     BREAK,
     CONTINUE,
     EMPTY,
+    SWITCH,
+    GOTO,
+    LABEL,
 }
 
 struct CStmt {
@@ -622,6 +645,22 @@ struct CWhileStmt {
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.stmt.kind = CStmtKind.WHILE;
+        result.stmt.token = t;
+        result.condition = cond;
+        result.body = body_;
+        return &result.stmt;
+    }
+}
+
+struct CDoWhileStmt {
+    CStmt stmt;
+    CExpr* condition;
+    CStmt* body;
+
+    static CStmt* make(Allocator a, CStmt* body_, CExpr* cond, CToken t) {
+        auto data = a.zalloc(typeof(this).sizeof);
+        auto result = cast(typeof(this)*)data.ptr;
+        result.stmt.kind = CStmtKind.DO_WHILE;
         result.stmt.token = t;
         result.condition = cond;
         result.body = body_;
@@ -712,6 +751,63 @@ struct CEmptyStmt {
 
     static CStmt* get() {
         return &singleton.stmt;
+    }
+}
+
+// (6.8.4.2) switch statement case clause
+struct CSwitchCase {
+    CExpr* case_value;  // null for default case
+    CStmt*[] statements;
+    bool is_default;
+}
+
+struct CSwitchStmt {
+    CStmt stmt;
+    CExpr* condition;
+    CSwitchCase[] cases;
+
+    static CStmt* make(Allocator a, CExpr* cond, CSwitchCase[] case_list, CToken t) {
+        auto data = a.zalloc(typeof(this).sizeof);
+        auto result = cast(typeof(this)*)data.ptr;
+        result.stmt.kind = CStmtKind.SWITCH;
+        result.stmt.token = t;
+        result.condition = cond;
+        result.cases = case_list;
+        return &result.stmt;
+    }
+}
+
+// (6.8.6.1) goto statement:
+//     goto identifier ;
+struct CGotoStmt {
+    CStmt stmt;
+    CToken label;  // The label to jump to
+
+    static CStmt* make(Allocator a, CToken lbl, CToken t) {
+        auto data = a.zalloc(typeof(this).sizeof);
+        auto result = cast(typeof(this)*)data.ptr;
+        result.stmt.kind = CStmtKind.GOTO;
+        result.stmt.token = t;
+        result.label = lbl;
+        return &result.stmt;
+    }
+}
+
+// (6.8.1) labeled-statement:
+//     identifier : statement
+struct CLabelStmt {
+    CStmt stmt;
+    CToken label;      // The label identifier
+    CStmt* statement;  // The statement following the label
+
+    static CStmt* make(Allocator a, CToken lbl, CStmt* s, CToken t) {
+        auto data = a.zalloc(typeof(this).sizeof);
+        auto result = cast(typeof(this)*)data.ptr;
+        result.stmt.kind = CStmtKind.LABEL;
+        result.stmt.token = t;
+        result.label = lbl;
+        result.statement = s;
+        return &result.stmt;
     }
 }
 

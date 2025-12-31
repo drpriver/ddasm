@@ -391,7 +391,7 @@ struct CParser {
 
                         // Check for initializer
                         if (match(CTokenType.EQUAL)) {
-                            gvar.initializer = parse_expression();
+                            gvar.initializer = parse_initializer();
                             if (gvar.initializer is null) return 1;
                             // If there's an initializer, this is a definition, not extern
                             gvar.is_extern = false;
@@ -1703,7 +1703,7 @@ struct CParser {
 
         // Check for initializer
         if (match(CTokenType.EQUAL)) {
-            gvar.initializer = parse_expression();
+            gvar.initializer = parse_initializer();
             if (gvar.initializer is null) return 1;
             // If there's an initializer, this is a definition, not an extern declaration
             gvar.is_extern = false;
@@ -2057,30 +2057,50 @@ struct CParser {
     int parse_member_declaration(Barray!StructField* fields, size_t base_offset, size_t* total_field_size, bool is_union) {
         *total_field_size = 0;
 
-        // Check for anonymous union/struct: union { ... } or struct { ... } field_name;
+        // Check for inline struct/union: struct { ... } field_name; or struct { ... };
         if ((check(CTokenType.UNION) || check(CTokenType.STRUCT)) &&
             peek_at(1).type == CTokenType.LEFT_BRACE) {
-            // Skip anonymous union/struct body - consume until matching brace
+            bool is_inline_union = check(CTokenType.UNION);
             advance();  // consume union/struct
             advance();  // consume {
-            int brace_depth = 1;
-            while (!at_end && brace_depth > 0) {
-                if (check(CTokenType.LEFT_BRACE)) brace_depth++;
-                else if (check(CTokenType.RIGHT_BRACE)) brace_depth--;
-                advance();
-            }
+
+            // Parse the inline struct/union body
+            auto inline_fields = make_barray!StructField(allocator);
+            size_t inline_size = 0;
+            int err = parse_member_declaration_list(&inline_fields, &inline_size, is_inline_union);
+            if (err) return err;
+
+            consume(CTokenType.RIGHT_BRACE, "Expected '}' after inline struct/union");
+            if (ERROR_OCCURRED) return 1;
+
             // Check for field name after the struct body: struct { ... } field_name;
             if (check(CTokenType.IDENTIFIER)) {
                 CToken field_name = advance();
-                // Treat as opaque type (use int as placeholder)
+                // Create anonymous struct/union type for this field
+                CType* inline_type;
+                if (is_inline_union) {
+                    inline_type = make_union_type(allocator, "", inline_fields[], inline_size);
+                } else {
+                    inline_type = make_struct_type(allocator, "", inline_fields[], inline_size);
+                }
                 StructField field;
                 field.name = field_name.lexeme;
-                field.type = &TYPE_INT;  // Placeholder - anonymous struct field
+                field.type = inline_type;
                 field.offset = base_offset;
                 *fields ~= field;
-                *total_field_size = TYPE_INT.size_of();
+                *total_field_size = inline_size;
+            } else {
+                // True anonymous struct/union - add fields directly to parent
+                foreach (ref f; inline_fields[]) {
+                    StructField field;
+                    field.name = f.name;
+                    field.type = f.type;
+                    field.offset = base_offset + f.offset;
+                    *fields ~= field;
+                }
+                *total_field_size = inline_size;
             }
-            consume(CTokenType.SEMICOLON, "Expected ';' after anonymous struct field");
+            consume(CTokenType.SEMICOLON, "Expected ';' after inline struct/union");
             if (ERROR_OCCURRED) return 1;
             return 0;
         }
@@ -2783,10 +2803,18 @@ struct CParser {
         if (match(CTokenType.RETURN)) return parse_return();
         if (match(CTokenType.IF)) return parse_if();
         if (match(CTokenType.WHILE)) return parse_while();
+        if (match(CTokenType.DO)) return parse_do_while();
         if (match(CTokenType.FOR)) return parse_for();
         if (match(CTokenType.LEFT_BRACE)) return parse_block();
         if (match(CTokenType.BREAK)) return parse_break();
         if (match(CTokenType.CONTINUE)) return parse_continue();
+        if (match(CTokenType.SWITCH)) return parse_switch();
+        if (match(CTokenType.GOTO)) return parse_goto();
+
+        // Check for label: identifier followed by colon
+        if (check(CTokenType.IDENTIFIER) && peek_at(1).type == CTokenType.COLON) {
+            return parse_label();
+        }
 
         // Check for variable declaration (starts with type)
         if (is_type_specifier(peek())) {
@@ -2879,6 +2907,32 @@ struct CParser {
         return CWhileStmt.make(allocator, condition, body, keyword);
     }
 
+    // (6.8.5.2) do-while statement:
+    //     do statement while ( expression ) ;
+    CStmt* parse_do_while() {
+        CToken keyword = previous();
+
+        CStmt* body = parse_statement();
+        if (body is null) return null;
+
+        consume(CTokenType.WHILE, "Expected 'while' after do body");
+        if (ERROR_OCCURRED) return null;
+
+        consume(CTokenType.LEFT_PAREN, "Expected '(' after 'while'");
+        if (ERROR_OCCURRED) return null;
+
+        CExpr* condition = parse_expression();
+        if (condition is null) return null;
+
+        consume(CTokenType.RIGHT_PAREN, "Expected ')' after do-while condition");
+        if (ERROR_OCCURRED) return null;
+
+        consume(CTokenType.SEMICOLON, "Expected ';' after do-while");
+        if (ERROR_OCCURRED) return null;
+
+        return CDoWhileStmt.make(allocator, body, condition, keyword);
+    }
+
     // (6.8.5.3) for statement:
     //     for ( expression_opt ; expression_opt ; expression_opt ) statement
     //     for ( declaration expression_opt ; expression_opt ) statement
@@ -2960,42 +3014,194 @@ struct CParser {
         return CContinueStmt.make(allocator, keyword);
     }
 
-    // (6.7) declaration:
-    //     declaration-specifiers init-declarator-list_opt ;
-    CStmt* parse_var_decl() {
-        CToken type_tok = peek();
-        CType* var_type = parse_type();
-        if (var_type is null) return null;
+    // (6.8.4.2) switch statement:
+    //     switch ( expression ) { switch-body }
+    // switch-body contains case/default labels followed by statements
+    CStmt* parse_switch() {
+        CToken keyword = previous();
 
-        CToken name = consume(CTokenType.IDENTIFIER, "Expected variable name");
+        consume(CTokenType.LEFT_PAREN, "Expected '(' after 'switch'");
         if (ERROR_OCCURRED) return null;
 
-        // Check for array declaration: int arr[10] or int arr[SIZE]
-        if (match(CTokenType.LEFT_BRACKET)) {
-            auto size_result = parse_enum_const_expr();
-            if (size_result.err) return null;
-            if (size_result.value <= 0) {
-                error("Array size must be positive");
+        CExpr* condition = parse_expression();
+        if (condition is null) return null;
+
+        consume(CTokenType.RIGHT_PAREN, "Expected ')' after switch condition");
+        if (ERROR_OCCURRED) return null;
+
+        consume(CTokenType.LEFT_BRACE, "Expected '{' for switch body");
+        if (ERROR_OCCURRED) return null;
+
+        auto cases = make_barray!CSwitchCase(allocator);
+
+        while (!check(CTokenType.RIGHT_BRACE) && !at_end) {
+            // Parse case/default labels
+            if (match(CTokenType.CASE)) {
+                // Parse case constant expression
+                CExpr* case_val = parse_expression();
+                if (case_val is null) return null;
+
+                consume(CTokenType.COLON, "Expected ':' after case value");
+                if (ERROR_OCCURRED) return null;
+
+                // Parse statements until next case/default/}
+                auto stmts = make_barray!(CStmt*)(allocator);
+                while (!check(CTokenType.CASE) && !check(CTokenType.DEFAULT) &&
+                       !check(CTokenType.RIGHT_BRACE) && !at_end) {
+                    CStmt* stmt = parse_statement();
+                    if (stmt is null) return null;
+                    stmts ~= stmt;
+                }
+
+                CSwitchCase c;
+                c.case_value = case_val;
+                c.statements = stmts[];
+                c.is_default = false;
+                cases ~= c;
+            } else if (match(CTokenType.DEFAULT)) {
+                consume(CTokenType.COLON, "Expected ':' after 'default'");
+                if (ERROR_OCCURRED) return null;
+
+                // Parse statements until next case/default/}
+                auto stmts = make_barray!(CStmt*)(allocator);
+                while (!check(CTokenType.CASE) && !check(CTokenType.DEFAULT) &&
+                       !check(CTokenType.RIGHT_BRACE) && !at_end) {
+                    CStmt* stmt = parse_statement();
+                    if (stmt is null) return null;
+                    stmts ~= stmt;
+                }
+
+                CSwitchCase c;
+                c.case_value = null;
+                c.statements = stmts[];
+                c.is_default = true;
+                cases ~= c;
+            } else {
+                error("Expected 'case' or 'default' in switch body");
                 return null;
             }
+        }
 
-            consume(CTokenType.RIGHT_BRACKET, "Expected ']' after array size");
+        consume(CTokenType.RIGHT_BRACE, "Expected '}' after switch body");
+        if (ERROR_OCCURRED) return null;
+
+        return CSwitchStmt.make(allocator, condition, cases[], keyword);
+    }
+
+    // (6.8.6.1) goto statement:
+    //     goto identifier ;
+    CStmt* parse_goto() {
+        CToken keyword = previous();
+
+        CToken label = consume(CTokenType.IDENTIFIER, "Expected label after 'goto'");
+        if (ERROR_OCCURRED) return null;
+
+        consume(CTokenType.SEMICOLON, "Expected ';' after goto label");
+        if (ERROR_OCCURRED) return null;
+
+        return CGotoStmt.make(allocator, label, keyword);
+    }
+
+    // (6.8.1) labeled-statement:
+    //     identifier : statement
+    CStmt* parse_label() {
+        CToken label = advance();  // consume identifier
+        advance();  // consume ':'
+
+        CStmt* stmt = parse_statement();
+        if (stmt is null) return null;
+
+        return CLabelStmt.make(allocator, label, stmt, label);
+    }
+
+    // (6.7) declaration:
+    //     declaration-specifiers init-declarator-list_opt ;
+    // (6.7) init-declarator-list:
+    //     init-declarator
+    //     init-declarator-list , init-declarator
+    CStmt* parse_var_decl() {
+        CToken type_tok = peek();
+        CType* base_type = parse_base_type();
+        if (base_type is null) return null;
+
+        auto decls = make_barray!(CStmt*)(allocator);
+
+        do {
+            // Parse pointer modifiers for this declarator
+            CType* var_type = parse_pointer_modifiers(base_type);
+
+            CToken name = consume(CTokenType.IDENTIFIER, "Expected variable name");
             if (ERROR_OCCURRED) return null;
 
-            // Create array type
-            var_type = make_array_type(allocator, var_type, cast(size_t) size_result.value);
-        }
+            // Check for array declaration: int arr[10] or int arr[SIZE]
+            if (match(CTokenType.LEFT_BRACKET)) {
+                auto size_result = parse_enum_const_expr();
+                if (size_result.err) return null;
+                if (size_result.value <= 0) {
+                    error("Array size must be positive");
+                    return null;
+                }
 
-        CExpr* initializer = null;
-        if (match(CTokenType.EQUAL)) {
-            initializer = parse_expression();
-            if (initializer is null) return null;
-        }
+                consume(CTokenType.RIGHT_BRACKET, "Expected ']' after array size");
+                if (ERROR_OCCURRED) return null;
+
+                // Create array type
+                var_type = make_array_type(allocator, var_type, cast(size_t) size_result.value);
+            }
+
+            CExpr* initializer = null;
+            if (match(CTokenType.EQUAL)) {
+                initializer = parse_initializer();
+                if (initializer is null) return null;
+            }
+
+            decls ~= CVarDecl.make(allocator, var_type, name, initializer, type_tok);
+
+        } while (match(CTokenType.COMMA));
 
         consume(CTokenType.SEMICOLON, "Expected ';' after variable declaration");
         if (ERROR_OCCURRED) return null;
 
-        return CVarDecl.make(allocator, var_type, name, initializer, type_tok);
+        // If only one declaration, return it directly
+        if (decls[].length == 1) {
+            return decls[0];
+        }
+
+        // Multiple declarations - wrap in a block
+        return CBlock.make(allocator, decls[], type_tok);
+    }
+
+    // (6.7.9) initializer:
+    //     assignment-expression
+    //     { initializer-list }
+    //     { initializer-list , }
+    CExpr* parse_initializer() {
+        if (check(CTokenType.LEFT_BRACE)) {
+            return parse_init_list();
+        }
+        return parse_assignment();
+    }
+
+    // (6.7.9) initializer-list:
+    //     designation_opt initializer
+    //     initializer-list , designation_opt initializer
+    CExpr* parse_init_list() {
+        CToken brace = advance();  // consume '{'
+        auto elements = make_barray!(CExpr*)(allocator);
+
+        if (!check(CTokenType.RIGHT_BRACE)) {
+            do {
+                // TODO: handle designators like .field = or [index] =
+                CExpr* elem = parse_initializer();  // recursive for nested braces
+                if (elem is null) return null;
+                elements ~= elem;
+            } while (match(CTokenType.COMMA) && !check(CTokenType.RIGHT_BRACE));
+        }
+
+        consume(CTokenType.RIGHT_BRACE, "Expected '}' after initializer list");
+        if (ERROR_OCCURRED) return null;
+
+        return CInitList.make(allocator, elements[], brace);
     }
 
     // (6.8.3) expression-statement:

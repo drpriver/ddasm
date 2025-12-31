@@ -1,7 +1,5 @@
-// SKIP - brace initializers not implemented
 // Test (6.7.9) struct initializers
 
-/*
 struct Point {
     int x;
     int y;
@@ -16,4 +14,3 @@ int test_struct_partial(void) {
     struct Point p = {5};  // y is zero-initialized
     return p.x + p.y;
 }
-*/
