@@ -3,26 +3,95 @@
  * Outputs preprocessed tokens for debugging
  */
 import core.stdc.stdio : fprintf, stderr, stdout, fwrite;
+static import core.stdc.stdio;
+static import core.stdc.string;
 import dlib.aliases;
-import dlib.allocator : Mallocator, Allocator;
+import dlib.allocator : Mallocator, Allocator, MALLOCATOR;
 import dlib.barray : Barray, make_barray;
 import dlib.file_util : read_file, FileResult, FileFlags;
+import dlib.zstring : ZString;
+import dlib.term_util : get_cols;
+static import dlib.argparse;
+
 import cfront.c_pp_token;
 import cfront.c_pp_lexer : pp_tokenize;
 import cfront.c_preprocessor : CPreprocessor;
+import cfront.cfront : DEFAULT_INCLUDE_PATHS;
 
 extern(C) int main(int argc, char** argv) {
-    if (argc < 2) {
-        fprintf(stderr, "Usage: cpp <file.c>\n");
+    ZString sourcefile;
+    Barray!str include_paths;
+    include_paths.bdata.allocator = MALLOCATOR;
+    scope(exit) include_paths.cleanup();
+
+    with (dlib.argparse) {
+        ArgToParse[1] pos_args = [
+            ArgToParse(
+                name: "source",
+                help: "Source file (.c file) to preprocess.",
+                dest: ARGDEST(&sourcefile),
+            ),
+        ];
+        ArgToParse[1] kw_args = [
+            ArgToParse(
+                name: "-I",
+                help: "Add directory to include search path. Can be specified multiple times.",
+                dest: ArgUser((str path) { include_paths ~= path; return 0; }, "path"),
+                num: NumRequired(0, int.max),
+            ),
+        ];
+        enum { HELP = 0, VERSION = 1 }
+        ArgToParse[2] early_args = [
+            ArgToParse(
+                name: "-h", altname: "--help",
+                help: "Print this help and exit.",
+            ),
+            ArgToParse(
+                name: "-v", altname: "--version",
+                help: "Print the version and exit.",
+            ),
+        ];
+        int columns = get_cols();
+        ArgParser parser = {
+            name: argc ? argv[0][0 .. core.stdc.string.strlen(argv[0])] : "cpp",
+            description: "A C preprocessor (like gcc -E)",
+            early_out: early_args,
+            positional: pos_args,
+            keyword: kw_args,
+        };
+        switch (check_for_early_out_args(&parser, argc ? argv[1 .. argc] : null)) {
+            case HELP:
+                print_argparse_help(&parser, columns);
+                return 0;
+            case VERSION:
+                core.stdc.stdio.fprintf(core.stdc.stdio.stdout, "cpp V1.0\n");
+                return 0;
+            default:
+                break;
+        }
+        auto error = parser.parse_args(argc ? argv[1 .. argc] : null);
+        if (error) {
+            print_argparse_error(&parser, error);
+            core.stdc.stdio.fprintf(core.stdc.stdio.stderr, "Use --help to see usage.\n");
+            return error;
+        }
+    }
+
+    if (sourcefile.length == 0) {
+        fprintf(stderr, "Error: source file required\n");
         return 1;
     }
+
+    // Add default include paths
+    foreach (p; DEFAULT_INCLUDE_PATHS)
+        include_paths ~= p;
 
     Allocator alloc = Mallocator.allocator();
 
     // Read input file
-    FileResult fr = read_file(argv[1], alloc, FileFlags.NUL_TERMINATE | FileFlags.ZERO_PAD_TO_16);
+    FileResult fr = read_file(sourcefile.ptr, alloc, FileFlags.NUL_TERMINATE | FileFlags.ZERO_PAD_TO_16);
     if (fr.errored) {
-        fprintf(stderr, "Error reading file: %s\n", argv[1]);
+        fprintf(stderr, "Error reading file: %s\n", sourcefile.ptr);
         return 1;
     }
 
@@ -35,15 +104,9 @@ extern(C) int main(int argc, char** argv) {
     }
     source = source[0 .. actual_len];
 
-    // Get filename as string
-    str filename;
-    size_t len = 0;
-    while (argv[1][len] != 0) len++;
-    filename = cast(str)argv[1][0 .. len];
-
     // Tokenize
     Barray!PPToken tokens = make_barray!PPToken(alloc);
-    int err = pp_tokenize(source, filename, &tokens, alloc);
+    int err = pp_tokenize(source, sourcefile[], &tokens, alloc);
     if (err) {
         fprintf(stderr, "Tokenization error\n");
         return 1;
@@ -52,13 +115,8 @@ extern(C) int main(int argc, char** argv) {
     // Preprocess
     CPreprocessor pp;
     pp.allocator = alloc;
-    pp.current_file = filename;
-    static immutable str[3] paths = [
-        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include",
-        "/Library/Frameworks/Python.framework/Versions/3.14/include/python3.14",
-        "/usr/local/include",
-    ];
-    pp.include_paths = cast(str[])paths;
+    pp.current_file = sourcefile[];
+    pp.include_paths = include_paths[];
     pp.init();
 
     Barray!PPToken output = make_barray!PPToken(alloc);

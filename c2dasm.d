@@ -3,6 +3,7 @@
  * Copyright 2025, David Priver
  */
 import dlib.allocator : Mallocator, Allocator, MALLOCATOR, FixedAllocator;
+import dlib.barray : Barray;
 import dlib.box : Box;
 import dlib.stringbuilder : StringBuilder;
 static import cfront.cfront;
@@ -13,6 +14,8 @@ static import dlib.argparse;
 import dlib.term_util : stdin_is_interactive, get_cols;
 import dlib.get_input : LineHistory, get_input_line;
 import dlib.file_util : read_file, FileFlags;
+import dlib.aliases : str;
+import cfront.cfront : DEFAULT_INCLUDE_PATHS;
 
 static import core.stdc.string;
 
@@ -20,6 +23,10 @@ extern(C)
 int main(int argc, char** argv) {
     bool force_interactive = false;
     ZString sourcefile;
+    Barray!str include_paths;
+    include_paths.bdata.allocator = MALLOCATOR;
+    scope(exit) include_paths.cleanup();
+
     with (dlib.argparse) with (ArgParseFlags) with (ArgToParseFlags) {
         import core.stdc.stdio : fprintf, stdout, stderr;
         ArgToParse[1] pos_args = [
@@ -30,7 +37,13 @@ int main(int argc, char** argv) {
                 dest: ARGDEST(&sourcefile),
             ),
         ];
-        ArgToParse[1] kw_args = [
+        ArgToParse[2] kw_args = [
+            ArgToParse(
+                name: "-I",
+                help: "Add directory to include search path. Can be specified multiple times.",
+                dest: ArgUser((str path) { include_paths ~= path; return 0; }, "path"),
+                num: NumRequired(0, int.max),
+            ),
             ArgToParse(
                 name: "--force-interactive", altname: "-i",
                 help: "Force interactive command history mode when reading from stdin.",
@@ -126,12 +139,16 @@ int main(int argc, char** argv) {
         bscript = sb.detach.as!(const(ubyte)[]);
     }
 
+    // Add default include paths after user-specified ones
+    foreach (p; DEFAULT_INCLUDE_PATHS)
+        include_paths ~= p;
+
     FixedAllocator f = FixedAllocator.fixed!(1024 * 1024);
     Box!(char[]) progtext = {
         f.allocator(),
     };
     scope(exit) progtext.dealloc;
-    int err = cfront.cfront.compile_c_to_dasm(bscript.data, &progtext, sourcefile[]);
+    int err = cfront.cfront.compile_c_to_dasm(bscript.data, &progtext, sourcefile[], include_paths[]);
     if (err) return err;
     fprintf(stdout, "%.*s\n", cast(int)progtext.data.length, progtext.data.ptr);
     return 0;

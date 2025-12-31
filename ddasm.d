@@ -12,11 +12,11 @@ import dlib.get_input: get_input_line, LineHistory;
 import dlib.term_util: get_cols, stdin_is_interactive;
 import dlib.file_util: read_file, FileFlags, FileResult;
 import dlib.allocator;
+import dlib.barray: Barray;
 import dlib.box: Box;
 import dlib.str_util: endswith;
 import dlib.table;
 import dlib.aliases;
-
 
 import dvm.dvm_defs: Fuzzing, uintptr_t;
 import dvm.dvm_linked: LinkedModule, Function, FunctionType, FunctionTable, FunctionInfo;
@@ -56,6 +56,10 @@ int main(int argc, char** argv){
     uintptr_t[RegisterNames.RARGMAX-RegisterNames.RARG1] rargs;
     ZString[rargs.length] rargs_s;
     ZString sourcefile;
+    Barray!str include_paths;
+    include_paths.bdata.allocator = MALLOCATOR;
+    scope(exit) include_paths.cleanup();
+
     with(ArgParseFlags) with(ArgToParseFlags) {
     ArgToParse[1] pos_args = [
         {
@@ -65,7 +69,13 @@ int main(int argc, char** argv){
             dest: ARGDEST(&sourcefile),
         },
     ];
-    ArgToParse[8] kw_args = [
+    ArgToParse[9] kw_args = [
+        {
+            name: "-I",
+            help: "Add directory to include search path (for C files). Can be specified multiple times.",
+            dest: ArgUser((str path) { include_paths ~= path; return 0; }, "path"),
+            num: NumRequired(0, int.max),
+        },
         {
             name: "--force-interactive", altname: "-i",
             help: "Force interactive mode when reading from stdin.",
@@ -223,10 +233,14 @@ int main(int argc, char** argv){
         dscript.dscript.powerdown;
     }
     else if(sourcefile[].endswith(".c")){
+        import cfront.cfront : DEFAULT_INCLUDE_PATHS;
         static import cfront.cfront;
+        // Add default include paths
+        foreach (p; DEFAULT_INCLUDE_PATHS)
+            include_paths ~= p;
         Box!(char[]) dasmtext = {allocator:MALLOCATOR};
         ubyte[] data = btext.as!(ubyte[]).data;
-        int err = cfront.cfront.compile_c_to_dasm(data, &dasmtext, sourcefile[]);
+        int err = cfront.cfront.compile_c_to_dasm(data, &dasmtext, sourcefile[], include_paths[]);
         if(err) return err;
         btext.dealloc();
         btext = Box!str(btext.allocator, dasmtext.data);

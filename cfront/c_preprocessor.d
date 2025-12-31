@@ -749,15 +749,6 @@ struct CPreprocessor {
             return "";
         }
 
-        // Try common system paths
-        static immutable string[] system_paths = [
-            "/usr/include",
-            "/usr/local/include",
-            "/Library/Frameworks/Python.framework/Headers",
-            "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include",
-            "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang/17/include",
-        ];
-
         // For non-system includes, try relative to current file first
         if (!is_system && current_file.length > 0) {
             // Extract directory from current file
@@ -768,8 +759,8 @@ struct CPreprocessor {
             }
         }
 
-        // Try system paths
-        foreach (base; system_paths) {
+        // Try configured include paths
+        foreach (base; include_paths) {
             str path = concat_path(base, filename);
             if (file_exists(path)) return path;
         }

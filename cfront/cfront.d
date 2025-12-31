@@ -20,7 +20,26 @@ import cfront.c_parser : CParser;
 import cfront.c_ast : CTranslationUnit;
 import cfront.c_to_dasm : CDasmWriter;
 
-int compile_c_to_dasm(const(ubyte)[] source, Box!(char[])* progtext, str source_file = "") {
+// Default system include paths
+version(OSX) {
+    enum str[] DEFAULT_INCLUDE_PATHS = [
+        "/usr/local/include",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include",
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang/17/include",
+    ];
+} else version(linux) {
+    enum str[] DEFAULT_INCLUDE_PATHS = [
+        "/usr/include",
+        "/usr/local/include",
+    ];
+} else {
+    enum str[] DEFAULT_INCLUDE_PATHS = [
+        "/usr/include",
+        "/usr/local/include",
+    ];
+}
+
+int compile_c_to_dasm(const(ubyte)[] source, Box!(char[])* progtext, str source_file = "", str[] include_paths = []) {
     ArenaAllocator arena = ArenaAllocator(MALLOCATOR);
     scope(exit) arena.free_all();
 
@@ -41,6 +60,7 @@ int compile_c_to_dasm(const(ubyte)[] source, Box!(char[])* progtext, str source_
     CPreprocessor preprocessor;
     preprocessor.allocator = arena.allocator();
     preprocessor.current_file = source_file;
+    preprocessor.include_paths = include_paths;
     preprocessor.init();
     err = preprocessor.process(pp_tokens[], &processed);
     if (err) return 1;
