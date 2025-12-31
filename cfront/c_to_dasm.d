@@ -2519,14 +2519,26 @@ struct CDasmWriter {
                         int err = gen_expression(val, src_reg);
                         if (err) return err;
                         // src_reg now contains pointer to the returned struct
+                    } else if (val.kind == CExprKind.ASSIGN) {
+                        // Source is another assignment (chained: a = b = c)
+                        // Generate the inner assignment, which returns address of its destination
+                        int err = gen_expression(val, src_reg);
+                        if (err) return err;
+                        // src_reg now contains address of the inner assignment's destination
                     } else {
-                        error(expr.expr.token, "Struct assignment source must be a variable or function call");
-                        return 1;
+                        // Try gen_struct_address for other expressions (member access, etc.)
+                        int err = gen_struct_address(val, src_reg);
+                        if (err) return err;
                     }
 
                     // memcpy dst src size
                     size_t struct_size = (*var_type_ptr).size_of();
                     sb.writef("    memcpy r% r% %\n", dst_reg, src_reg, struct_size);
+
+                    // Return address of destination for chained assignment
+                    if (target != TARGET_IS_NOTHING) {
+                        sb.writef("    move r% r%\n", target, dst_reg);
+                    }
 
                     regallocator.reset_to(before);
                     return 0;

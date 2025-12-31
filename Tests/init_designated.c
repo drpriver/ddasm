@@ -1,5 +1,5 @@
 // Test (6.7.11) designated initializers per C2y spec
-// EXPECT: 858
+// EXPECT: 867
 
 struct Point {
     int x;
@@ -119,6 +119,13 @@ int test_struct_copy_init(void) {
     return p2.x + p2.y;  // 10 + 20 = 30
 }
 
+int test_chained_struct_assign(void) {
+    struct Point a = {1, 2};
+    struct Point b, c;
+    c = b = a;  // Chained assignment
+    return a.x + b.x + c.x + a.y + b.y + c.y;  // 1+1+1+2+2+2 = 9
+}
+
 // TODO: Array of structs needs struct array subscript support
 // struct Point pts[3] = {{1, 2}, {3, 4}, {5, 6}};  // Not yet supported
 
@@ -136,5 +143,6 @@ int main(void) {
     result += test_big_struct_copy();            // 6
     result += test_6byte_struct();               // 105
     result += test_struct_copy_init();           // 30
-    return result;  // Expected: 828 + 30 = 858
+    result += test_chained_struct_assign();      // 9
+    return result;  // Expected: 858 + 9 = 867
 }
