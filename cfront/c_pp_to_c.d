@@ -85,6 +85,14 @@ enum CTokenType : uint {
     UINT128 = 628,
     NORETURN = 629,
     ALIGNOF = 630,
+    COUNTOF = 631,
+    TRUE_KW = 632,
+    FALSE_KW = 633,
+    COMPLEX = 634,
+    DECIMAL32 = 635,
+    DECIMAL64 = 636,
+    DECIMAL128 = 637,
+    GENERIC = 638,
 
     // Control flow keywords
     IF = 700,
@@ -289,6 +297,7 @@ struct PPToCConverter {
             if (str_eq(name, "goto")) return CTokenType.GOTO;
             if (str_eq(name, "auto")) return CTokenType.AUTO;
             if (str_eq(name, "bool")) return CTokenType.BOOL;
+            if (str_eq(name, "true")) return CTokenType.TRUE_KW;
         }
         if (name.length == 5) {
             if (str_eq(name, "short")) return CTokenType.SHORT;
@@ -299,6 +308,7 @@ struct PPToCConverter {
             if (str_eq(name, "union")) return CTokenType.UNION;
             if (str_eq(name, "__asm")) return CTokenType.ASM;
             if (str_eq(name, "_Bool")) return CTokenType.BOOL;
+            if (str_eq(name, "false")) return CTokenType.FALSE_KW;
         }
         if (name.length == 6) {
             if (str_eq(name, "double")) return CTokenType.DOUBLE;
@@ -323,11 +333,14 @@ struct PPToCConverter {
             if (str_eq(name, "volatile")) return CTokenType.VOLATILE;
             if (str_eq(name, "continue")) return CTokenType.CONTINUE;
             if (str_eq(name, "_Alignof")) return CTokenType.ALIGNOF;
+            if (str_eq(name, "_Countof")) return CTokenType.COUNTOF;
             if (str_eq(name, "noreturn")) return CTokenType.NORETURN;
             if (str_eq(name, "register")) return CTokenType.REGISTER;
             if (str_eq(name, "restrict")) return CTokenType.RESTRICT;
             if (str_eq(name, "_Float16")) return CTokenType.FLOAT16;
             if (str_eq(name, "__inline")) return CTokenType.INLINE;
+            if (str_eq(name, "_Complex")) return CTokenType.COMPLEX;
+            if (str_eq(name, "_Generic")) return CTokenType.GENERIC;
         }
         if (name.length == 9) {
             if (str_eq(name, "_Noreturn")) return CTokenType.NORETURN;
@@ -336,9 +349,12 @@ struct PPToCConverter {
             if (str_eq(name, "__restrict")) return CTokenType.RESTRICT;
             if (str_eq(name, "__inline__")) return CTokenType.INLINE;
             if (str_eq(name, "__int128_t")) return CTokenType.INT128;
+            if (str_eq(name, "_Decimal32")) return CTokenType.DECIMAL32;
+            if (str_eq(name, "_Decimal64")) return CTokenType.DECIMAL64;
         }
         if (name.length == 11) {
             if (str_eq(name, "__uint128_t")) return CTokenType.UINT128;
+            if (str_eq(name, "_Decimal128")) return CTokenType.DECIMAL128;
         }
         if (name.length == 12) {
             if (str_eq(name, "__restrict__")) return CTokenType.RESTRICT;

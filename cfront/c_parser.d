@@ -2639,6 +2639,19 @@ struct CParser {
             result = &TYPE_INT128;
         } else if (match(CTokenType.UINT128)) {
             result = &TYPE_UINT128;
+        } else if (match(CTokenType.COMPLEX)) {
+            // _Complex - stub as double for parsing, codegen will error if used
+            // Skip the following type specifier (double, float, etc.)
+            if (match(CTokenType.DOUBLE) || match(CTokenType.FLOAT) || match(CTokenType.LONG)) {
+                // Consumed
+            }
+            result = &TYPE_DOUBLE;  // Stub
+        } else if (match(CTokenType.DECIMAL32)) {
+            result = &TYPE_FLOAT;  // Stub
+        } else if (match(CTokenType.DECIMAL64)) {
+            result = &TYPE_DOUBLE;  // Stub
+        } else if (match(CTokenType.DECIMAL128)) {
+            result = &TYPE_DOUBLE;  // Stub
         } else if (match(CTokenType.STRUCT)) {
             // struct Name or struct { ... }
             bool has_name = check(CTokenType.IDENTIFIER);
@@ -2930,7 +2943,9 @@ struct CParser {
                 tok.type == DOUBLE || tok.type == UNSIGNED ||
                 tok.type == SIGNED || tok.type == CONST || tok.type == VOLATILE ||
                 tok.type == RESTRICT || tok.type == ATOMIC || tok.type == STRUCT ||
-                tok.type == UNION || tok.type == ENUM) {
+                tok.type == UNION || tok.type == ENUM || tok.type == BOOL ||
+                tok.type == COMPLEX || tok.type == DECIMAL32 || tok.type == DECIMAL64 ||
+                tok.type == DECIMAL128) {
                 return true;
             }
             // Check for typedef names
@@ -3729,6 +3744,38 @@ struct CParser {
             }
         }
 
+        // _Countof operator: _Countof(type) or _Countof(expr)
+        if (match(CTokenType.COUNTOF)) {
+            CToken op = previous();
+
+            // _Countof always requires parens
+            consume(CTokenType.LEFT_PAREN, "Expected '(' after _Countof");
+            if (ERROR_OCCURRED) return null;
+
+            // Check if it's _Countof(type) or _Countof(expr)
+            if (is_type_specifier(peek())) {
+                // _Countof(type) - type must be an array type
+                CType* type = parse_type();
+                if (type is null) return null;
+                consume(CTokenType.RIGHT_PAREN, "Expected ')' after type");
+                if (ERROR_OCCURRED) return null;
+
+                if (!type.is_array()) {
+                    error("_Countof requires an array type");
+                    return null;
+                }
+                return CCountof.make(allocator, type, type.array_size, op);
+            } else {
+                // _Countof(expr) - expression must have array type
+                CExpr* expr = parse_expression();
+                if (expr is null) return null;
+                consume(CTokenType.RIGHT_PAREN, "Expected ')' after expression");
+                if (ERROR_OCCURRED) return null;
+                // Count will be computed during codegen based on expression's type
+                return CCountof.make_expr(allocator, expr, 0, op);
+            }
+        }
+
         return parse_postfix();
     }
 
@@ -3829,6 +3876,48 @@ struct CParser {
             return CLiteral.make(allocator, previous(), &TYPE_CHAR);
         }
 
+        // C23 true/false keywords
+        if (match(CTokenType.TRUE_KW)) {
+            return CLiteral.make_int(allocator, 1, previous());
+        }
+        if (match(CTokenType.FALSE_KW)) {
+            return CLiteral.make_int(allocator, 0, previous());
+        }
+
+        // C11 _Generic selection
+        if (match(CTokenType.GENERIC)) {
+            CToken gen_tok = previous();
+            consume(CTokenType.LEFT_PAREN, "Expected '(' after _Generic");
+            if (ERROR_OCCURRED) return null;
+
+            CExpr* ctrl = parse_assignment();
+            if (ctrl is null) return null;
+            consume(CTokenType.COMMA, "Expected ',' after controlling expression");
+            if (ERROR_OCCURRED) return null;
+
+            auto assocs = make_barray!CGenericAssoc(allocator);
+
+            while (!check(CTokenType.RIGHT_PAREN) && !at_end) {
+                CGenericAssoc assoc;
+                if (match(CTokenType.DEFAULT)) {
+                    assoc.type = null;  // default case
+                } else {
+                    assoc.type = parse_type();
+                    if (assoc.type is null) return null;
+                }
+                consume(CTokenType.COLON, "Expected ':' in generic association");
+                if (ERROR_OCCURRED) return null;
+                assoc.result = parse_assignment();
+                if (assoc.result is null) return null;
+                assocs ~= assoc;
+
+                if (!match(CTokenType.COMMA)) break;
+            }
+            consume(CTokenType.RIGHT_PAREN, "Expected ')' after _Generic");
+            if (ERROR_OCCURRED) return null;
+            return CGeneric.make(allocator, ctrl, assocs[], gen_tok);
+        }
+
         if (check(CTokenType.IDENTIFIER)) {
             // Check for __builtin_va_arg(ap, type)
             if (peek().lexeme == "__builtin_va_arg") {
@@ -3864,13 +3953,21 @@ struct CParser {
         }
 
         if (match(CTokenType.LEFT_PAREN)) {
-            // Check if this is a cast expression: (type)value
+            // Check if this is a cast expression: (type)value or compound literal: (type){...}
             if (is_type_specifier(peek())) {
-                // It's a cast
+                // It's a cast or compound literal
                 CType* cast_type = parse_type();
                 if (cast_type is null) return null;
                 consume(CTokenType.RIGHT_PAREN, "Expected ')' after cast type");
                 if (ERROR_OCCURRED) return null;
+
+                // Check for compound literal: (type){...}
+                if (check(CTokenType.LEFT_BRACE)) {
+                    CExpr* init_expr = parse_initializer();
+                    if (init_expr is null) return null;
+                    return CCompoundLiteral.make(allocator, cast_type, init_expr, tok);
+                }
+
                 // Parse the value being cast
                 CExpr* operand = parse_unary();
                 if (operand is null) return null;

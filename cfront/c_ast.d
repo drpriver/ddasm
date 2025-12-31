@@ -288,10 +288,13 @@ enum CExprKind {
     ASSIGN,
     SIZEOF,
     ALIGNOF,
+    COUNTOF,
     VA_ARG,
     GROUPING,
     TERNARY,
     INIT_LIST,
+    COMPOUND_LITERAL,
+    GENERIC,
 }
 
 struct CExpr {
@@ -335,6 +338,12 @@ struct CExpr {
     inout(CInitList)* as_init_list() inout {
         return kind == CExprKind.INIT_LIST ? cast(typeof(return))&this : null;
     }
+    inout(CCompoundLiteral)* as_compound_literal() inout {
+        return kind == CExprKind.COMPOUND_LITERAL ? cast(typeof(return))&this : null;
+    }
+    inout(CGeneric)* as_generic() inout {
+        return kind == CExprKind.GENERIC ? cast(typeof(return))&this : null;
+    }
 
     CExpr* ungroup() {
         if (kind == CExprKind.GROUPING) {
@@ -366,7 +375,7 @@ struct CLiteral {
         result.expr.token = tok;
         result.expr.type = &TYPE_INT;
         result.value = tok;
-        result.value.lexeme = "0";  // Will be ignored, we use token type
+        result.value.lexeme = val != 0 ? "1" : "0";
         result.value.type = CTokenType.NUMBER;
         return &result.expr;
     }
@@ -430,6 +439,37 @@ struct CAlignof {
         result.alignof_type = null;
         result.alignof_expr = e;
         result.alignment = 0;  // Will be computed during codegen
+        return &result.expr;
+    }
+}
+
+struct CCountof {
+    CExpr expr;
+    CType* countof_type;   // If _Countof(type)
+    CExpr* countof_expr;   // If _Countof(expr)
+    size_t count;          // Precomputed count (if known)
+
+    static CExpr* make(Allocator a, CType* t, size_t count_, CToken tok) {
+        auto data = a.zalloc(typeof(this).sizeof);
+        auto result = cast(typeof(this)*)data.ptr;
+        result.expr.kind = CExprKind.COUNTOF;
+        result.expr.token = tok;
+        result.expr.type = &TYPE_LONG;  // _Countof returns size_t
+        result.countof_type = t;
+        result.countof_expr = null;
+        result.count = count_;
+        return &result.expr;
+    }
+
+    static CExpr* make_expr(Allocator a, CExpr* e, size_t count_, CToken tok) {
+        auto data = a.zalloc(typeof(this).sizeof);
+        auto result = cast(typeof(this)*)data.ptr;
+        result.expr.kind = CExprKind.COUNTOF;
+        result.expr.token = tok;
+        result.expr.type = &TYPE_LONG;
+        result.countof_type = null;
+        result.countof_expr = e;
+        result.count = count_;
         return &result.expr;
     }
 }
@@ -641,6 +681,25 @@ struct CCast {
     }
 }
 
+struct CCompoundLiteral {
+    CExpr expr;
+    CType* literal_type;
+    CExpr* initializer_;
+
+    CExpr* initializer() { return initializer_.ungroup(); }
+
+    static CExpr* make(Allocator a, CType* t, CExpr* init, CToken tok) {
+        auto data = a.zalloc(typeof(this).sizeof);
+        auto result = cast(typeof(this)*)data.ptr;
+        result.expr.kind = CExprKind.COMPOUND_LITERAL;
+        result.expr.token = tok;
+        result.expr.type = t;
+        result.literal_type = t;
+        result.initializer_ = init;
+        return &result.expr;
+    }
+}
+
 struct CSubscript {
     CExpr expr;
     CExpr* array_;
@@ -676,6 +735,29 @@ struct CMemberAccess {
         result.object_ = obj;
         result.member = member_;
         result.is_arrow = arrow;
+        return &result.expr;
+    }
+}
+
+struct CGenericAssoc {
+    CType* type;    // null for default
+    CExpr* result;
+}
+
+struct CGeneric {
+    CExpr expr;
+    CExpr* controlling_;
+    CGenericAssoc[] associations;
+
+    CExpr* controlling() { return controlling_.ungroup(); }
+
+    static CExpr* make(Allocator a, CExpr* ctrl, CGenericAssoc[] assocs, CToken tok) {
+        auto data = a.zalloc(typeof(this).sizeof);
+        auto result = cast(typeof(this)*)data.ptr;
+        result.expr.kind = CExprKind.GENERIC;
+        result.expr.token = tok;
+        result.controlling_ = ctrl;
+        result.associations = assocs;
         return &result.expr;
     }
 }
