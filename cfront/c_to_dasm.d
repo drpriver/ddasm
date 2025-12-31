@@ -387,16 +387,40 @@ struct CDasmWriter {
     }
 
     // Generate a module alias from library name
-    // "libc.so.6" -> "Libc", "python3.8" -> "Python3", "libfoo.so" -> "Foo"
-    static str make_alias(str lib, int counter) {
-        // Simple approach: use Lib0, Lib1, etc. for uniqueness
-        // Could be smarter and extract name from library path
-        __gshared char[16][8] alias_buffers;
-        if (counter >= 8) counter = counter % 8;
+    // "libc.so.6" -> "Libc", "libfoo.so" -> "Libfoo", "/path/to/libbar.dylib" -> "Libbar"
+    str make_alias(str lib, int counter) {
+        // Strip directory path
+        str name = lib;
+        foreach_reverse (i, c; lib) {
+            if (c == '/' || c == '\\') {
+                name = lib[i+1 .. $];
+                break;
+            }
+        }
 
-        import core.stdc.stdio : snprintf;
-        int len = snprintf(alias_buffers[counter].ptr, 16, "Lib%d", counter);
-        return cast(str)alias_buffers[counter][0 .. len];
+        // Strip .so, .dylib, .dll and version suffixes like .so.6
+        foreach (i, c; name) {
+            if (c == '.') {
+                name = name[0 .. i];
+                break;
+            }
+        }
+
+        StringBuilder sb;
+        sb.allocator = allocator;
+
+        if (name.length == 0) {
+            sb.writef("Lib%", counter);
+        } else {
+            // Capitalize first letter
+            if (name[0] >= 'a' && name[0] <= 'z') {
+                sb.writef("%", cast(char)(name[0] - 32));
+                sb.write(name[1 .. $]);
+            } else {
+                sb.write(name);
+            }
+        }
+        return sb.detach().data;
     }
 
     // =========================================================================
