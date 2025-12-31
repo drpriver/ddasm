@@ -8,7 +8,7 @@ import core.stdc.stdio : fprintf, stderr;
 import dlib.aliases;
 import dlib.allocator : Allocator;
 
-import cfront.c_tokenizer : CToken, CTokenType;
+import cfront.c_pp_to_c : CToken, CTokenType;
 
 // =============================================================================
 // Type System

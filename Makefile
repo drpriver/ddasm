@@ -18,8 +18,11 @@ ds2dasm: Bin/ds2dasm
 .PHONY: c2dasm
 c2dasm: Bin/c2dasm
 
+.PHONY: cpp
+cpp: Bin/cpp
+
 .PHONY: all
-all: ds2dasm ddasm c2dasm
+all: ds2dasm ddasm c2dasm cpp
 
 .PHONY: clean
 clean:

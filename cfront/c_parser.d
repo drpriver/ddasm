@@ -10,7 +10,7 @@ import dlib.allocator : Allocator;
 import dlib.barray : Barray, make_barray;
 import dlib.table : Table;
 
-import cfront.c_tokenizer : CToken, CTokenType;
+import cfront.c_pp_to_c : CToken, CTokenType;
 import cfront.c_ast;
 
 struct CParser {
@@ -27,11 +27,23 @@ struct CParser {
 
     void error(CToken token, str message) {
         ERROR_OCCURRED = true;
-        fprintf(stderr, "%.*s:%d:%d: Parse Error at '%.*s': %.*s\n",
-                    cast(int)token.file.length, token.file.ptr,
-                    token.line, token.column,
-                    cast(int)token.lexeme.length, token.lexeme.ptr,
-                    cast(int)message.length, message.ptr);
+        // Show expansion location first (where macro was used), then definition location
+        if (token.expansion_file.length > 0) {
+            fprintf(stderr, "%.*s:%d:%d: Parse Error at '%.*s': %.*s\n",
+                        cast(int)token.expansion_file.length, token.expansion_file.ptr,
+                        token.expansion_line, token.expansion_column,
+                        cast(int)token.lexeme.length, token.lexeme.ptr,
+                        cast(int)message.length, message.ptr);
+            fprintf(stderr, "  note: expanded from macro defined at %.*s:%d:%d\n",
+                        cast(int)token.file.length, token.file.ptr,
+                        token.line, token.column);
+        } else {
+            fprintf(stderr, "%.*s:%d:%d: Parse Error at '%.*s': %.*s\n",
+                        cast(int)token.file.length, token.file.ptr,
+                        token.line, token.column,
+                        cast(int)token.lexeme.length, token.lexeme.ptr,
+                        cast(int)message.length, message.ptr);
+        }
     }
 
     void error(str message) {
@@ -431,8 +443,8 @@ struct CParser {
                     error("Expected '*' in function pointer field");
                     return 1;
                 }
-                // Skip const after * (e.g., (*const funcptr))
-                match(CTokenType.CONST);
+                // Skip pointer qualifiers after * (e.g., (*const funcptr))
+                while (match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)) {}
                 field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
                 if (ERROR_OCCURRED) return 1;
                 consume(CTokenType.RIGHT_PAREN, "Expected ')' after field name");
@@ -584,8 +596,8 @@ struct CParser {
                     error("Expected '*' in function pointer field");
                     return 1;
                 }
-                // Skip const after * (e.g., (*const funcptr))
-                match(CTokenType.CONST);
+                // Skip pointer qualifiers after * (e.g., (*const funcptr))
+                while (match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)) {}
                 CToken field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
                 if (ERROR_OCCURRED) return 1;
                 consume(CTokenType.RIGHT_PAREN, "Expected ')' after field name");
@@ -1232,7 +1244,7 @@ struct CParser {
                         advance();  // consume '('
                         while (check(CTokenType.IDENTIFIER)) advance();
                         if (!match(CTokenType.STAR)) { error("Expected '*' in function pointer field"); return 1; }
-                        match(CTokenType.CONST);  // Skip const after * (e.g., (*const funcptr))
+                        while (match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)) {}  // Skip pointer qualifiers
                         CToken field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
                         if (ERROR_OCCURRED) return 1;
                         consume(CTokenType.RIGHT_PAREN, "Expected ')' after field name");
@@ -1332,7 +1344,7 @@ struct CParser {
             while (match(CTokenType.STAR)) {
                 struct_type = make_pointer_type(allocator, struct_type);
                 // Skip pointer qualifiers
-                while (match(CTokenType.CONST) || match(CTokenType.VOLATILE)) {}
+                while (match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)) {}
             }
 
             // Check for function pointer typedef: typedef struct X *(*name)(...)
@@ -1548,7 +1560,7 @@ struct CParser {
             while (match(CTokenType.STAR)) {
                 union_type = make_pointer_type(allocator, union_type);
                 // Skip pointer qualifiers
-                while (match(CTokenType.CONST) || match(CTokenType.VOLATILE)) {}
+                while (match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)) {}
             }
 
             CToken typedef_name = consume(CTokenType.IDENTIFIER, "Expected typedef name");
@@ -1924,7 +1936,7 @@ struct CParser {
                 }
 
                 // Skip const/volatile qualifiers between type and name (e.g., char *const name)
-                while (match(CTokenType.CONST) || match(CTokenType.VOLATILE)) {}
+                while (match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)) {}
 
                 // Parameter name is optional in declarations
                 if (check(CTokenType.IDENTIFIER)) {
@@ -1953,14 +1965,22 @@ struct CParser {
         consume(CTokenType.RIGHT_PAREN, "Expected ')' after parameters");
         if (ERROR_OCCURRED) return 1;
 
-        // Skip attributes/modifiers until we reach the semicolon
+        // Skip attributes/modifiers until we reach the semicolon or body
         // This handles __attribute__((...)), __nonnull(...), etc.
-        while (!check(CTokenType.SEMICOLON) && !at_end) {
+        while (!check(CTokenType.SEMICOLON) && !check(CTokenType.LEFT_BRACE) && !at_end) {
             if (check(CTokenType.LEFT_PAREN)) {
                 skip_balanced_parens();
             } else {
                 advance();
             }
+        }
+
+        // Handle inline function definitions with extern (from macros like __header_always_inline)
+        if (check(CTokenType.LEFT_BRACE)) {
+            // Skip the function body - we don't need to compile inline functions from headers
+            skip_balanced_braces();
+            decl.name.lexeme = "";  // Mark as skipped (inline function)
+            return 0;
         }
 
         consume(CTokenType.SEMICOLON, "Expected ';' after extern declaration");
@@ -2016,6 +2036,8 @@ struct CParser {
                     // Check for pointer
                     while (match(CTokenType.STAR)) {
                         param.type = make_pointer_type(allocator, param.type);
+                        // Skip pointer qualifiers (const, volatile, restrict)
+                        while (match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)) {}
                     }
 
                     // Check for function pointer parameter: void (*name)(params)
@@ -2074,7 +2096,7 @@ struct CParser {
                     }
 
                     // Skip const/volatile qualifiers between type and name (e.g., char *const name)
-                    while (match(CTokenType.CONST) || match(CTokenType.VOLATILE)) {}
+                    while (match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)) {}
 
                     // Parameter name is optional in declarations
                     if (check(CTokenType.IDENTIFIER)) {
@@ -2182,8 +2204,8 @@ struct CParser {
         while (check(CTokenType.STAR)) {
             advance();
             base = make_pointer_type(allocator, base);
-            // Skip pointer qualifiers (const, volatile)
-            while (match(CTokenType.CONST) || match(CTokenType.VOLATILE)) {
+            // Skip pointer qualifiers (const, volatile, restrict)
+            while (match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)) {
                 // Just skip - we don't track pointer constness
             }
         }
@@ -2201,6 +2223,18 @@ struct CParser {
                 is_const = true;
             } else if (match(CTokenType.VOLATILE)) {
                 // Skip volatile - we don't track it
+            } else if (match(CTokenType.RESTRICT)) {
+                // Skip restrict - we don't track it
+            } else if (match(CTokenType.ATOMIC)) {
+                // Skip _Atomic - handle both _Atomic T and _Atomic(T)
+                if (match(CTokenType.LEFT_PAREN)) {
+                    // _Atomic(T) - parse T and consume closing paren
+                    CType* atomic_type = parse_base_type();
+                    consume(CTokenType.RIGHT_PAREN, "Expected ')' after _Atomic type");
+                    if (ERROR_OCCURRED) return null;
+                    return atomic_type;  // Return the inner type
+                }
+                // Otherwise just _Atomic as qualifier, continue parsing
             } else if (match(CTokenType.UNSIGNED)) {
                 is_unsigned = true;
             } else if (match(CTokenType.SIGNED)) {
@@ -2258,6 +2292,9 @@ struct CParser {
         } else if (match(CTokenType.FLOAT16)) {
             // _Float16 - treat as float for now
             result = &TYPE_FLOAT;
+        } else if (match(CTokenType.BOOL)) {
+            // _Bool - treat as unsigned char for now
+            result = &TYPE_UCHAR;
         } else if (match(CTokenType.STRUCT)) {
             // struct Name or struct { ... }
             bool has_name = check(CTokenType.IDENTIFIER);
@@ -2518,7 +2555,8 @@ struct CParser {
             if (tok.type == VOID || tok.type == CHAR || tok.type == SHORT ||
                 tok.type == INT || tok.type == LONG || tok.type == FLOAT ||
                 tok.type == DOUBLE || tok.type == UNSIGNED ||
-                tok.type == SIGNED || tok.type == CONST || tok.type == STRUCT ||
+                tok.type == SIGNED || tok.type == CONST || tok.type == VOLATILE ||
+                tok.type == RESTRICT || tok.type == STRUCT ||
                 tok.type == UNION || tok.type == ENUM) {
                 return true;
             }
@@ -3075,6 +3113,17 @@ struct CParser {
         while (depth > 0 && !at_end) {
             if (check(CTokenType.LEFT_PAREN)) depth++;
             else if (check(CTokenType.RIGHT_PAREN)) depth--;
+            advance();
+        }
+    }
+
+    void skip_balanced_braces() {
+        if (!check(CTokenType.LEFT_BRACE)) return;
+        advance();  // consume '{'
+        int depth = 1;
+        while (depth > 0 && !at_end) {
+            if (check(CTokenType.LEFT_BRACE)) depth++;
+            else if (check(CTokenType.RIGHT_BRACE)) depth--;
             advance();
         }
     }

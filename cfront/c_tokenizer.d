@@ -11,6 +11,15 @@ import dlib.barray : Barray, make_barray;
 import dlib.table : Table;
 import dlib.file_util : read_file, FileResult, FileFlags;
 
+// Helper for string comparison (betterC slice == may not work correctly)
+bool str_eq(str a, str b) {
+    if (a.length != b.length) return false;
+    for (size_t i = 0; i < a.length; i++) {
+        if (a[i] != b[i]) return false;
+    }
+    return true;
+}
+
 enum CTokenType : uint {
     // Single character tokens
     LEFT_PAREN = '(', RIGHT_PAREN = ')', LEFT_BRACE = '{', RIGHT_BRACE = '}',
@@ -169,6 +178,7 @@ struct CTokenizer {
     ];
 
     bool ERROR_OCCURRED = false;
+    bool in_macro_evaluation = false;  // True during eval_macro_replacement to prevent include pops
 
     // Helper to define an object-like macro
     void define_macro(str name, str replacement) {
@@ -258,19 +268,14 @@ struct CTokenizer {
         // glibc bits/types.h support
         define_macro("__STD_TYPE", "typedef");
         define_macro("__extension__", "");
+        define_macro("inline", "");
         define_macro("__inline", "");
         define_macro("__inline__", "");
         define_macro("__restrict", "");
         define_macro("__restrict__", "");
-        define_macro("__volatile__", "");
-
-        define_macro("__signed", "signed");
-        define_macro("__signed__", "signed");
-        define_macro("__const", "const");
-        define_macro("__const__", "const");
 
         // glibc __REDIRECT macros - expand to just name proto, skip __asm__ alias
-        {
+        if(0){
             __gshared str[3] redirect_params = ["name", "proto", "alias"];
             define_func_macro("__REDIRECT", redirect_params[], "name proto");
             define_func_macro("__REDIRECT_NTH", redirect_params[], "name proto");
@@ -278,7 +283,7 @@ struct CTokenizer {
         }
 
         // Python API macros
-        {
+        if(0){
             __gshared str[1] rtype_param = ["RTYPE"];
             define_func_macro("PyAPI_FUNC", rtype_param[], "extern RTYPE");
             define_func_macro("PyAPI_DATA", rtype_param[], "extern RTYPE");
@@ -304,10 +309,6 @@ struct CTokenizer {
         define_macro("_NMMINTRIN_H_INCLUDED", "1");
         define_macro("_IMMINTRIN_H_INCLUDED", "1");
         define_macro("_AVX512FINTRIN_H_INCLUDED", "1");
-        // Skip genobject.h (uses ## token pasting in _PyGenObject_HEAD)
-        define_macro("Py_GENOBJECT_H", "1");
-        // Skip pyerrors.h (cpython/pyerrors.h uses _PyErr_StackItem before pystate.h defines it)
-        define_macro("Py_ERRORS_H", "1");
 
         // glibc type macros (from bits/typesizes.h)
         define_macro("__S16_TYPE", "short");
@@ -382,6 +383,10 @@ struct CTokenizer {
 
     bool at_end() {
         if (current >= source.length) {
+            // Don't pop include stack during macro evaluation
+            if (in_macro_evaluation) {
+                return true;
+            }
             // Try to pop include stack
             if (include_stack.count > 0) {
                 pop_include_frame();
@@ -626,8 +631,18 @@ struct CTokenizer {
             do_undef();
         } else if (directive == "include") {
             do_include();
+        } else if (directive == "error") {
+            // Get the error message and report it
+            while (peek == ' ' || peek == '\t') advance();
+            int msg_start = current;
+            skip_to_eol();
+            str msg = cast(str)source[msg_start .. current];
+            ERROR_OCCURRED = true;
+            fprintf(stderr, "%.*s:%d: #error %.*s\n",
+                    cast(int)current_file.length, current_file.ptr,
+                    line, cast(int)msg.length, msg.ptr);
         } else {
-            // Skip other preprocessor directives (error, warning, line, etc.)
+            // Skip other preprocessor directives (warning, line, etc.)
             skip_to_eol();
         }
     }
@@ -811,23 +826,31 @@ struct CTokenizer {
             push_cond(result);
         }
         else if (directive == "elif") {
-            skip_to_eol();  // For now, don't evaluate - just skip
             if (cond_stack.count == 0) {
+                skip_to_eol();
                 error("#elif without #if");
                 return;
             }
             auto top = &cond_stack[cond_stack.count - 1];
             if (top.seen_else) {
+                skip_to_eol();
                 error("#elif after #else");
                 return;
             }
             // If any previous branch was taken, skip this one
             if (top.condition_met) {
+                skip_to_eol();
                 top.currently_active = false;
             } else {
-                // TODO: evaluate #elif expression
-                // For now, treat as false
-                top.currently_active = false;
+                // Evaluate #elif expression
+                bool result = evaluate_pp_expression();
+                skip_to_eol();
+                if (result && is_parent_active()) {
+                    top.currently_active = true;
+                    top.condition_met = true;
+                } else {
+                    top.currently_active = false;
+                }
             }
         }
         else if (directive == "else") {
@@ -936,25 +959,64 @@ struct CTokenizer {
     }
 
     long eval_pp_relational() {
-        long result = eval_pp_unary();
+        long result = eval_pp_additive();
         while (true) {
             skip_pp_ws();
             if (peek == '<' && peekNext == '=') {
                 advance(); advance();
-                long right = eval_pp_unary();
+                long right = eval_pp_additive();
                 result = (result <= right) ? 1 : 0;
             } else if (peek == '>' && peekNext == '=') {
                 advance(); advance();
-                long right = eval_pp_unary();
+                long right = eval_pp_additive();
                 result = (result >= right) ? 1 : 0;
             } else if (peek == '<') {
                 advance();
-                long right = eval_pp_unary();
+                long right = eval_pp_additive();
                 result = (result < right) ? 1 : 0;
             } else if (peek == '>') {
                 advance();
-                long right = eval_pp_unary();
+                long right = eval_pp_additive();
                 result = (result > right) ? 1 : 0;
+            } else {
+                break;
+            }
+        }
+        return result;
+    }
+
+    long eval_pp_additive() {
+        long result = eval_pp_multiplicative();
+        while (true) {
+            skip_pp_ws();
+            if (peek == '+') {
+                advance();
+                result = result + eval_pp_multiplicative();
+            } else if (peek == '-') {
+                advance();
+                result = result - eval_pp_multiplicative();
+            } else {
+                break;
+            }
+        }
+        return result;
+    }
+
+    long eval_pp_multiplicative() {
+        long result = eval_pp_unary();
+        while (true) {
+            skip_pp_ws();
+            if (peek == '*') {
+                advance();
+                result = result * eval_pp_unary();
+            } else if (peek == '/') {
+                advance();
+                long right = eval_pp_unary();
+                result = (right != 0) ? result / right : 0;
+            } else if (peek == '%') {
+                advance();
+                long right = eval_pp_unary();
+                result = (right != 0) ? result % right : 0;
             } else {
                 break;
             }
@@ -1033,16 +1095,38 @@ struct CTokenizer {
             }
 
             // Check if it's a defined macro with a numeric value
-            if (MacroDef* def = name in defines) {
-                if (!def.is_undefined) {
-                    // Try to parse as number
-                    return parse_number_from_str(def.replacement);
+            // Note: Using iteration with str_eq due to betterC slice comparison bug
+            foreach (item; defines.items) {
+                if (str_eq(item.key, name) && !item.value.is_undefined) {
+                    return eval_macro_replacement(item.value.replacement);
                 }
             }
             return 0;  // Undefined identifier = 0
         }
 
         return 0;
+    }
+
+    // Evaluate a macro replacement string as a preprocessor expression
+    long eval_macro_replacement(str replacement) {
+        // Save current position
+        int saved_current = current;
+        const(ubyte)[] saved_source = source;
+        bool saved_in_macro_evaluation = in_macro_evaluation;
+
+        // Temporarily switch to evaluating the replacement
+        source = cast(const(ubyte)[])replacement;
+        current = 0;
+        in_macro_evaluation = true;  // Prevent include stack pops
+
+        long result = eval_pp_or();
+
+        // Restore
+        source = saved_source;
+        current = saved_current;
+        in_macro_evaluation = saved_in_macro_evaluation;
+
+        return result;
     }
 
     bool match_pp_word(str word) {
@@ -1370,8 +1454,14 @@ struct CTokenizer {
             case "double":   type = CTokenType.DOUBLE; break;
             case "unsigned": type = CTokenType.UNSIGNED; break;
             case "signed":   type = CTokenType.SIGNED; break;
+            case "__signed":   type = CTokenType.SIGNED; break;
+            case "__signed__":   type = CTokenType.SIGNED; break;
             case "const":    type = CTokenType.CONST; break;
+            case "__const":    type = CTokenType.CONST; break;
+            case "__const__":    type = CTokenType.CONST; break;
             case "volatile": type = CTokenType.VOLATILE; break;
+            case "__volatile": type = CTokenType.VOLATILE; break;
+            case "__volatile__": type = CTokenType.VOLATILE; break;
             case "static":   type = CTokenType.STATIC; break;
             case "extern":   type = CTokenType.EXTERN; break;
             case "struct":   type = CTokenType.STRUCT; break;
@@ -1857,8 +1947,14 @@ struct CTokenizer {
                         case "double":   type = CTokenType.DOUBLE; break;
                         case "unsigned": type = CTokenType.UNSIGNED; break;
                         case "signed":   type = CTokenType.SIGNED; break;
+                        case "__signed":   type = CTokenType.SIGNED; break;
+                        case "__signed__":   type = CTokenType.SIGNED; break;
                         case "const":    type = CTokenType.CONST; break;
+                        case "__const":    type = CTokenType.CONST; break;
+                        case "__const__":    type = CTokenType.CONST; break;
                         case "volatile": type = CTokenType.VOLATILE; break;
+                        case "__volatile": type = CTokenType.VOLATILE; break;
+                        case "__volatile__": type = CTokenType.VOLATILE; break;
                         case "static":   type = CTokenType.STATIC; break;
                         case "extern":   type = CTokenType.EXTERN; break;
                         case "struct":   type = CTokenType.STRUCT; break;

@@ -12,7 +12,7 @@ import dlib.stringbuilder : StringBuilder, P;
 import dlib.table : Table;
 import dlib.parse_numbers : parse_unsigned_human;
 
-import cfront.c_tokenizer : CToken, CTokenType;
+import cfront.c_pp_to_c : CToken, CTokenType;
 import cfront.c_ast;
 
 struct RegisterAllocator {

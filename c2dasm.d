@@ -76,7 +76,7 @@ int main(int argc, char** argv) {
     Box!(const(ubyte)[]) bscript;
     scope(exit) bscript.dealloc;
     if (sourcefile.length) {
-        auto fe = read_file(sourcefile.ptr);
+        auto fe = read_file(sourcefile.ptr, MALLOCATOR, FileFlags.NUL_TERMINATE | FileFlags.ZERO_PAD_TO_16);
         if (fe.errored) {
             version(Windows)
                 fprintf(stderr, "Unable to read from '%s'\n", sourcefile.ptr);

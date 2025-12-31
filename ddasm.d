@@ -226,7 +226,7 @@ int main(int argc, char** argv){
         static import cfront.cfront;
         Box!(char[]) dasmtext = {allocator:MALLOCATOR};
         ubyte[] data = btext.as!(ubyte[]).data;
-        int err = cfront.cfront.compile_c_to_dasm(data, &dasmtext);
+        int err = cfront.cfront.compile_c_to_dasm(data, &dasmtext, sourcefile[]);
         if(err) return err;
         btext.dealloc();
         btext = Box!str(btext.allocator, dasmtext.data);

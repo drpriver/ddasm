@@ -10,7 +10,12 @@ import dlib.box : Box;
 import dlib.stringbuilder : StringBuilder;
 import dlib.barray : Barray, make_barray;
 
-import cfront.c_tokenizer : CTokenizer, CToken;
+// New token-based preprocessor
+import cfront.c_pp_token : PPToken;
+import cfront.c_pp_lexer : pp_tokenize;
+import cfront.c_preprocessor : CPreprocessor;
+import cfront.c_pp_to_c : CToken, pp_to_c_tokens;
+
 import cfront.c_parser : CParser;
 import cfront.c_ast : CTranslationUnit;
 import cfront.c_to_dasm : CDasmWriter;
@@ -19,14 +24,31 @@ int compile_c_to_dasm(const(ubyte)[] source, Box!(char[])* progtext, str source_
     ArenaAllocator arena = ArenaAllocator(MALLOCATOR);
     scope(exit) arena.free_all();
 
-    // Tokenize
-    Barray!CToken tokens = make_barray!CToken(arena.allocator());
-    CTokenizer tokenizer = CTokenizer(source, &tokens, arena.allocator());
-    tokenizer.init();
-    tokenizer.current_file = source_file;  // Set source file for relative includes
-    int err = tokenizer.tokenize_tokens();
+    // Find actual content length (before NUL terminator, if any)
+    size_t actual_len = 0;
+    while (actual_len < source.length && source[actual_len] != 0) {
+        actual_len++;
+    }
+    const(ubyte)[] trimmed_source = source[0 .. actual_len];
+
+    // Phase 3: Tokenize source to PPTokens
+    Barray!PPToken pp_tokens = make_barray!PPToken(arena.allocator());
+    int err = pp_tokenize(trimmed_source, source_file, &pp_tokens, arena.allocator());
     if (err) return 1;
-    tokens.bdata.resize(tokens.count);
+
+    // Phase 4: Preprocess (directives, macro expansion)
+    Barray!PPToken processed = make_barray!PPToken(arena.allocator());
+    CPreprocessor preprocessor;
+    preprocessor.allocator = arena.allocator();
+    preprocessor.current_file = source_file;
+    preprocessor.init();
+    err = preprocessor.process(pp_tokens[], &processed);
+    if (err) return 1;
+
+    // Phase 5+: Convert PPTokens to CTokens
+    Barray!CToken tokens = make_barray!CToken(arena.allocator());
+    err = pp_to_c_tokens(processed[], &tokens, arena.allocator());
+    if (err) return 1;
 
     // Parse
     CParser parser = CParser(arena.allocator(), tokens[]);
