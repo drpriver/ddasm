@@ -4,7 +4,7 @@
   #include <string.h>
   #include <stdio.h>
 #pragma library("SDL2")
-  #include <SDL2/SDL.h>
+  #include </Library/Frameworks/SDL2.framework/Headers/SDL.h>
 
 void* gwindow;
 void* grenderer;
@@ -336,41 +336,50 @@ void render_and_present(int sx, int sy, int dx, int dy){
     //....................
     //....................
     //....................
-    draw_rect(renderer, 3*ww, 1*hh, ww, 3*hh);
-    draw_rect(renderer, 5*ww, 1*hh, ww, 3*hh);
-    draw_rect(renderer, 4*ww, 4*hh, ww, 2*hh);
 
-    draw_rect(renderer, 7*ww, 1*hh, ww, 5*hh);
-    draw_rect(renderer, 8*ww, 1*hh, ww, 2*hh);
-    draw_rect(renderer, 9*ww, 1*hh, ww, 5*hh);
+    // Y
+    draw_rect(renderer, 4*ww, 4*hh, ww, 3*hh);
+    draw_rect(renderer, 6*ww, 4*hh, ww, 3*hh);
+    draw_rect(renderer, 5*ww, 7*hh, ww, 2*hh);
 
-    draw_rect(renderer, 11*ww, 1*hh, ww, 5*hh);
-    draw_rect(renderer, 12*ww, 5*hh, ww, hh);
-    draw_rect(renderer, 13*ww, 1*hh, ww, 5*hh);
+    // O
+    draw_rect(renderer, 8*ww,  4*hh, ww, 5*hh);
+    draw_rect(renderer, 9*ww,  4*hh, ww, 1*hh);
+    draw_rect(renderer, 9*ww,  8*hh, ww, 1*hh);
+    draw_rect(renderer, 10*ww, 4*hh, ww, 5*hh);
 
-    draw_rect(renderer, 2*ww, 7*hh, ww, 5*hh);
-    draw_rect(renderer, 3*ww, 11*hh, ww, hh);
-    draw_rect(renderer, 4*ww, 11*hh, ww, hh);
+    // U
+    draw_rect(renderer, 12*ww, 4*hh, ww, 5*hh);
+    draw_rect(renderer, 13*ww, 8*hh, ww, hh);
+    draw_rect(renderer, 14*ww, 4*hh, ww, 5*hh);
 
-    draw_rect(renderer, 6*ww, 7*hh, ww, 5*hh);
-    draw_rect(renderer, 7*ww, 7*hh, ww, hh);
-    draw_rect(renderer, 7*ww, 11*hh, ww, hh);
-    draw_rect(renderer, 8*ww, 7*hh, ww, 5*hh);
+    // L
+    draw_rect(renderer, 2*ww, 10*hh, ww, 5*hh);
+    draw_rect(renderer, 3*ww, 14*hh, ww, hh);
+    draw_rect(renderer, 4*ww, 14*hh, ww, hh);
 
-    draw_rect(renderer, 10*ww, 7*hh, ww, 4*hh);
-    draw_rect(renderer, 11*ww, 7*hh, ww, hh);
-    draw_rect(renderer, 11*ww, 9*hh, ww, hh);
-    draw_rect(renderer, 11*ww, 11*hh, ww, hh);
-    draw_rect(renderer, 12*ww, 7*hh, ww, hh);
-    draw_rect(renderer, 12*ww, 9*hh, ww, 3*hh);
+    // O
+    draw_rect(renderer, 6*ww, 10*hh, ww, 5*hh);
+    draw_rect(renderer, 7*ww, 10*hh, ww, hh);
+    draw_rect(renderer, 7*ww, 14*hh, ww, hh);
+    draw_rect(renderer, 8*ww, 10*hh, ww, 5*hh);
 
-    draw_rect(renderer, 14*ww, 7*hh, ww, 5*hh);
-    draw_rect(renderer, 15*ww, 7*hh, ww, hh);
-    draw_rect(renderer, 15*ww, 9*hh, ww, hh);
-    draw_rect(renderer, 15*ww, 11*hh, ww, hh);
-    draw_rect(renderer, 16*ww, 7*hh, ww, hh);
-    draw_rect(renderer, 16*ww, 9*hh, ww, hh);
-    draw_rect(renderer, 16*ww, 11*hh, ww, hh);
+    // S
+    draw_rect(renderer, 10*ww, 10*hh, ww, 3*hh);
+    draw_rect(renderer, 11*ww, 10*hh, ww, hh);
+    draw_rect(renderer, 11*ww, 12*hh, ww, hh);
+    draw_rect(renderer, 10*ww, 14*hh, 2*ww, hh);
+    draw_rect(renderer, 12*ww, 10*hh, ww, hh);
+    draw_rect(renderer, 12*ww, 12*hh, ww, 3*hh);
+
+    // E
+    draw_rect(renderer, 14*ww, 10*hh, ww, 5*hh);
+    draw_rect(renderer, 15*ww, 10*hh, ww, hh);
+    draw_rect(renderer, 15*ww, 12*hh, ww, hh);
+    draw_rect(renderer, 15*ww, 14*hh, ww, hh);
+    draw_rect(renderer, 16*ww, 10*hh, ww, hh);
+    draw_rect(renderer, 16*ww, 12*hh, ww, hh);
+    draw_rect(renderer, 16*ww, 14*hh, ww, hh);
   }
   else {
     int rw = w/10;
