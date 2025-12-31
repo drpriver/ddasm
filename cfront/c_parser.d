@@ -198,10 +198,23 @@ struct CParser {
                         if (err) return err;
                         add_function(func);
                     } else {
+                        // Global variable - handle comma-separated declarations
+                        CType* base_type = unwrap_pointers(type_);
                         CGlobalVar gvar;
                         int err = parse_global_var_rest(type_, name, &gvar);
                         if (err) return err;
                         globals ~= gvar;
+                        while (match(CTokenType.COMMA)) {
+                            CType* decl_type = parse_pointer_modifiers(base_type);
+                            CToken next_name = consume(CTokenType.IDENTIFIER, "Expected variable name");
+                            if (ERROR_OCCURRED) return 1;
+                            CGlobalVar gvar2;
+                            err = parse_global_var_rest(decl_type, next_name, &gvar2);
+                            if (err) return err;
+                            globals ~= gvar2;
+                        }
+                        consume(CTokenType.SEMICOLON, "Expected ';' after variable declaration");
+                        if (ERROR_OCCURRED) return 1;
                     }
                 }
             } else if (check(CTokenType.UNION)) {
@@ -245,10 +258,23 @@ struct CParser {
                         if (err) return err;
                         add_function(func);
                     } else {
+                        // Global variable - handle comma-separated declarations
+                        CType* base_type = unwrap_pointers(type_);
                         CGlobalVar gvar;
                         int err = parse_global_var_rest(type_, name, &gvar);
                         if (err) return err;
                         globals ~= gvar;
+                        while (match(CTokenType.COMMA)) {
+                            CType* decl_type = parse_pointer_modifiers(base_type);
+                            CToken next_name = consume(CTokenType.IDENTIFIER, "Expected variable name");
+                            if (ERROR_OCCURRED) return 1;
+                            CGlobalVar gvar2;
+                            err = parse_global_var_rest(decl_type, next_name, &gvar2);
+                            if (err) return err;
+                            globals ~= gvar2;
+                        }
+                        consume(CTokenType.SEMICOLON, "Expected ';' after variable declaration");
+                        if (ERROR_OCCURRED) return 1;
                     }
                 }
             } else if (check(CTokenType.ENUM)) {
@@ -278,10 +304,23 @@ struct CParser {
                         if (err) return err;
                         add_function(func);
                     } else {
+                        // Global variable - handle comma-separated declarations
+                        CType* base_type = unwrap_pointers(type_);
                         CGlobalVar gvar;
                         int err = parse_global_var_rest(type_, name, &gvar);
                         if (err) return err;
                         globals ~= gvar;
+                        while (match(CTokenType.COMMA)) {
+                            CType* decl_type = parse_pointer_modifiers(base_type);
+                            CToken next_name = consume(CTokenType.IDENTIFIER, "Expected variable name");
+                            if (ERROR_OCCURRED) return 1;
+                            CGlobalVar gvar2;
+                            err = parse_global_var_rest(decl_type, next_name, &gvar2);
+                            if (err) return err;
+                            globals ~= gvar2;
+                        }
+                        consume(CTokenType.SEMICOLON, "Expected ';' after variable declaration");
+                        if (ERROR_OCCURRED) return 1;
                     }
                 }
             } else if (check(CTokenType.TYPEDEF)) {
@@ -367,11 +406,23 @@ struct CParser {
                         if (err) return err;
                         add_function(func);
                     } else {
-                        // It's a global variable
+                        // Global variable - handle comma-separated declarations
+                        CType* base_type = unwrap_pointers(type_);
                         CGlobalVar gvar;
                         int err = parse_global_var_rest(type_, name, &gvar);
                         if (err) return err;
                         globals ~= gvar;
+                        while (match(CTokenType.COMMA)) {
+                            CType* decl_type = parse_pointer_modifiers(base_type);
+                            CToken next_name = consume(CTokenType.IDENTIFIER, "Expected variable name");
+                            if (ERROR_OCCURRED) return 1;
+                            CGlobalVar gvar2;
+                            err = parse_global_var_rest(decl_type, next_name, &gvar2);
+                            if (err) return err;
+                            globals ~= gvar2;
+                        }
+                        consume(CTokenType.SEMICOLON, "Expected ';' after variable declaration");
+                        if (ERROR_OCCURRED) return 1;
                     }
                 }
             }
@@ -2262,9 +2313,7 @@ struct CParser {
             if (gvar.initializer is null) return 1;
         }
 
-        consume(CTokenType.SEMICOLON, "Expected ';' after global variable declaration");
-        if (ERROR_OCCURRED) return 1;
-
+        // Don't consume semicolon here - caller handles comma-separated declarations
         return 0;
     }
 
@@ -2286,6 +2335,25 @@ struct CParser {
             }
         }
 
+        return base;
+    }
+
+    // Get base type by unwrapping pointers (for comma-separated declarations)
+    static CType* unwrap_pointers(CType* t) {
+        while (t !is null && t.kind == CTypeKind.POINTER) {
+            t = t.pointed_to;
+        }
+        return t;
+    }
+
+    // Parse pointer modifiers and build pointer type
+    CType* parse_pointer_modifiers(CType* base) {
+        while (check(CTokenType.STAR)) {
+            advance();
+            base = make_pointer_type(allocator, base);
+            // Skip pointer qualifiers
+            while (match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)) {}
+        }
         return base;
     }
 
