@@ -32,7 +32,7 @@ int start(){
   void* js = PyObject_CallFunction(loads, "s", 3+"abc[1,2,3]");
   void* ret = PyObject_CallFunction(print, "N", js);
   Py_DecRef(ret);
-  char* code = "print('hello from python')";
+  char* code = "print('hello from python');import sys;print(f'{sys.version=}')";
   if(PyRun_SimpleString(code) == -1){
     PyErr_Print();
   }
