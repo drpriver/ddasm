@@ -107,6 +107,33 @@ struct CType {
         }
     }
 
+    // Get alignment in bytes
+    size_t align_of() {
+        final switch (kind) {
+            case CTypeKind.VOID:     return 1;
+            case CTypeKind.CHAR:     return 1;
+            case CTypeKind.SHORT:    return 2;
+            case CTypeKind.INT:      return 4;
+            case CTypeKind.LONG:     return 8;
+            case CTypeKind.INT128:   return 16;
+            case CTypeKind.FLOAT:    return 4;
+            case CTypeKind.DOUBLE:   return 8;
+            case CTypeKind.POINTER:  return 8;
+            case CTypeKind.ARRAY:    return pointed_to ? pointed_to.align_of() : 1;
+            case CTypeKind.FUNCTION: return 8;
+            case CTypeKind.STRUCT:
+            case CTypeKind.UNION:
+                // Alignment is max alignment of all fields
+                size_t max_align = 1;
+                foreach (ref f; fields) {
+                    size_t a = f.type.align_of();
+                    if (a > max_align) max_align = a;
+                }
+                return max_align;
+            case CTypeKind.ENUM:     return 4;
+        }
+    }
+
     // Get element size for pointer arithmetic
     size_t element_size() {
         if ((kind == CTypeKind.POINTER || kind == CTypeKind.ARRAY) && pointed_to) {
@@ -260,6 +287,8 @@ enum CExprKind {
     MEMBER_ACCESS,
     ASSIGN,
     SIZEOF,
+    ALIGNOF,
+    VA_ARG,
     GROUPING,
     TERNARY,
     INIT_LIST,
@@ -328,6 +357,19 @@ struct CLiteral {
         result.value = t;
         return &result.expr;
     }
+
+    // Create a synthetic integer literal
+    static CExpr* make_int(Allocator a, long val, CToken tok) {
+        auto data = a.zalloc(typeof(this).sizeof);
+        auto result = cast(typeof(this)*)data.ptr;
+        result.expr.kind = CExprKind.LITERAL;
+        result.expr.token = tok;
+        result.expr.type = &TYPE_INT;
+        result.value = tok;
+        result.value.lexeme = "0";  // Will be ignored, we use token type
+        result.value.type = CTokenType.NUMBER;
+        return &result.expr;
+    }
 }
 
 struct CSizeof {
@@ -357,6 +399,54 @@ struct CSizeof {
         result.sizeof_type = null;
         result.sizeof_expr = e;
         result.size = 0;  // Will be computed during codegen
+        return &result.expr;
+    }
+}
+
+struct CAlignof {
+    CExpr expr;
+    CType* alignof_type;   // If _Alignof(type)
+    CExpr* alignof_expr;   // If _Alignof(expr) (GNU extension)
+    size_t alignment;      // Precomputed alignment (if known)
+
+    static CExpr* make(Allocator a, CType* t, size_t align_, CToken tok) {
+        auto data = a.zalloc(typeof(this).sizeof);
+        auto result = cast(typeof(this)*)data.ptr;
+        result.expr.kind = CExprKind.ALIGNOF;
+        result.expr.token = tok;
+        result.expr.type = &TYPE_LONG;  // _Alignof returns size_t
+        result.alignof_type = t;
+        result.alignof_expr = null;
+        result.alignment = align_;
+        return &result.expr;
+    }
+
+    static CExpr* make_expr(Allocator a, CExpr* e, CToken tok) {
+        auto data = a.zalloc(typeof(this).sizeof);
+        auto result = cast(typeof(this)*)data.ptr;
+        result.expr.kind = CExprKind.ALIGNOF;
+        result.expr.token = tok;
+        result.expr.type = &TYPE_LONG;
+        result.alignof_type = null;
+        result.alignof_expr = e;
+        result.alignment = 0;  // Will be computed during codegen
+        return &result.expr;
+    }
+}
+
+struct CVaArg {
+    CExpr expr;
+    CExpr* va_list_expr;   // The va_list argument
+    CType* arg_type;       // The type to extract
+
+    static CExpr* make(Allocator a, CExpr* va_list_, CType* type, CToken tok) {
+        auto data = a.zalloc(typeof(this).sizeof);
+        auto result = cast(typeof(this)*)data.ptr;
+        result.expr.kind = CExprKind.VA_ARG;
+        result.expr.token = tok;
+        result.expr.type = type;
+        result.va_list_expr = va_list_;
+        result.arg_type = type;
         return &result.expr;
     }
 }
@@ -491,12 +581,38 @@ struct CTernary {
     }
 }
 
-// (6.7.9) initializer-list: { initializer, initializer, ... }
+// =============================================================================
+// Designated Initializers (C2y §6.7.11)
+// =============================================================================
+//
+// (6.7.11) designator:
+//     [ constant-expression ]
+//     . identifier
+
+enum CDesignatorKind {
+    FIELD,  // .identifier
+    INDEX,  // [constant-expression]
+}
+
+struct CDesignator {
+    CDesignatorKind kind;
+    str field_name;      // for FIELD
+    long index_value;    // for INDEX (evaluated constant)
+    CToken token;
+}
+
+// Element in an initializer list, with optional designators
+struct CInitElement {
+    CDesignator[] designators;  // empty if positional
+    CExpr* value;               // the initializer value
+}
+
+// (6.7.11) braced-initializer: { } | { initializer-list } | { initializer-list , }
 struct CInitList {
     CExpr expr;
-    CExpr*[] elements;
+    CInitElement[] elements;
 
-    static CExpr* make(Allocator a, CExpr*[] elems, CToken tok) {
+    static CExpr* make(Allocator a, CInitElement[] elems, CToken tok) {
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.INIT_LIST;

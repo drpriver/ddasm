@@ -261,11 +261,7 @@ void main_loop(void){
 }
 
 void draw_rect(void* renderer, int x, int y, int w, int h){
-    SDL_Rect r;
-    r.x = x;
-    r.y = y;
-    r.w = w;
-    r.h = h;
+    SDL_Rect r = {x, y, w, h};
     SDL_RenderFillRect(renderer, &r);
 }
 

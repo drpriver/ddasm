@@ -1,7 +1,12 @@
 // Test <stdnoreturn.h> - Noreturn macro (C11)
-// SKIP: _Noreturn not supported
 #include <stdnoreturn.h>
+#include <stdlib.h>
 
-int test_noreturn(void) {
-    return 0;
+noreturn void die(void) {
+    exit(1);
+}
+
+int test_noreturn(int x) {
+    if (x < 0) die();
+    return x;
 }

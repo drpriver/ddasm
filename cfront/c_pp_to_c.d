@@ -83,6 +83,8 @@ enum CTokenType : uint {
     INLINE = 626,
     INT128 = 627,
     UINT128 = 628,
+    NORETURN = 629,
+    ALIGNOF = 630,
 
     // Control flow keywords
     IF = 700,
@@ -314,15 +316,21 @@ struct PPToCConverter {
             if (str_eq(name, "default")) return CTokenType.DEFAULT;
             if (str_eq(name, "__asm__")) return CTokenType.ASM;
             if (str_eq(name, "_Atomic")) return CTokenType.ATOMIC;
+            if (str_eq(name, "alignof")) return CTokenType.ALIGNOF;
         }
         if (name.length == 8) {
             if (str_eq(name, "unsigned")) return CTokenType.UNSIGNED;
             if (str_eq(name, "volatile")) return CTokenType.VOLATILE;
             if (str_eq(name, "continue")) return CTokenType.CONTINUE;
+            if (str_eq(name, "_Alignof")) return CTokenType.ALIGNOF;
+            if (str_eq(name, "noreturn")) return CTokenType.NORETURN;
             if (str_eq(name, "register")) return CTokenType.REGISTER;
             if (str_eq(name, "restrict")) return CTokenType.RESTRICT;
             if (str_eq(name, "_Float16")) return CTokenType.FLOAT16;
             if (str_eq(name, "__inline")) return CTokenType.INLINE;
+        }
+        if (name.length == 9) {
+            if (str_eq(name, "_Noreturn")) return CTokenType.NORETURN;
         }
         if (name.length == 10) {
             if (str_eq(name, "__restrict")) return CTokenType.RESTRICT;

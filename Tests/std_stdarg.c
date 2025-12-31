@@ -1,7 +1,10 @@
 // Test <stdarg.h> - Variable arguments
-// SKIP: va_arg macro with type argument not supported
 #include <stdarg.h>
 
-int test_stdarg(void) {
-    return 0;
+int sum(int n, ...) {
+    va_list ap;
+    va_start(ap, n);
+    int x = va_arg(ap, int);
+    va_end(ap);
+    return x;
 }

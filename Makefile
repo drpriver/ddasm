@@ -1,4 +1,4 @@
-OPT?=-O3 -g
+OPT?=-O0 -g
 
 Bin: ; mkdir $@
 Deps: ; mkdir $@
@@ -27,5 +27,9 @@ all: ds2dasm ddasm c2dasm cpp
 .PHONY: clean
 clean:
 	$(RM) $(wildcard Bin/*)
+
+.PHONY: tests
+tests:
+	bash Tests/run_tests.sh
 
 .DEFAULT_GOAL:= all
