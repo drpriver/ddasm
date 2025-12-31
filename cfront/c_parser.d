@@ -1060,7 +1060,7 @@ struct CParser {
             return result;
         }
 
-        // sizeof(type) in constant expression
+        // sizeof(type) or sizeof(expr) in constant expression
         if (match(CTokenType.SIZEOF)) {
             consume(CTokenType.LEFT_PAREN, "Expected '(' after sizeof");
             if (ERROR_OCCURRED) {
@@ -1068,25 +1068,200 @@ struct CParser {
                 return result;
             }
 
-            CType* type = parse_type();
-            if (type is null) {
-                result.err = true;
+            // Check if it's sizeof(type) or sizeof(expr)
+            if (is_type_specifier(peek())) {
+                // sizeof(type)
+                CType* type = parse_type();
+                if (type is null) {
+                    result.err = true;
+                    return result;
+                }
+
+                consume(CTokenType.RIGHT_PAREN, "Expected ')' after type");
+                if (ERROR_OCCURRED) {
+                    result.err = true;
+                    return result;
+                }
+
+                result.value = cast(long) type.size_of();
+                return result;
+            } else {
+                // sizeof(expr) - parse expression and infer its type
+                CType* expr_type = parse_sizeof_expr_type();
+                if (expr_type is null) {
+                    result.err = true;
+                    return result;
+                }
+
+                consume(CTokenType.RIGHT_PAREN, "Expected ')' after sizeof expression");
+                if (ERROR_OCCURRED) {
+                    result.err = true;
+                    return result;
+                }
+
+                result.value = cast(long) expr_type.size_of();
                 return result;
             }
-
-            consume(CTokenType.RIGHT_PAREN, "Expected ')' after type");
-            if (ERROR_OCCURRED) {
-                result.err = true;
-                return result;
-            }
-
-            result.value = cast(long) type.size_of();
-            return result;
         }
 
         error("Expected constant value in enum expression");
         result.err = true;
         return result;
+    }
+
+    // Parse expression inside sizeof() and return its type
+    // Handles patterns like: ((Type*)0)->member, arr[0], etc.
+    CType* parse_sizeof_expr_type() {
+        return parse_sizeof_cast_or_primary();
+    }
+
+    // Parse a cast expression or primary expression for sizeof
+    CType* parse_sizeof_cast_or_primary() {
+        CType* current_type = null;
+
+        // Handle leading parentheses
+        if (match(CTokenType.LEFT_PAREN)) {
+            // Check if this is a cast: (type)
+            if (is_type_specifier(peek())) {
+                CType* cast_type = parse_type();
+                if (cast_type is null) return null;
+
+                consume(CTokenType.RIGHT_PAREN, "Expected ')' after cast type");
+                if (ERROR_OCCURRED) return null;
+
+                // After a cast, we have the value being cast - skip it
+                // and the result type is the cast type
+                skip_sizeof_value();
+                current_type = cast_type;
+            } else {
+                // Parenthesized expression - recurse
+                CType* inner = parse_sizeof_cast_or_primary();
+                if (inner is null) return null;
+
+                // Handle postfix operations inside the parens
+                inner = parse_sizeof_postfix(inner);
+                if (inner is null) return null;
+
+                consume(CTokenType.RIGHT_PAREN, "Expected ')'");
+                if (ERROR_OCCURRED) return null;
+
+                current_type = inner;
+            }
+        } else {
+            // Primary expression (identifier, number, etc.)
+            if (check(CTokenType.IDENTIFIER)) {
+                CToken id = advance();
+                // Look up variable type - for now just return int
+                current_type = &TYPE_INT;
+            } else if (check(CTokenType.NUMBER) || check(CTokenType.HEX)) {
+                advance();
+                current_type = &TYPE_INT;
+            } else {
+                error("Expected expression in sizeof");
+                return null;
+            }
+        }
+
+        // Handle postfix operations
+        return parse_sizeof_postfix(current_type);
+    }
+
+    // Skip a value expression (for the value being cast)
+    void skip_sizeof_value() {
+        // Skip balanced parens or simple tokens until we hit a postfix operator or end
+        if (check(CTokenType.LEFT_PAREN)) {
+            skip_balanced_parens();
+        } else {
+            // Skip simple token (number, identifier, etc.)
+            if (check(CTokenType.IDENTIFIER) || check(CTokenType.NUMBER) || check(CTokenType.HEX)) {
+                advance();
+            }
+        }
+    }
+
+    // Parse postfix operations for sizeof expression type
+    CType* parse_sizeof_postfix(CType* current_type) {
+        if (current_type is null) return null;
+
+        // Handle postfix operations: ->member, .member, [index]
+        while (true) {
+            if (match(CTokenType.ARROW)) {
+                // Dereference pointer and access member
+                if (current_type.kind != CTypeKind.POINTER) {
+                    error("Arrow operator requires pointer type");
+                    return null;
+                }
+                CType* pointed = current_type.pointed_to;
+                if (pointed is null || (pointed.kind != CTypeKind.STRUCT && pointed.kind != CTypeKind.UNION)) {
+                    error("Arrow operator requires pointer to struct/union");
+                    return null;
+                }
+
+                CToken member = consume(CTokenType.IDENTIFIER, "Expected member name after ->");
+                if (ERROR_OCCURRED) return null;
+
+                // Look up member in struct/union
+                CType* member_type = null;
+                foreach (ref field; pointed.fields) {
+                    if (field.name == member.lexeme) {
+                        member_type = field.type;
+                        break;
+                    }
+                }
+                if (member_type is null) {
+                    error(member, "Unknown struct/union member");
+                    return null;
+                }
+                current_type = member_type;
+            } else if (match(CTokenType.DOT)) {
+                // Direct member access
+                if (current_type.kind != CTypeKind.STRUCT && current_type.kind != CTypeKind.UNION) {
+                    error("Dot operator requires struct/union type");
+                    return null;
+                }
+
+                CToken member = consume(CTokenType.IDENTIFIER, "Expected member name after .");
+                if (ERROR_OCCURRED) return null;
+
+                // Look up member in struct/union
+                CType* member_type = null;
+                foreach (ref field; current_type.fields) {
+                    if (field.name == member.lexeme) {
+                        member_type = field.type;
+                        break;
+                    }
+                }
+                if (member_type is null) {
+                    error(member, "Unknown struct/union member");
+                    return null;
+                }
+                current_type = member_type;
+            } else if (match(CTokenType.LEFT_BRACKET)) {
+                // Array subscript
+                if (current_type.kind == CTypeKind.POINTER) {
+                    current_type = current_type.pointed_to;
+                } else if (current_type.kind == CTypeKind.ARRAY) {
+                    current_type = current_type.pointed_to;
+                } else {
+                    error("Subscript requires array or pointer type");
+                    return null;
+                }
+
+                // Skip the index expression
+                int depth = 1;
+                while (depth > 0 && !at_end) {
+                    if (check(CTokenType.LEFT_BRACKET)) depth++;
+                    else if (check(CTokenType.RIGHT_BRACKET)) depth--;
+                    if (depth > 0) advance();
+                }
+                consume(CTokenType.RIGHT_BRACKET, "Expected ']'");
+                if (ERROR_OCCURRED) return null;
+            } else {
+                break;
+            }
+        }
+
+        return current_type;
     }
 
     int parse_enum_def(CEnumDef* edef) {

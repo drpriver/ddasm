@@ -67,6 +67,9 @@ struct CPreprocessor {
         version(OSX) {
             define_object_macro("__APPLE__", "1");
             define_object_macro("__MACH__", "1");
+            define_object_macro("__APPLE_CC__", "1");  // For TargetConditionals.h
+            define_object_macro("MAC_OS_X_VERSION_MIN_REQUIRED", "110000");  // macOS 11.0
+            define_object_macro("MAC_OS_X_VERSION_MAX_ALLOWED", "150000");  // macOS 15.0
         } else version(linux) {
             define_object_macro("__linux__", "1");
             define_object_macro("__linux", "1");
@@ -932,13 +935,9 @@ struct CPreprocessor {
             if (tok.type == PPTokenType.PP_IDENTIFIER) {
                 PPMacroDef* macro_def = get_macro(tok.lexeme);
                 if (macro_def !is null && !macro_def.is_function_like) {
-                    // Expand object-like macro
-                    foreach (rep_tok; macro_def.replacement) {
-                        if (rep_tok.type != PPTokenType.PP_WHITESPACE) {
-                            *output ~= rep_tok;
-                        }
-                    }
+                    // Expand object-like macro and recursively process
                     i++;
+                    expand_for_if(macro_def.replacement, output);
                     continue;
                 }
                 // Handle function-like macros
@@ -1037,6 +1036,12 @@ struct CPreprocessor {
             Barray!PPToken substituted = make_barray!PPToken(allocator);
             substitute(macro_def, args[], hs, &substituted);
 
+            // Set expansion location on all substituted tokens so nested macros
+            // have the right invocation point
+            foreach (ref tok; substituted[]) {
+                tok = with_expansion_loc(tok, invocation);
+            }
+
             // Rescan for more macros
             size_t j = 0;
             while (j < substituted.count) {
@@ -1048,7 +1053,7 @@ struct CPreprocessor {
                         continue;
                     }
                 }
-                *output ~= with_expansion_loc(tok, invocation);
+                *output ~= tok;  // Already has expansion_loc set
                 j++;
             }
 
@@ -1057,7 +1062,9 @@ struct CPreprocessor {
             // Object-like macro
             Barray!PPToken substituted = make_barray!PPToken(allocator);
             foreach (tok; macro_def.replacement) {
-                substituted ~= tok;
+                // Set expansion location on replacement tokens so nested macros
+                // have the right invocation point
+                substituted ~= with_expansion_loc(tok, invocation);
             }
 
             // Rescan for more macros
@@ -1071,7 +1078,7 @@ struct CPreprocessor {
                         continue;
                     }
                 }
-                *output ~= with_expansion_loc(tok, invocation);
+                *output ~= tok;  // Already has expansion_loc set
                 j++;
             }
 
@@ -1122,7 +1129,14 @@ struct CPreprocessor {
                         if (tok.type == PPTokenType.PP_IDENTIFIER) {
                             int param_idx = macro_def.find_param(tok.lexeme);
                             if (param_idx >= 0 && param_idx < args.length && args[param_idx].length > 0) {
-                                left = args[param_idx][$ - 1];  // Last token of arg
+                                // Get last non-whitespace token
+                                PPToken[] arg = args[param_idx];
+                                for (size_t ai = arg.length; ai > 0; ai--) {
+                                    if (arg[ai - 1].type != PPTokenType.PP_WHITESPACE) {
+                                        left = arg[ai - 1];
+                                        break;
+                                    }
+                                }
                             }
                         }
 
@@ -1131,7 +1145,14 @@ struct CPreprocessor {
                         if (right.type == PPTokenType.PP_IDENTIFIER) {
                             int param_idx = macro_def.find_param(right.lexeme);
                             if (param_idx >= 0 && param_idx < args.length && args[param_idx].length > 0) {
-                                right = args[param_idx][0];  // First token of arg
+                                // Get first non-whitespace token
+                                PPToken[] arg = args[param_idx];
+                                foreach (argtok; arg) {
+                                    if (argtok.type != PPTokenType.PP_WHITESPACE) {
+                                        right = argtok;
+                                        break;
+                                    }
+                                }
                             }
                         }
 
