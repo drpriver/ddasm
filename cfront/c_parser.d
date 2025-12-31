@@ -483,11 +483,18 @@ struct CParser {
         consume(CTokenType.SEMICOLON, "Expected ';' after struct definition");
         if (ERROR_OCCURRED) return 1;
 
-        // Create the struct type
-        CType* struct_type = make_struct_type(allocator, name.lexeme, fields[], total_size);
-
-        // Register the struct type
-        struct_types[name.lexeme] = struct_type;
+        // Check if there's an existing forward-declared type to update
+        CType* struct_type;
+        if (auto existing = name.lexeme in struct_types) {
+            // Update existing type in-place so typedefs continue to work
+            struct_type = *existing;
+            struct_type.fields = fields[];
+            struct_type.struct_size = total_size;
+        } else {
+            // Create new struct type
+            struct_type = make_struct_type(allocator, name.lexeme, fields[], total_size);
+            struct_types[name.lexeme] = struct_type;
+        }
 
         sdef.name = name;
         sdef.struct_type = struct_type;
@@ -517,11 +524,18 @@ struct CParser {
         consume(CTokenType.SEMICOLON, "Expected ';' after union definition");
         if (ERROR_OCCURRED) return 1;
 
-        // Create the union type
-        CType* union_type = make_union_type(allocator, name.lexeme, fields[], max_size);
-
-        // Register the union type
-        union_types[name.lexeme] = union_type;
+        // Check if there's an existing forward-declared type to update
+        CType* union_type;
+        if (auto existing = name.lexeme in union_types) {
+            // Update existing type in-place so typedefs continue to work
+            union_type = *existing;
+            union_type.fields = fields[];
+            union_type.struct_size = max_size;
+        } else {
+            // Create new union type
+            union_type = make_union_type(allocator, name.lexeme, fields[], max_size);
+            union_types[name.lexeme] = union_type;
+        }
 
         udef.name = name;
         udef.union_type = union_type;
@@ -1214,11 +1228,19 @@ struct CParser {
                 consume(CTokenType.RIGHT_BRACE, "Expected '}'");
                 if (ERROR_OCCURRED) return 1;
 
-                struct_type = make_struct_type(allocator, has_name ? struct_name.lexeme : "", fields[], total_size);
-
-                // If named, also register as struct type
+                // Check if there's an existing forward-declared type to update
                 if (has_name) {
-                    struct_types[struct_name.lexeme] = struct_type;
+                    if (auto existing = struct_name.lexeme in struct_types) {
+                        // Update existing type in-place so typedefs continue to work
+                        struct_type = *existing;
+                        struct_type.fields = fields[];
+                        struct_type.struct_size = total_size;
+                    } else {
+                        struct_type = make_struct_type(allocator, struct_name.lexeme, fields[], total_size);
+                        struct_types[struct_name.lexeme] = struct_type;
+                    }
+                } else {
+                    struct_type = make_struct_type(allocator, "", fields[], total_size);
                 }
             } else {
                 // Just referencing existing struct
@@ -1365,10 +1387,19 @@ struct CParser {
                 consume(CTokenType.RIGHT_BRACE, "Expected '}'");
                 if (ERROR_OCCURRED) return 1;
 
-                union_type = make_union_type(allocator, has_name ? union_name.lexeme : "", fields[], max_size);
-
+                // Check if there's an existing forward-declared type to update
                 if (has_name) {
-                    union_types[union_name.lexeme] = union_type;
+                    if (auto existing = union_name.lexeme in union_types) {
+                        // Update existing type in-place so typedefs continue to work
+                        union_type = *existing;
+                        union_type.fields = fields[];
+                        union_type.struct_size = max_size;
+                    } else {
+                        union_type = make_union_type(allocator, union_name.lexeme, fields[], max_size);
+                        union_types[union_name.lexeme] = union_type;
+                    }
+                } else {
+                    union_type = make_union_type(allocator, "", fields[], max_size);
                 }
             } else {
                 if (!has_name) {
@@ -2626,10 +2657,19 @@ struct CParser {
                 consume(CTokenType.RIGHT_BRACE, "Expected '}'");
                 if (ERROR_OCCURRED) return null;
 
-                result = make_struct_type(allocator, has_name ? struct_name.lexeme : "", fields[], total_size);
-
+                // Check if there's an existing forward-declared type to update
                 if (has_name) {
-                    struct_types[struct_name.lexeme] = result;
+                    if (auto existing = struct_name.lexeme in struct_types) {
+                        // Update existing type in-place so typedefs continue to work
+                        result = *existing;
+                        result.fields = fields[];
+                        result.struct_size = total_size;
+                    } else {
+                        result = make_struct_type(allocator, struct_name.lexeme, fields[], total_size);
+                        struct_types[struct_name.lexeme] = result;
+                    }
+                } else {
+                    result = make_struct_type(allocator, "", fields[], total_size);
                 }
             } else {
                 // Just a reference - need name
@@ -2719,10 +2759,19 @@ struct CParser {
                 consume(CTokenType.RIGHT_BRACE, "Expected '}'");
                 if (ERROR_OCCURRED) return null;
 
-                result = make_union_type(allocator, has_name ? union_name.lexeme : "", fields[], max_size);
-
+                // Check if there's an existing forward-declared type to update
                 if (has_name) {
-                    union_types[union_name.lexeme] = result;
+                    if (auto existing = union_name.lexeme in union_types) {
+                        // Update existing type in-place so typedefs continue to work
+                        result = *existing;
+                        result.fields = fields[];
+                        result.struct_size = max_size;
+                    } else {
+                        result = make_union_type(allocator, union_name.lexeme, fields[], max_size);
+                        union_types[union_name.lexeme] = result;
+                    }
+                } else {
+                    result = make_union_type(allocator, "", fields[], max_size);
                 }
             } else {
                 // Just a reference - need name
@@ -3581,13 +3630,17 @@ struct CParser {
         return expr;
     }
 
+    // (6.5.2) argument-expression-list:
+    //     assignment-expression
+    //     argument-expression-list , assignment-expression
     CExpr* finish_call(CExpr* callee) {
         CToken paren = previous();
         auto args = make_barray!(CExpr*)(allocator);
 
         if (!check(CTokenType.RIGHT_PAREN)) {
             do {
-                CExpr* arg = parse_expression();
+                // Use parse_assignment, not parse_expression, to avoid comma operator
+                CExpr* arg = parse_assignment();
                 if (arg is null) return null;
                 args ~= arg;
             } while (match(CTokenType.COMMA));

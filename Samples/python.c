@@ -3,39 +3,45 @@
   #include <stdio.h>
 #ifdef __APPLE__
   #pragma library("python")
-     // FIXME: framework include handling
-     #include "/Library/Frameworks/Python.framework/Headers/Python.h"
+     #include <Python/Python.h>
 #elif defined(__linux__)
   #pragma library("python3.8")
     #include <python3.8/Python.h>
 #endif
 
-void* pyimport(char* name){
-    void* pystr = PyUnicode_FromString(name);
+PyObject* pyimport(char* name){
+    PyObject* pystr = PyUnicode_FromString(name);
     if(!pystr) abort();
-    void* imp = PyImport_Import(pystr);
+    PyObject* imp = PyImport_Import(pystr);
     if(!imp) abort();
     Py_DecRef(pystr);
     return imp;
 }
-void* get(void* obj, char* key){
+PyObject* get(PyObject* obj, char* key){
   return PyObject_GetAttrString(obj, key);
 }
+#ifndef Py_DECREF
+#error "no Py_DECREF"
+#endif
 
-int start(){
+int main(){
   printf("hello world\n");
   Py_Initialize();
-  void* json = pyimport("json");
-  void* loads = get(json, "loads");
-  void* builtins = pyimport("builtins");
-  void* print = get(builtins, "print");
-  void* js = PyObject_CallFunction(loads, "s", 3+"abc[1,2,3]");
-  void* ret = PyObject_CallFunction(print, "N", js);
+  PyObject* json = pyimport("json");
+  PyObject* loads = get(json, "loads");
+  PyObject* builtins = pyimport("builtins");
+  PyObject* print = get(builtins, "print");
+  PyObject* js = PyObject_CallFunction(loads, "s", 3+"abc[1,2,3]");
+  PyObject* ret = PyObject_CallFunction(print, "N", js); // steals ref
   Py_DecRef(ret);
+  Py_DECREF(print);
+  Py_DECREF(builtins);
+  Py_DECREF(loads);
+  Py_DECREF(json);
   char* code = "print('hello from python');import sys;print(f'{sys.version=}')";
   if(PyRun_SimpleString(code) == -1){
     PyErr_Print();
   }
   Py_Finalize();
-  return;
+  return 0;
 }
