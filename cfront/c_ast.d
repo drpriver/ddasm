@@ -670,14 +670,6 @@ struct CFunction {
     str library;         // From #pragma library (for declarations)
 }
 
-struct CExternDecl {
-    CToken name;
-    CType* return_type;
-    CParam[] params;
-    bool is_varargs;
-    str library;  // From #pragma library
-}
-
 struct CGlobalVar {
     CToken name;
     CType* var_type;
@@ -702,7 +694,6 @@ struct CEnumDef {
 
 struct CTranslationUnit {
     CFunction[] functions;
-    CExternDecl[] externs;
     CGlobalVar[] globals;
     CStructDef[] structs;
     CUnionDef[] unions;
