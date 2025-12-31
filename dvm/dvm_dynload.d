@@ -1,7 +1,7 @@
 /*
  * Copyright © 2025, David Priver
  */
-module dvm_modules.dynload;
+module dvm.dvm_dynload;
 
 import core.stdc.stdio: fprintf, stderr, snprintf;
 import core.stdc.string: strlen, memcpy;

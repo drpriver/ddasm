@@ -320,7 +320,7 @@ int main(int argc, char** argv){
             }
         }
         // Load dynamic libraries from dlimport declarations
-        import dvm_modules.dynload;
+        import dvm.dvm_dynload;
         import cfront.cfront : DEFAULT_LIBRARY_PATHS, DEFAULT_FRAMEWORK_PATHS;
         foreach (p; DEFAULT_LIBRARY_PATHS)
             lib_paths ~= p;
