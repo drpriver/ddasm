@@ -27,7 +27,7 @@ struct CPreprocessor {
     // Include handling
     Barray!PPIncludeFrame include_stack;
     Table!(str, bool) pragma_once_files;
-    Table!(str, bool) include_guards;
+    Table!(str, str) include_guards;  // filename -> guard macro name
     str[] include_paths;
     str current_file;
 
@@ -676,9 +676,16 @@ struct CPreprocessor {
             return line_end + 1;
         }
 
-        // Check for already included (include guard or pragma once)
+        // Check for already included (pragma once)
         foreach (item; pragma_once_files.items) {
             if (str_eq(item.key, full_path)) {
+                return line_end + 1;
+            }
+        }
+
+        // Check for include guard - if we know the guard macro and it's defined, skip
+        if (str* guard = full_path in include_guards) {
+            if (is_defined(*guard)) {
                 return line_end + 1;
             }
         }
@@ -710,6 +717,13 @@ struct CPreprocessor {
         // Remove EOF token from included file (if present)
         if (include_tokens.count > 0 && include_tokens[include_tokens.count - 1].type == PPTokenType.PP_EOF) {
             include_tokens.count--;
+        }
+
+        // Detect and record include guard pattern before processing
+        // (must detect before processing since #define will modify macro table)
+        str guard = detect_include_guard(include_tokens[]);
+        if (guard.length > 0) {
+            include_guards[full_path] = guard;
         }
 
         // Save current file
@@ -789,6 +803,86 @@ struct CPreprocessor {
         path_buf.nul_terminate();
         FileResult fr = read_file(path_buf.borrow().ptr, allocator, FileFlags.NONE);
         return !fr.errored;
+    }
+
+    // Detect include guard pattern: #ifndef GUARD / #define GUARD ... #endif
+    // Returns the guard macro name if detected, or empty string if not
+    str detect_include_guard(PPToken[] tokens) {
+        if (tokens.length == 0) return "";
+
+        size_t i = 0;
+
+        // Skip leading whitespace/newlines
+        while (i < tokens.length && (tokens[i].type == PPTokenType.PP_WHITESPACE ||
+                                      tokens[i].type == PPTokenType.PP_NEWLINE)) i++;
+
+        // Must start with #
+        if (i >= tokens.length || tokens[i].type != PPTokenType.PP_PUNCTUATOR ||
+            tokens[i].lexeme != "#") return "";
+        i++;
+
+        // Skip whitespace
+        while (i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+
+        // Must be "ifndef"
+        if (i >= tokens.length || tokens[i].type != PPTokenType.PP_IDENTIFIER ||
+            !str_eq(tokens[i].lexeme, "ifndef")) return "";
+        i++;
+
+        // Skip whitespace
+        while (i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+
+        // Get guard macro name
+        if (i >= tokens.length || tokens[i].type != PPTokenType.PP_IDENTIFIER) return "";
+        str guard_name = tokens[i].lexeme;
+        i++;
+
+        // Skip to next line
+        while (i < tokens.length && tokens[i].type != PPTokenType.PP_NEWLINE) i++;
+        if (i < tokens.length) i++; // skip newline
+
+        // Skip whitespace
+        while (i < tokens.length && (tokens[i].type == PPTokenType.PP_WHITESPACE ||
+                                      tokens[i].type == PPTokenType.PP_NEWLINE)) i++;
+
+        // Must have # define GUARD_NAME
+        if (i >= tokens.length || tokens[i].type != PPTokenType.PP_PUNCTUATOR ||
+            tokens[i].lexeme != "#") return "";
+        i++;
+
+        while (i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+
+        if (i >= tokens.length || tokens[i].type != PPTokenType.PP_IDENTIFIER ||
+            !str_eq(tokens[i].lexeme, "define")) return "";
+        i++;
+
+        while (i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+
+        if (i >= tokens.length || tokens[i].type != PPTokenType.PP_IDENTIFIER ||
+            !str_eq(tokens[i].lexeme, guard_name)) return "";
+
+        // Now check that file ends with #endif (possibly with trailing whitespace/newlines)
+        size_t j = tokens.length;
+        while (j > 0) {
+            j--;
+            if (tokens[j].type != PPTokenType.PP_WHITESPACE &&
+                tokens[j].type != PPTokenType.PP_NEWLINE &&
+                tokens[j].type != PPTokenType.PP_EOF) break;
+        }
+
+        // Should be "endif"
+        if (tokens[j].type != PPTokenType.PP_IDENTIFIER ||
+            !str_eq(tokens[j].lexeme, "endif")) return "";
+        if (j == 0) return "";
+        j--;
+
+        // Skip whitespace before endif
+        while (j > 0 && tokens[j].type == PPTokenType.PP_WHITESPACE) j--;
+
+        // Should be #
+        if (tokens[j].type != PPTokenType.PP_PUNCTUATOR || tokens[j].lexeme != "#") return "";
+
+        return guard_name;
     }
 
     // Handle #pragma
