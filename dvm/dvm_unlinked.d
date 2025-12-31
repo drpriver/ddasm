@@ -43,10 +43,15 @@ struct DlimportFuncSpec {
     bool is_varargs;
 }
 
+struct DlimportObjSpec {
+    str name;  // Symbol name
+}
+
 struct DlimportDecl {
     Barray!str library_paths;  // Multiple paths to try in order
     str alias_name;
     Barray!DlimportFuncSpec funcs;
+    Barray!DlimportObjSpec objs;  // External object (variable) imports
 }
 
 struct UnlinkedModule{

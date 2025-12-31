@@ -128,12 +128,14 @@ struct ParseContext{
                         // dlimport alias
                         //   "libpath1"
                         //   "libpath2"
-                        //   funcname n_args n_ret
+                        //   funcname n_args n_ret [varargs]
+                        //   objname object
                         //   ...
                         // end
                         DlimportDecl decl;
                         decl.library_paths.bdata.allocator = allocator;
                         decl.funcs.bdata.allocator = allocator;
+                        decl.objs.bdata.allocator = allocator;
                         tok = tokenizer.current_token_and_advance;
                         if(tok.type != SPACE){
                             err_print(tok, "dlimport must be followed by a space");
@@ -181,18 +183,29 @@ struct ParseContext{
                                 continue;
                             }
                             if(tok.type != IDENTIFIER){
-                                err_print(tok, "expected function name, library path string, or 'end'");
+                                err_print(tok, "expected function/object name, library path string, or 'end'");
                                 return PARSE_ERROR;
                             }
                             if(tok.text == "end")
                                 break;
-                            DlimportFuncSpec spec;
-                            spec.name = tok.text;
+                            str symbol_name = tok.text;
                             tok = tokenizer.current_token_and_advance;
                             while(tok.type == SPACE || tok.type == TAB)
                                 tok = tokenizer.current_token_and_advance;
+                            // Check if this is an object spec (symbol object) or function spec (symbol n_args n_ret)
+                            if(tok.type == IDENTIFIER && tok.text == "object"){
+                                // Object import
+                                import dvm.dvm_unlinked : DlimportObjSpec;
+                                DlimportObjSpec ospec;
+                                ospec.name = symbol_name;
+                                decl.objs.push(ospec);
+                                continue;
+                            }
+                            // Otherwise it's a function spec
+                            DlimportFuncSpec spec;
+                            spec.name = symbol_name;
                             if(tok.type != NUMBER){
-                                err_print(tok, "expected argument count");
+                                err_print(tok, "expected argument count or 'object'");
                                 return PARSE_ERROR;
                             }
                             IntegerResult!ulong n_args_res = parse_unsigned_human(tok.text);

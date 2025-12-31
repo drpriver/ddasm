@@ -194,5 +194,37 @@ load_dynamic_module(
         result.functions[spec.name] = fi;
     }
 
+    // Load external objects (variables)
+    result.variable_table.data.allocator = allocator;
+    foreach(ref ospec; decl.objs[]){
+        const(char)* sym_cstr = to_cstr(ospec.name);
+        if(sym_cstr is null){
+            err.errored = true;
+            err.message = "symbol name too long";
+            return err;
+        }
+
+        void* sym;
+        version(Windows){
+            sym = cast(void*)GetProcAddress(cast(HMODULE)handle, sym_cstr);
+        }
+        else {
+            sym = dlsym(handle, sym_cstr);
+        }
+
+        if(!sym){
+            err.errored = true;
+            __gshared char[256] errbuf;
+            snprintf(errbuf.ptr, errbuf.length, "symbol not found: %.*s",
+                cast(int)ospec.name.length, ospec.name.ptr);
+            err.message = from_cstr(errbuf.ptr);
+            return err;
+        }
+
+        // dlsym returns the address of the object
+        // Store it directly in variable_table as a pointer
+        result.variable_table[ospec.name] = cast(uintptr_t*)sym;
+    }
+
     return err;
 }

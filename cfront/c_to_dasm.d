@@ -203,6 +203,8 @@ struct CDasmWriter {
     Table!(str, CType*) var_types;   // Variable types (for pointer arithmetic)
     Table!(str, str) extern_funcs;   // Map: function name -> module alias
     Table!(str, bool) used_funcs;    // Track which extern functions are actually called
+    Table!(str, str) extern_objs;    // Map: extern object name -> module alias
+    Table!(str, bool) used_objs;     // Track which extern objects are actually referenced
     Table!(str, bool) addr_taken;    // Variables whose address is taken
     Table!(str, bool) arrays;        // Array variables (need special handling)
     Table!(str, CType*) global_types; // Global variable types
@@ -362,6 +364,8 @@ struct CDasmWriter {
         var_types.data.allocator = a;
         extern_funcs.data.allocator = a;
         used_funcs.data.allocator = a;
+        extern_objs.data.allocator = a;
+        used_objs.data.allocator = a;
         addr_taken.data.allocator = a;
         arrays.data.allocator = a;
         global_types.data.allocator = a;
@@ -373,6 +377,8 @@ struct CDasmWriter {
         var_types.cleanup();
         extern_funcs.cleanup();
         used_funcs.cleanup();
+        extern_objs.cleanup();
+        used_objs.cleanup();
         addr_taken.cleanup();
         arrays.cleanup();
         global_types.cleanup();
@@ -455,6 +461,19 @@ struct CDasmWriter {
             extern_funcs[fname] = lib_to_alias[lib];
         }
 
+        // Build extern_objs from extern global variable declarations
+        foreach (ref gvar; unit.globals) {
+            if (!gvar.is_extern) continue;
+
+            str oname = gvar.name.lexeme;
+            str lib = normalize_lib(gvar.library);
+            if (lib !in lib_to_alias) {
+                str alias_name = make_alias(lib, lib_counter++);
+                lib_to_alias[lib] = alias_name;
+            }
+            extern_objs[oname] = lib_to_alias[lib];
+        }
+
         // Use a temp buffer for globals and functions so we can emit dlimports first
         StringBuilder code_sb;
         code_sb.allocator = allocator;
@@ -462,10 +481,14 @@ struct CDasmWriter {
         StringBuilder* main_sb = sb;
         sb = &code_sb;
 
-        // Generate global variables
+        // Generate global variables (skip extern objects - they're dlimported)
+        bool emitted_any_vars = false;
         foreach (ref gvar; unit.globals) {
-            // Track global type
+            // Track global type for all globals (even extern)
             global_types[gvar.name.lexeme] = gvar.var_type;
+
+            // Skip extern objects - they're defined in external libraries
+            if (gvar.is_extern) continue;
 
             // Generate var declaration
             sb.writef("var % ", gvar.name.lexeme);
@@ -480,8 +503,9 @@ struct CDasmWriter {
             } else {
                 sb.write("0\n");
             }
+            emitted_any_vars = true;
         }
-        if (unit.globals.length > 0) sb.write("\n");
+        if (emitted_any_vars) sb.write("\n");
 
         // First pass: collect function return types for struct return handling
         func_return_types.data.allocator = allocator;
@@ -521,54 +545,86 @@ struct CDasmWriter {
         // Switch back to main buffer
         sb = main_sb;
 
-        // Generate dlimport blocks for functions that are:
-        // 1. Used (in used_funcs)
-        // 2. NOT defined (is_definition == false)
-        // 3. NOT static (is_static == false)
-        if (used_funcs.count > 0) {
-            // Track which libraries have been emitted
-            Table!(str, bool) emitted_libs;
-            emitted_libs.data.allocator = allocator;
-            scope(exit) emitted_libs.cleanup();
+        // Generate dlimport blocks for used external symbols (functions and objects)
+        // Collect symbols by library first, then emit
+        if (used_funcs.count > 0 || used_objs.count > 0) {
+            // Build a list of (library, symbol list) pairs
+            // We'll collect function/object info per library
+            Table!(str, bool) lib_has_symbols;
+            lib_has_symbols.data.allocator = allocator;
+            scope(exit) lib_has_symbols.cleanup();
 
+            // First pass: determine which libraries have symbols to emit
             foreach (ref func; unit.functions) {
                 str fname = func.name.lexeme;
-
-                // Skip if not used
                 if (fname !in used_funcs) continue;
-
-                // Skip if defined locally
                 if (func.is_definition) continue;
-
-                // Skip if static (internal linkage)
                 if (func.is_static) continue;
-
-                // Skip if no return type
                 if (func.return_type is null) continue;
 
-                // Determine library
                 str lib = normalize_lib(func.library);
                 if (lib == "libSDL2.so" && (fname.length < 4 || fname[0..4] != "SDL_")) {
                     lib = DEFAULT_LIBC;
                 }
+                lib_has_symbols[lib] = true;
+            }
 
-                // Emit library header if first function from this lib
-                if (lib !in emitted_libs) {
-                    if (emitted_libs.count > 0) sb.write("end\n\n");
-                    str alias_name = lib_to_alias[lib];
-                    sb.writef("dlimport %\n", alias_name);
-                    sb.writef("  \"%\"\n", lib);
-                    emitted_libs[lib] = true;
+            foreach (ref gvar; unit.globals) {
+                str oname = gvar.name.lexeme;
+                if (oname !in used_objs) continue;
+                if (!gvar.is_extern) continue;
+
+                str lib = normalize_lib(gvar.library);
+                lib_has_symbols[lib] = true;
+            }
+
+            // Second pass: emit dlimport blocks per library
+            bool first_lib = true;
+            foreach (item; lib_has_symbols.items) {
+                str lib = item.key;
+                if (!first_lib) sb.write("\n");
+                first_lib = false;
+
+                str alias_name = lib_to_alias[lib];
+                sb.writef("dlimport %\n", alias_name);
+                sb.writef("  \"%\"\n", lib);
+
+                // Emit functions from this library
+                foreach (ref func; unit.functions) {
+                    str fname = func.name.lexeme;
+                    if (fname !in used_funcs) continue;
+                    if (func.is_definition) continue;
+                    if (func.is_static) continue;
+                    if (func.return_type is null) continue;
+
+                    str flib = normalize_lib(func.library);
+                    if (flib == "libSDL2.so" && (fname.length < 4 || fname[0..4] != "SDL_")) {
+                        flib = DEFAULT_LIBC;
+                    }
+                    if (flib != lib) continue;
+
+                    ubyte n_ret = func.return_type.is_void() ? 0 : 1;
+                    auto n_params = func.params.length > 8 ? 8 : func.params.length;
+                    sb.writef("  % % %", fname, n_params, n_ret);
+                    if (func.is_varargs) sb.write(" varargs");
+                    sb.write("\n");
                 }
 
-                // Emit function
-                ubyte n_ret = func.return_type.is_void() ? 0 : 1;
-                auto n_params = func.params.length > 8 ? 8 : func.params.length;
-                sb.writef("  % % %", fname, n_params, n_ret);
-                if (func.is_varargs) sb.write(" varargs");
-                sb.write("\n");
+                // Emit objects from this library
+                foreach (ref gvar; unit.globals) {
+                    str oname = gvar.name.lexeme;
+                    if (oname !in used_objs) continue;
+                    if (!gvar.is_extern) continue;
+
+                    str olib = normalize_lib(gvar.library);
+                    if (olib != lib) continue;
+
+                    sb.writef("  % object\n", oname);
+                }
+
+                sb.write("end\n");
             }
-            if (emitted_libs.count > 0) sb.write("end\n\n");
+            if (lib_has_symbols.count > 0) sb.write("\n");
         }
 
         // Append the code (globals and functions)
@@ -1220,18 +1276,32 @@ struct CDasmWriter {
         }
 
         // Must be a global or function
+        // Track if it's an extern object
+        if (name in extern_objs) {
+            used_objs[name] = true;
+        }
+
         // Get the global's type for sized read
         if (CType** gtype = name in global_types) {
             size_t var_size = (*gtype) ? (*gtype).size_of() : 8;
             // Get address into a temp register, then do sized read
             int before = regallocator.alloced;
             int addr_reg = regallocator.allocate();
-            sb.writef("    move r% var %\n", addr_reg, name);
+            // For extern objects, use qualified name with module alias
+            if (str* mod_alias = name in extern_objs) {
+                sb.writef("    move r% var %.%\n", addr_reg, *mod_alias, name);
+            } else {
+                sb.writef("    move r% var %\n", addr_reg, name);
+            }
             sb.writef("    % r% r%\n", read_instr_for_size(var_size), target, addr_reg);
             regallocator.reset_to(before);
         } else {
             // Unknown global (function pointer?) - use regular read
-            sb.writef("    read r% var %\n", target, name);
+            if (str* mod_alias = name in extern_objs) {
+                sb.writef("    read r% var %.%\n", target, *mod_alias, name);
+            } else {
+                sb.writef("    read r% var %\n", target, name);
+            }
         }
         return 0;
     }
@@ -1500,8 +1570,16 @@ struct CDasmWriter {
                         error(expr.expr.token, "Cannot take address of register variable");
                         return 1;
                     }
-                    // Global variable
-                    sb.writef("    move r% var %\n", target, name);
+                    // Global variable - track extern object usage
+                    if (name in extern_objs) {
+                        used_objs[name] = true;
+                    }
+                    // For extern objects, use qualified name with module alias
+                    if (str* mod_alias = name in extern_objs) {
+                        sb.writef("    move r% var %.%\n", target, *mod_alias, name);
+                    } else {
+                        sb.writef("    move r% var %\n", target, name);
+                    }
                 }
                 return 0;
             }
@@ -1973,12 +2051,22 @@ struct CDasmWriter {
 
             // Check for global variable
             if (CType** gtype = name in global_types) {
+                // Track extern object usage
+                if (name in extern_objs) {
+                    used_objs[name] = true;
+                }
+
                 int before = regallocator.alloced;
                 int addr_reg = regallocator.allocate();
                 int val_reg = regallocator.allocate();
 
                 // Get address of global and its size
-                sb.writef("    move r% var %\n", addr_reg, name);
+                // For extern objects, use qualified name with module alias
+                if (str* mod_alias = name in extern_objs) {
+                    sb.writef("    move r% var %.%\n", addr_reg, *mod_alias, name);
+                } else {
+                    sb.writef("    move r% var %\n", addr_reg, name);
+                }
                 size_t var_size = (*gtype) ? (*gtype).size_of() : 8;
 
                 if (expr.op == CTokenType.EQUAL) {

@@ -38,6 +38,41 @@ struct StructField {
     size_t offset;  // Byte offset from start of struct
 }
 
+// =============================================================================
+// Declarator (ISO/IEC 9899:202y Section 6.7.7)
+// =============================================================================
+//
+// (6.7.7.1) declarator:
+//     pointer_opt direct-declarator
+//
+// (6.7.7.1) direct-declarator:
+//     identifier attribute-specifier-sequence_opt
+//     ( declarator )
+//     array-declarator attribute-specifier-sequence_opt
+//     function-declarator attribute-specifier-sequence_opt
+//
+// (6.7.7.1) pointer:
+//     * attribute-specifier-sequence_opt type-qualifier-list_opt
+//     * attribute-specifier-sequence_opt type-qualifier-list_opt pointer
+//
+struct CDeclarator {
+    CToken name;              // The identifier (empty for abstract declarators)
+    int pointer_depth;        // Number of pointer indirections (each * adds 1)
+
+    // For array declarators: direct-declarator [ assignment-expression_opt ]
+    bool is_array;
+    size_t array_dim;         // Array size (0 for unsized arrays like [])
+
+    // For function declarators: direct-declarator ( parameter-type-list_opt )
+    bool is_function;
+    CType*[] param_types;     // Parameter types
+    bool is_varargs;          // Has ... in parameter list
+
+    // For nested declarators like (*ptr) or (*func)(int)
+    // Used for function pointers and pointer-to-array
+    CDeclarator* nested;
+}
+
 struct CType {
     CTypeKind kind;
     bool is_unsigned;
@@ -678,6 +713,8 @@ struct CGlobalVar {
     CToken name;
     CType* var_type;
     CExpr* initializer;  // null if uninitialized (will be zero-initialized)
+    bool is_extern;      // extern declaration - object defined elsewhere (dlimport)
+    str library;         // From #pragma library (for extern declarations)
 }
 
 struct CStructDef {
