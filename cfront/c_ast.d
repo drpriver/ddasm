@@ -666,7 +666,8 @@ struct CFunction {
     bool is_varargs;
     CStmt*[] body;  // Empty for declarations
     bool is_definition;  // true if has body
-    bool is_extern;      // extern declaration
+    bool is_static;      // static linkage - cannot be dlimported
+    str library;         // From #pragma library (for declarations)
 }
 
 struct CExternDecl {

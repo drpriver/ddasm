@@ -6,6 +6,26 @@ module cfront.c_to_dasm;
 
 import core.stdc.stdio : fprintf, stderr;
 import dlib.aliases;
+
+// Platform-specific default C library name
+version(OSX) {
+    enum str DEFAULT_LIBC = "libSystem.B.dylib";
+} else version(linux) {
+    enum str DEFAULT_LIBC = "libc.so.6";
+} else {
+    enum str DEFAULT_LIBC = "libc";
+}
+
+// Normalize library name - "libc" is a special alias for the platform's C library
+str normalize_lib(str lib) {
+    import cfront.c_pp_token : str_eq;
+    if (lib.length == 0) return DEFAULT_LIBC;
+    if (str_eq(lib, "libc")) return DEFAULT_LIBC;
+    // Also handle common libc variants
+    if (str_eq(lib, "libc.so.6")) return DEFAULT_LIBC;
+    if (str_eq(lib, "libSystem.B.dylib")) return DEFAULT_LIBC;
+    return lib;
+}
 import dlib.allocator : Allocator;
 import dlib.barray : Barray, make_barray;
 import dlib.stringbuilder : StringBuilder, P;
@@ -389,23 +409,26 @@ struct CDasmWriter {
         lib_to_alias.data.allocator = allocator;
         scope(exit) lib_to_alias.cleanup();
 
-        if (unit.externs.length > 0) {
-            int lib_counter = 0;
-            foreach (ref ext; unit.externs) {
-                str fname = ext.name.lexeme;
-                // Only use SDL library for SDL_ prefixed functions
-                str lib = ext.library.length ? ext.library : "libc.so.6";
-                if (lib == "libSDL2.so" && (fname.length < 4 || fname[0..4] != "SDL_")) {
-                    lib = "libc.so.6";
-                }
-                if (lib !in lib_to_alias) {
-                    // Generate alias from library name
-                    str alias_name = make_alias(lib, lib_counter++);
-                    lib_to_alias[lib] = alias_name;
-                }
-                // Track function -> module alias mapping
-                extern_funcs[fname] = lib_to_alias[lib];
+        // Build extern_funcs from function declarations (not definitions)
+        int lib_counter = 0;
+        foreach (ref func; unit.functions) {
+            // Skip definitions and static functions
+            if (func.is_definition) continue;
+            if (func.is_static) continue;
+
+            str fname = func.name.lexeme;
+            // Normalize library name and handle SDL special case
+            str lib = normalize_lib(func.library);
+            if (lib == "libSDL2.so" && (fname.length < 4 || fname[0..4] != "SDL_")) {
+                lib = DEFAULT_LIBC;
             }
+            if (lib !in lib_to_alias) {
+                // Generate alias from library name
+                str alias_name = make_alias(lib, lib_counter++);
+                lib_to_alias[lib] = alias_name;
+            }
+            // Track function -> module alias mapping
+            extern_funcs[fname] = lib_to_alias[lib];
         }
 
         // Use a temp buffer for globals and functions so we can emit dlimports first
@@ -474,23 +497,35 @@ struct CDasmWriter {
         // Switch back to main buffer
         sb = main_sb;
 
-        // Now generate dlimport blocks only for used functions
-        if (unit.externs.length > 0 && used_funcs.count > 0) {
+        // Generate dlimport blocks for functions that are:
+        // 1. Used (in used_funcs)
+        // 2. NOT defined (is_definition == false)
+        // 3. NOT static (is_static == false)
+        if (used_funcs.count > 0) {
             // Track which libraries have been emitted
             Table!(str, bool) emitted_libs;
             emitted_libs.data.allocator = allocator;
             scope(exit) emitted_libs.cleanup();
 
-            foreach (ref ext; unit.externs) {
-                str fname = ext.name.lexeme;
+            foreach (ref func; unit.functions) {
+                str fname = func.name.lexeme;
+
                 // Skip if not used
                 if (fname !in used_funcs) continue;
-                if (ext.return_type is null) continue;
+
+                // Skip if defined locally
+                if (func.is_definition) continue;
+
+                // Skip if static (internal linkage)
+                if (func.is_static) continue;
+
+                // Skip if no return type
+                if (func.return_type is null) continue;
 
                 // Determine library
-                str lib = ext.library.length ? ext.library : "libc.so.6";
+                str lib = normalize_lib(func.library);
                 if (lib == "libSDL2.so" && (fname.length < 4 || fname[0..4] != "SDL_")) {
-                    lib = "libc.so.6";
+                    lib = DEFAULT_LIBC;
                 }
 
                 // Emit library header if first function from this lib
@@ -503,10 +538,10 @@ struct CDasmWriter {
                 }
 
                 // Emit function
-                ubyte n_ret = ext.return_type.is_void() ? 0 : 1;
-                auto n_params = ext.params.length > 8 ? 8 : ext.params.length;
+                ubyte n_ret = func.return_type.is_void() ? 0 : 1;
+                auto n_params = func.params.length > 8 ? 8 : func.params.length;
                 sb.writef("  % % %", fname, n_params, n_ret);
-                if (ext.is_varargs) sb.write(" varargs");
+                if (func.is_varargs) sb.write(" varargs");
                 sb.write("\n");
             }
             if (emitted_libs.count > 0) sb.write("end\n\n");

@@ -75,8 +75,6 @@ struct CPreprocessor {
 
         // Common empty macros
         define_object_macro("__extension__", "");
-        define_object_macro("__inline", "");
-        define_object_macro("inline", "");
         define_object_macro("volatile", "");
         define_object_macro("__volatile__", "");
 
@@ -386,7 +384,7 @@ struct CPreprocessor {
         } else if (str_eq(directive, "include")) {
             return handle_include(tokens, i, output);
         } else if (str_eq(directive, "pragma")) {
-            handle_pragma(line_tokens);
+            handle_pragma(line_tokens, output);
         } else if (str_eq(directive, "error")) {
             handle_error(line_tokens);
         } else if (str_eq(directive, "warning")) {
@@ -770,14 +768,44 @@ struct CPreprocessor {
     }
 
     // Handle #pragma
-    void handle_pragma(PPToken[] line) {
+    void handle_pragma(PPToken[] line, Barray!PPToken* output) {
         size_t i = 0;
         while (i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
 
         if (i < line.length && line[i].type == PPTokenType.PP_IDENTIFIER) {
             if (str_eq(line[i].lexeme, "once")) {
                 pragma_once_files[current_file] = true;
+            } else if (str_eq(line[i].lexeme, "library")) {
+                // #pragma library("libname") - emit tokens for parser
+                // Emit: #pragma library ( "libname" )
+                PPToken hash_tok;
+                hash_tok.type = PPTokenType.PP_PUNCTUATOR;
+                hash_tok.lexeme = "#";
+                hash_tok.file = current_file;
+                *output ~= hash_tok;
+
+                PPToken pragma_tok;
+                pragma_tok.type = PPTokenType.PP_IDENTIFIER;
+                pragma_tok.lexeme = "pragma";
+                pragma_tok.file = current_file;
+                *output ~= pragma_tok;
+
+                // Emit rest of line (library("..."))
+                while (i < line.length) {
+                    if (line[i].type != PPTokenType.PP_WHITESPACE &&
+                        line[i].type != PPTokenType.PP_NEWLINE) {
+                        *output ~= line[i];
+                    }
+                    i++;
+                }
+
+                // Add newline
+                PPToken nl;
+                nl.type = PPTokenType.PP_NEWLINE;
+                nl.lexeme = "\n";
+                *output ~= nl;
             }
+            // Ignore other pragmas
         }
     }
 

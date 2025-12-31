@@ -11,6 +11,7 @@ import dlib.barray : Barray, make_barray;
 import dlib.table : Table;
 
 import cfront.c_pp_to_c : CToken, CTokenType;
+import cfront.c_pp_token : str_eq;
 import cfront.c_ast;
 
 struct CParser {
@@ -56,7 +57,6 @@ struct CParser {
 
     int parse(CTranslationUnit* unit) {
         auto functions = make_barray!CFunction(allocator);
-        auto externs = make_barray!CExternDecl(allocator);
         auto globals = make_barray!CGlobalVar(allocator);
         auto structs = make_barray!CStructDef(allocator);
         auto unions = make_barray!CUnionDef(allocator);
@@ -80,8 +80,9 @@ struct CParser {
         typedef_types["va_list"] = &TYPE_VOID_PTR;
 
         while (!at_end) {
-            // Handle #pragma
-            if (check(CTokenType.PRAGMA)) {
+            // Handle #pragma (emitted as # pragma library ( "..." ) tokens)
+            if (check(CTokenType.HASH) && peek_at(1).type == CTokenType.IDENTIFIER &&
+                str_eq(peek_at(1).lexeme, "pragma")) {
                 handle_pragma();
                 continue;
             }
@@ -91,13 +92,49 @@ struct CParser {
                 continue;
             }
 
-            // Parse extern or function/global
-            if (check(CTokenType.EXTERN)) {
-                CExternDecl ext;
-                int err = parse_extern_decl(&ext);
-                if (err) return err;
-                externs ~= ext;
-            } else if (check(CTokenType.STRUCT)) {
+            // Skip storage class and inline specifiers - extern is default for functions
+            while (match(CTokenType.EXTERN)) {}
+            bool saw_inline = false;
+            while (match(CTokenType.INLINE)) {
+                saw_inline = true;
+            }
+            // Also check for __forceinline identifier
+            while (check(CTokenType.IDENTIFIER) && peek().lexeme == "__forceinline") {
+                advance();
+                saw_inline = true;
+            }
+            // Skip __attribute__((...)) specifiers
+            while (check(CTokenType.IDENTIFIER) && peek().lexeme == "__attribute__") {
+                advance();
+                if (check(CTokenType.LEFT_PAREN)) {
+                    skip_balanced_parens();
+                }
+            }
+
+            // If we saw inline, skip the entire function (including body if present)
+            // Inline functions defined in headers can't be dlimported
+            if (saw_inline) {
+                // Skip until we hit a brace (body) or semicolon (declaration)
+                int brace_depth = 0;
+                while (!at_end) {
+                    if (check(CTokenType.LEFT_BRACE)) {
+                        brace_depth++;
+                        advance();
+                    } else if (check(CTokenType.RIGHT_BRACE)) {
+                        brace_depth--;
+                        advance();
+                        if (brace_depth == 0) break;
+                    } else if (check(CTokenType.SEMICOLON) && brace_depth == 0) {
+                        advance();
+                        break;
+                    } else {
+                        advance();
+                    }
+                }
+                continue;
+            }
+
+            if (check(CTokenType.STRUCT)) {
                 // Check if this is a struct definition or forward declaration
                 // Look ahead: struct Name { ... means definition
                 //             struct Name ; means forward declaration
@@ -233,8 +270,9 @@ struct CParser {
                 int err = parse_static_assert();
                 if (err) return err;
             } else if (match(CTokenType.STATIC)) {
-                // Static function or variable - skip for now (glibc inline functions)
-                // Just consume until semicolon or closing brace
+                // Static function or variable - skip entirely
+                // These are internal linkage and can't be dlimported
+                // Just consume until semicolon (declaration) or closing brace (definition)
                 int brace_depth = 0;
                 while (!at_end) {
                     if (check(CTokenType.LEFT_BRACE)) {
@@ -317,7 +355,6 @@ struct CParser {
         }
 
         unit.functions = functions[];
-        unit.externs = externs[];
         unit.globals = globals[];
         unit.structs = structs[];
         unit.unions = unions[];
@@ -327,28 +364,30 @@ struct CParser {
     }
 
     void handle_pragma() {
-        CToken pragma_tok = advance();  // consume PRAGMA
-        // The pragma lexeme includes everything after #pragma
-        // Look for: library("...")
-        str content = pragma_tok.lexeme;
-        // Skip "#pragma "
-        if (content.length > 8) {
-            content = content[8 .. $];
-            // Trim leading whitespace
-            while (content.length && (content[0] == ' ' || content[0] == '\t'))
-                content = content[1 .. $];
-            // Check for library("...")
-            if (content.length > 9 && content[0 .. 8] == "library(") {
-                content = content[8 .. $];
-                // Find the string
-                if (content.length > 2 && content[0] == '"') {
-                    size_t end = 1;
-                    while (end < content.length && content[end] != '"') end++;
-                    if (end < content.length) {
-                        current_library = content[1 .. end];
+        advance();  // consume #
+        advance();  // consume pragma
+
+        // Check for library("...")
+        if (check(CTokenType.IDENTIFIER) && str_eq(peek().lexeme, "library")) {
+            advance();  // consume library
+            if (match(CTokenType.LEFT_PAREN)) {
+                if (check(CTokenType.STRING)) {
+                    str lib = peek().lexeme;
+                    // Remove quotes from string literal
+                    if (lib.length >= 2 && lib[0] == '"' && lib[$ - 1] == '"') {
+                        current_library = lib[1 .. $ - 1];
                     }
+                    advance();  // consume string
                 }
+                match(CTokenType.RIGHT_PAREN);
             }
+        }
+
+        // Skip to end of pragma (until newline or EOF)
+        while (!at_end && !check(CTokenType.EOF)) {
+            // Just advance past any remaining tokens on this line
+            // Since we don't have newline tokens in CToken stream, just break
+            break;
         }
     }
 
@@ -1803,197 +1842,6 @@ struct CParser {
         }
     }
 
-    int parse_extern_decl(CExternDecl* decl) {
-        advance();  // consume 'extern'
-
-        // Skip __attribute__((...)) if present (e.g., from DECLSPEC)
-        while (check(CTokenType.IDENTIFIER) && peek().lexeme == "__attribute__") {
-            advance();  // skip __attribute__
-            if (check(CTokenType.LEFT_PAREN)) {
-                skip_balanced_parens();
-            }
-        }
-
-        // Parse return type
-        CType* ret_type = parse_type();
-        if (ret_type is null) return 1;
-
-        // Check for function pointer variable: extern type (*name)(...);
-        if (check(CTokenType.LEFT_PAREN)) {
-            advance();  // consume '('
-            if (!match(CTokenType.STAR)) {
-                error("Expected '*' in function pointer declaration");
-                return 1;
-            }
-            CToken name = consume(CTokenType.IDENTIFIER, "Expected function pointer name");
-            if (ERROR_OCCURRED) return 1;
-            consume(CTokenType.RIGHT_PAREN, "Expected ')' after function pointer name");
-            if (ERROR_OCCURRED) return 1;
-            // Skip the parameter list and semicolon
-            if (check(CTokenType.LEFT_PAREN)) {
-                skip_balanced_parens();
-            }
-            consume(CTokenType.SEMICOLON, "Expected ';' after extern declaration");
-            if (ERROR_OCCURRED) return 1;
-            decl.name.lexeme = "";  // Mark as skipped (function pointer variable)
-            return 0;
-        }
-
-        // Parse function/variable name
-        CToken name = consume(CTokenType.IDENTIFIER, "Expected identifier");
-        if (ERROR_OCCURRED) return 1;
-
-        // Handle asm label for symbol renaming on variables: __asm("symbol")
-        if (match(CTokenType.ASM)) {
-            if (check(CTokenType.LEFT_PAREN)) {
-                skip_balanced_parens();
-            }
-        }
-
-        // Check if this is a function or variable
-        if (check(CTokenType.SEMICOLON)) {
-            // extern variable - skip it
-            advance();  // consume ';'
-            decl.name.lexeme = "";  // Mark as empty/skipped
-            return 0;
-        }
-
-        // Handle comma-separated extern variable declarations: extern type a, b;
-        if (check(CTokenType.COMMA)) {
-            while (match(CTokenType.COMMA)) {
-                if (!check(CTokenType.IDENTIFIER)) break;
-                advance();  // skip identifier
-            }
-            consume(CTokenType.SEMICOLON, "Expected ';' after extern declaration");
-            if (ERROR_OCCURRED) return 1;
-            decl.name.lexeme = "";  // Mark as skipped
-            return 0;
-        }
-
-        // Handle extern array declarations: extern int foo[];
-        if (check(CTokenType.LEFT_BRACKET)) {
-            // Skip array brackets
-            while (!check(CTokenType.SEMICOLON) && !at_end) {
-                advance();
-            }
-            consume(CTokenType.SEMICOLON, "Expected ';' after extern declaration");
-            if (ERROR_OCCURRED) return 1;
-            decl.name.lexeme = "";  // Mark as skipped
-            return 0;
-        }
-
-        // Parse parameters
-        consume(CTokenType.LEFT_PAREN, "Expected '(' after function name");
-        if (ERROR_OCCURRED) return 1;
-
-        auto params = make_barray!CParam(allocator);
-        bool is_varargs = false;
-
-        if (!check(CTokenType.RIGHT_PAREN)) {
-            do {
-                // Check for ...
-                if (check(CTokenType.ELLIPSIS)) {
-                    advance();
-                    is_varargs = true;
-                    break;
-                }
-
-                // Skip SAL-like annotations: SDL_OUT_BYTECAP(len), etc.
-                // These are unknown identifiers followed by (...)
-                while (check(CTokenType.IDENTIFIER) && peek_at(1).type == CTokenType.LEFT_PAREN &&
-                       !is_type_specifier(peek())) {
-                    advance();  // consume annotation name
-                    skip_balanced_parens();  // skip arguments
-                }
-
-                CParam param;
-                param.type = parse_type();
-                if (param.type is null) return 1;
-
-                // Check for function pointer parameter: type (*name)(params)
-                if (check(CTokenType.LEFT_PAREN)) {
-                    advance();  // consume '('
-                    if (match(CTokenType.STAR)) {
-                        // Function pointer parameter
-                        if (check(CTokenType.IDENTIFIER)) {
-                            param.name = advance();
-                        }
-                        consume(CTokenType.RIGHT_PAREN, "Expected ')' after function pointer name");
-                        if (ERROR_OCCURRED) return 1;
-                        // Skip the parameter list
-                        if (check(CTokenType.LEFT_PAREN)) {
-                            skip_balanced_parens();
-                        }
-                        // Treat as void* for simplicity
-                        param.type = make_pointer_type(allocator, &TYPE_VOID);
-                        params ~= param;
-                        continue;
-                    } else {
-                        // Not a function pointer - error
-                        error("Unexpected '(' in parameter");
-                        return 1;
-                    }
-                }
-
-                // Skip const/volatile qualifiers between type and name (e.g., char *const name)
-                while (match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)) {}
-
-                // Parameter name is optional in declarations
-                if (check(CTokenType.IDENTIFIER)) {
-                    param.name = advance();
-                }
-
-                // Handle array parameters: type name[size]
-                if (check(CTokenType.LEFT_BRACKET)) {
-                    // Skip the array brackets - treat as pointer
-                    while (check(CTokenType.LEFT_BRACKET)) {
-                        advance();  // consume '['
-                        // Skip everything until ']'
-                        while (!check(CTokenType.RIGHT_BRACKET) && !at_end) {
-                            advance();
-                        }
-                        if (check(CTokenType.RIGHT_BRACKET)) advance();
-                    }
-                    // Convert to pointer type
-                    param.type = make_pointer_type(allocator, param.type);
-                }
-
-                params ~= param;
-            } while (match(CTokenType.COMMA));
-        }
-
-        consume(CTokenType.RIGHT_PAREN, "Expected ')' after parameters");
-        if (ERROR_OCCURRED) return 1;
-
-        // Skip attributes/modifiers until we reach the semicolon or body
-        // This handles __attribute__((...)), __nonnull(...), etc.
-        while (!check(CTokenType.SEMICOLON) && !check(CTokenType.LEFT_BRACE) && !at_end) {
-            if (check(CTokenType.LEFT_PAREN)) {
-                skip_balanced_parens();
-            } else {
-                advance();
-            }
-        }
-
-        // Handle inline function definitions with extern (from macros like __header_always_inline)
-        if (check(CTokenType.LEFT_BRACE)) {
-            // Skip the function body - we don't need to compile inline functions from headers
-            skip_balanced_braces();
-            decl.name.lexeme = "";  // Mark as skipped (inline function)
-            return 0;
-        }
-
-        consume(CTokenType.SEMICOLON, "Expected ';' after extern declaration");
-        if (ERROR_OCCURRED) return 1;
-
-        decl.name = name;
-        decl.return_type = ret_type;
-        decl.params = params[];
-        decl.is_varargs = is_varargs;
-        decl.library = current_library;
-        return 0;
-    }
-
     int parse_function(CFunction* func) {
         // Parse return type
         CType* ret_type = parse_type();
@@ -2148,6 +1996,7 @@ struct CParser {
         func.return_type = ret_type;
         func.params = params[];
         func.is_varargs = is_varargs;
+        func.library = current_library;
 
         // Check if declaration or definition
         if (match(CTokenType.SEMICOLON)) {
@@ -2179,6 +2028,35 @@ struct CParser {
         gvar.name = name;
         gvar.var_type = var_type;
         gvar.initializer = null;
+
+        // Handle array declarations: type name[size]
+        while (check(CTokenType.LEFT_BRACKET)) {
+            advance();  // consume '['
+            // Skip array size expression
+            while (!check(CTokenType.RIGHT_BRACKET) && !at_end) {
+                advance();
+            }
+            if (check(CTokenType.RIGHT_BRACKET)) advance();
+            // Treat as pointer type for simplicity
+            gvar.var_type = make_pointer_type(allocator, gvar.var_type);
+        }
+
+        // Skip __asm("symbol") renaming
+        if (match(CTokenType.ASM)) {
+            consume(CTokenType.LEFT_PAREN, "Expected '(' after __asm");
+            if (ERROR_OCCURRED) return 1;
+            while (check(CTokenType.STRING)) advance();
+            consume(CTokenType.RIGHT_PAREN, "Expected ')' after __asm label");
+            if (ERROR_OCCURRED) return 1;
+        }
+
+        // Skip __attribute__((...))
+        while (check(CTokenType.IDENTIFIER) && peek().lexeme == "__attribute__") {
+            advance();
+            if (check(CTokenType.LEFT_PAREN)) {
+                skip_balanced_parens();
+            }
+        }
 
         // Check for initializer
         if (match(CTokenType.EQUAL)) {

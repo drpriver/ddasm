@@ -80,6 +80,7 @@ enum CTokenType : uint {
     BOOL = 623,
     AUTO = 624,
     ATOMIC = 625,
+    INLINE = 626,
 
     // Control flow keywords
     IF = 700,
@@ -304,6 +305,7 @@ struct PPToCConverter {
             if (str_eq(name, "struct")) return CTokenType.STRUCT;
             if (str_eq(name, "sizeof")) return CTokenType.SIZEOF;
             if (str_eq(name, "signed")) return CTokenType.SIGNED;
+            if (str_eq(name, "inline")) return CTokenType.INLINE;
         }
         if (name.length == 7) {
             if (str_eq(name, "typedef")) return CTokenType.TYPEDEF;
@@ -318,9 +320,11 @@ struct PPToCConverter {
             if (str_eq(name, "register")) return CTokenType.REGISTER;
             if (str_eq(name, "restrict")) return CTokenType.RESTRICT;
             if (str_eq(name, "_Float16")) return CTokenType.FLOAT16;
+            if (str_eq(name, "__inline")) return CTokenType.INLINE;
         }
         if (name.length == 10) {
             if (str_eq(name, "__restrict")) return CTokenType.RESTRICT;
+            if (str_eq(name, "__inline__")) return CTokenType.INLINE;
         }
         if (name.length == 12) {
             if (str_eq(name, "__restrict__")) return CTokenType.RESTRICT;

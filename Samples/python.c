@@ -1,8 +1,14 @@
-#pragma library("libc.so.6")
+#pragma library("libc")
   #include <stdlib.h>
   #include <stdio.h>
-#pragma library("python3.8")
-  #include <python3.8/Python.h>
+#ifdef __APPLE__
+  #pragma library("python")
+     // FIXME: framework include handling
+     #include "/Library/Frameworks/Python.framework/Headers/Python.h"
+#elif defined(__linux__)
+  #pragma library("python3.8")
+    #include <python3.8/Python.h>
+#endif
 
 void* pyimport(char* name){
     void* pystr = PyUnicode_FromString(name);
