@@ -14,6 +14,8 @@ int gwinlose = 0;
 long** gsnake;
 int glen;
 int gpaused;
+void main_loop(void);
+void render_and_present(int sx, int sy, int dx, int dy);
 int start(int width, int height){
   srand(time(NULL));
   void* window;
@@ -46,6 +48,7 @@ int start(int width, int height){
   SDL_DestroyRenderer(renderer);
   SDL_DestroyWindow(window);
   SDL_Quit();
+  return 0;
 }
 
 void grow_window(){
@@ -124,7 +127,7 @@ void simulate(long* board, int x, int y){
   if(!apple) place_apple(board);
 }
 
-void main_loop(){
+void main_loop(void){
   long* board = gboard;
   SDL_Event* event = calloc(1, sizeof(SDL_Event));
   int poll = 1;
@@ -178,8 +181,8 @@ void main_loop(){
       break;
     }
     else if(type == SDL_MOUSEBUTTONDOWN){ // mousedown
-      char* pbutton = event;
-      char button = pbutton[16];
+      // char* pbutton = event;
+      // char button = pbutton[16];
       // io.printf("button: %zd\n", button)
     }
     else if(type == SDL_KEYDOWN){ //keydown
@@ -258,12 +261,12 @@ void main_loop(){
 }
 
 void draw_rect(void* renderer, int x, int y, int w, int h){
-    int p[4];
-    p[0] = x;
-    p[1] = y;
-    p[2] = w;
-    p[3] = h;
-    return SDL_RenderFillRect(renderer, p);
+    SDL_Rect r;
+    r.x = x;
+    r.y = y;
+    r.w = w;
+    r.h = h;
+    SDL_RenderFillRect(renderer, &r);
 }
 
 void render_and_present(int sx, int sy, int dx, int dy){

@@ -62,6 +62,29 @@ struct CParser {
         auto unions = make_barray!CUnionDef(allocator);
         auto enums = make_barray!CEnumDef(allocator);
 
+        // Track function names to indices for merging forward declarations with definitions
+        Table!(str, size_t) func_indices;
+        func_indices.data.allocator = allocator;
+        scope(exit) func_indices.cleanup();
+
+        // Helper to add function, merging forward declarations with definitions
+        void add_function(CFunction func) {
+            str fname = func.name.lexeme;
+            if (auto idx_ptr = fname in func_indices) {
+                // Already have an entry for this function
+                size_t idx = *idx_ptr;
+                if (func.is_definition && !functions[idx].is_definition) {
+                    // Current is definition, existing is declaration - replace
+                    functions[idx] = func;
+                }
+                // Otherwise (existing is definition or both declarations): skip
+            } else {
+                // New function
+                func_indices[fname] = functions.count;
+                functions ~= func;
+            }
+        }
+
         // Initialize type tables
         struct_types.data.allocator = allocator;
         union_types.data.allocator = allocator;
@@ -173,7 +196,7 @@ struct CParser {
                         CFunction func;
                         int err = parse_function_rest(type_, name, &func);
                         if (err) return err;
-                        functions ~= func;
+                        add_function(func);
                     } else {
                         CGlobalVar gvar;
                         int err = parse_global_var_rest(type_, name, &gvar);
@@ -220,7 +243,7 @@ struct CParser {
                         CFunction func;
                         int err = parse_function_rest(type_, name, &func);
                         if (err) return err;
-                        functions ~= func;
+                        add_function(func);
                     } else {
                         CGlobalVar gvar;
                         int err = parse_global_var_rest(type_, name, &gvar);
@@ -253,7 +276,7 @@ struct CParser {
                         CFunction func;
                         int err = parse_function_rest(type_, name, &func);
                         if (err) return err;
-                        functions ~= func;
+                        add_function(func);
                     } else {
                         CGlobalVar gvar;
                         int err = parse_global_var_rest(type_, name, &gvar);
@@ -332,7 +355,7 @@ struct CParser {
                     func.return_type = make_pointer_type(allocator, &TYPE_VOID);
                     func.params = null;
                     func.is_definition = false;
-                    functions ~= func;
+                    add_function(func);
                 } else {
                     CToken name = consume(CTokenType.IDENTIFIER, "Expected identifier");
                     if (ERROR_OCCURRED) return 1;
@@ -342,7 +365,7 @@ struct CParser {
                         CFunction func;
                         int err = parse_function_rest(type_, name, &func);
                         if (err) return err;
-                        functions ~= func;
+                        add_function(func);
                     } else {
                         // It's a global variable
                         CGlobalVar gvar;
