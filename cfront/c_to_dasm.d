@@ -211,6 +211,8 @@ struct CDasmWriter {
     Table!(str, bool) used_funcs;    // Track which extern functions are actually called
     Table!(str, str) extern_objs;    // Map: extern object name -> module alias
     Table!(str, bool) used_objs;     // Track which extern objects are actually referenced
+    Table!(str, bool) called_funcs;  // Track all internal function calls (for inline function generation)
+    Table!(str, bool) generated_funcs; // Track which functions have been generated
     Table!(str, bool) addr_taken;    // Variables whose address is taken
     Table!(str, bool) arrays;        // Array variables (need special handling)
     Table!(str, CType*) global_types; // Global variable types
@@ -378,6 +380,8 @@ struct CDasmWriter {
         used_funcs.data.allocator = a;
         extern_objs.data.allocator = a;
         used_objs.data.allocator = a;
+        called_funcs.data.allocator = a;
+        generated_funcs.data.allocator = a;
         addr_taken.data.allocator = a;
         arrays.data.allocator = a;
         global_types.data.allocator = a;
@@ -391,6 +395,8 @@ struct CDasmWriter {
         used_funcs.cleanup();
         extern_objs.cleanup();
         used_objs.cleanup();
+        called_funcs.cleanup();
+        generated_funcs.cleanup();
         addr_taken.cleanup();
         arrays.cleanup();
         global_types.cleanup();
@@ -544,12 +550,45 @@ struct CDasmWriter {
         bool has_main = false;
         bool has_start = false;
 
+        // Build function lookup map for inline function resolution
+        Table!(str, CFunction*) func_map;
+        func_map.data.allocator = allocator;
+        scope(exit) func_map.cleanup();
         foreach (ref func; unit.functions) {
-            if (func.is_definition) {
+            func_map[func.name.lexeme] = &func;
+        }
+
+        // First pass: generate non-inline function definitions
+        foreach (ref func; unit.functions) {
+            if (func.is_definition && !func.is_inline) {
                 if (func.name.lexeme == "main") has_main = true;
                 if (func.name.lexeme == "start") has_start = true;
+                generated_funcs[func.name.lexeme] = true;
                 int err = gen_function(&func);
                 if (err) return err;
+            }
+        }
+
+        // Iteratively generate inline functions that are called
+        // Keep going until no new inline functions are needed
+        bool made_progress = true;
+        while (made_progress) {
+            made_progress = false;
+            foreach (ref item; called_funcs.items()) {
+                str fname = item.key;
+                // Skip if already generated
+                if (fname in generated_funcs) continue;
+                // Find the function
+                if (auto fp = fname in func_map) {
+                    CFunction* func = *fp;
+                    // Only generate if it's an inline definition
+                    if (func.is_definition && func.is_inline) {
+                        generated_funcs[fname] = true;
+                        int err = gen_function(func);
+                        if (err) return err;
+                        made_progress = true;  // Generated a new function, may have added more calls
+                    }
+                }
             }
         }
 
@@ -1338,6 +1377,16 @@ struct CDasmWriter {
             return err;
         }
 
+        // Comma operator: evaluate left for side effects, return right value
+        if (expr.op == CTokenType.COMMA) {
+            int before = regallocator.alloced;
+            int tmp = regallocator.allocate();
+            int err = gen_expression(expr.left, tmp);
+            regallocator.reset_to(before);
+            if (err) return err;
+            return gen_expression(expr.right, target);
+        }
+
         int before = regallocator.alloced;
         int lhs = target;
         int err = gen_expression(expr.left, lhs);
@@ -1870,6 +1919,7 @@ struct CDasmWriter {
                 used_funcs[id.name.lexeme] = true;  // Mark as used
                 sb.writef("    call function %.% %\n", *mod_alias, id.name.lexeme, total_args);
             } else {
+                called_funcs[id.name.lexeme] = true;  // Track internal call (for inline function generation)
                 sb.writef("    call function % %\n", id.name.lexeme, total_args);
             }
 

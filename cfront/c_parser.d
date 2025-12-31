@@ -158,7 +158,7 @@ struct CParser {
 
                     if (check(CTokenType.LEFT_PAREN)) {
                         CFunction func;
-                        int err = parse_function_rest(type_, name, &func);
+                        int err = parse_function_rest(type_, name, &func, saw_inline);
                         if (err) return err;
                         add_function(func);
                     } else {
@@ -206,7 +206,7 @@ struct CParser {
 
                     if (check(CTokenType.LEFT_PAREN)) {
                         CFunction func;
-                        int err = parse_function_rest(type_, name, &func);
+                        int err = parse_function_rest(type_, name, &func, saw_inline);
                         if (err) return err;
                         add_function(func);
                     } else {
@@ -240,7 +240,7 @@ struct CParser {
 
                     if (check(CTokenType.LEFT_PAREN)) {
                         CFunction func;
-                        int err = parse_function_rest(type_, name, &func);
+                        int err = parse_function_rest(type_, name, &func, saw_inline);
                         if (err) return err;
                         add_function(func);
                     } else {
@@ -260,23 +260,49 @@ struct CParser {
                 int err = parse_static_assert();
                 if (err) return err;
             } else if (match(CTokenType.STATIC)) {
-                // Static function or variable - skip entirely
-                // These are internal linkage and can't be dlimported
-                // Just consume until semicolon (declaration) or closing brace (definition)
-                int brace_depth = 0;
-                while (!at_end) {
-                    if (check(CTokenType.LEFT_BRACE)) {
-                        brace_depth++;
-                        advance();
-                    } else if (check(CTokenType.RIGHT_BRACE)) {
-                        brace_depth--;
-                        advance();
-                        if (brace_depth == 0) break;
-                    } else if (check(CTokenType.SEMICOLON) && brace_depth == 0) {
-                        advance();
-                        break;
-                    } else {
-                        advance();
+                // Static function or variable
+                // Check for inline after static
+                bool saw_static_inline = false;
+                while (match(CTokenType.INLINE)) {
+                    saw_static_inline = true;
+                }
+                while (check(CTokenType.IDENTIFIER) && peek().lexeme == "__forceinline") {
+                    advance();
+                    saw_static_inline = true;
+                }
+
+                // Parse the type and name
+                CType* type_ = parse_type();
+                if (type_ is null) {
+                    // Skip to semicolon or brace on error
+                    int brace_depth = 0;
+                    while (!at_end) {
+                        if (check(CTokenType.LEFT_BRACE)) { brace_depth++; advance(); }
+                        else if (check(CTokenType.RIGHT_BRACE)) { brace_depth--; advance(); if (brace_depth == 0) break; }
+                        else if (check(CTokenType.SEMICOLON) && brace_depth == 0) { advance(); break; }
+                        else advance();
+                    }
+                    continue;
+                }
+
+                CToken name = consume(CTokenType.IDENTIFIER, "Expected identifier");
+                if (ERROR_OCCURRED) return 1;
+
+                if (check(CTokenType.LEFT_PAREN)) {
+                    // Static function - parse it but mark as static
+                    CFunction func;
+                    int err = parse_function_rest(type_, name, &func, saw_static_inline);
+                    if (err) return err;
+                    func.is_static = true;
+                    add_function(func);
+                } else {
+                    // Static variable - skip (internal linkage, not relevant for us)
+                    int brace_depth = 0;
+                    while (!at_end) {
+                        if (check(CTokenType.LEFT_BRACE)) { brace_depth++; advance(); }
+                        else if (check(CTokenType.RIGHT_BRACE)) { brace_depth--; advance(); if (brace_depth == 0) break; }
+                        else if (check(CTokenType.SEMICOLON) && brace_depth == 0) { advance(); break; }
+                        else advance();
                     }
                 }
             } else if (check(CTokenType.IDENTIFIER) && peek_at(1).type == CTokenType.LEFT_PAREN &&
@@ -336,6 +362,7 @@ struct CParser {
                         func.params = params[];
                         func.is_varargs = name_decl.is_varargs;
                         func.is_definition = false;
+                        func.is_inline = saw_inline;
                         func.library = current_library;
 
                         // Check for function body
@@ -382,7 +409,7 @@ struct CParser {
                     if (check(CTokenType.LEFT_PAREN)) {
                         // It's a function
                         CFunction func;
-                        int err = parse_function_rest(base_type, name, &func);
+                        int err = parse_function_rest(base_type, name, &func, saw_inline);
                         if (err) return err;
                         add_function(func);
                     } else {
@@ -433,6 +460,9 @@ struct CParser {
         }
     }
 
+    // (6.7.2.1) struct-or-union-specifier:
+    //     struct-or-union identifier_opt { struct-declaration-list }
+    //     struct-or-union identifier
     int parse_struct_def(CStructDef* sdef) {
         advance();  // consume 'struct'
         CToken name = consume(CTokenType.IDENTIFIER, "Expected struct name");
@@ -464,6 +494,9 @@ struct CParser {
         return 0;
     }
 
+    // (6.7.2.1) struct-or-union-specifier:
+    //     struct-or-union identifier_opt { struct-declaration-list }
+    //     struct-or-union identifier
     int parse_union_def(CUnionDef* udef) {
         advance();  // consume 'union'
         CToken name = consume(CTokenType.IDENTIFIER, "Expected union name");
@@ -1025,6 +1058,10 @@ struct CParser {
         return current_type;
     }
 
+    // (6.7.2.2) enum-specifier:
+    //     enum identifier_opt { enumerator-list }
+    //     enum identifier_opt { enumerator-list , }
+    //     enum identifier
     int parse_enum_def(CEnumDef* edef) {
         advance();  // consume 'enum'
 
@@ -1136,7 +1173,8 @@ struct CParser {
         return 0;
     }
 
-    // Parse typedef declaration
+    // (6.7.7) type-definition:
+    //     typedef declaration-specifiers init-declarator-list_opt ;
     // Supports: typedef <type> <name>;
     //           typedef struct { ... } Name;
     //           typedef struct Name { ... } Alias;
@@ -1562,7 +1600,7 @@ struct CParser {
     }
 
     // Parse function after type and name have been consumed
-    int parse_function_rest(CType* ret_type, CToken name, CFunction* func) {
+    int parse_function_rest(CType* ret_type, CToken name, CFunction* func, bool saw_inline = false) {
         // Parse parameters using unified parameter parsing
         consume(CTokenType.LEFT_PAREN, "Expected '(' after function name");
         if (ERROR_OCCURRED) return 1;
@@ -1598,6 +1636,7 @@ struct CParser {
         func.return_type = ret_type;
         func.params = param_result.params[];
         func.is_varargs = param_result.is_varargs;
+        func.is_inline = saw_inline;
         func.library = current_library;
 
         // Check if declaration or definition
@@ -1678,6 +1717,9 @@ struct CParser {
     // Type Parsing
     // =========================================================================
 
+    // (6.7.6) declarator: pointer_opt direct-declarator
+    // (6.7.6.1) pointer: * type-qualifier-list_opt pointer_opt
+    // This function parses the type portion (base type + pointer modifiers)
     CType* parse_type() {
         CType* base = parse_base_type();
         if (base is null) return null;
@@ -2407,6 +2449,10 @@ struct CParser {
         return 0;
     }
 
+    // (6.7.2) type-specifier:
+    //     void | char | short | int | long | float | double | signed | unsigned
+    //     _Atomic ( type-name ) | struct-or-union-specifier | enum-specifier | typedef-name
+    // (6.7.3) type-qualifier: const | restrict | volatile | _Atomic
     CType* parse_base_type() {
         bool is_unsigned = false;
         bool is_const = false;
@@ -2422,8 +2468,8 @@ struct CParser {
             } else if (match(CTokenType.ATOMIC)) {
                 // Skip _Atomic - handle both _Atomic T and _Atomic(T)
                 if (match(CTokenType.LEFT_PAREN)) {
-                    // _Atomic(T) - parse T and consume closing paren
-                    CType* atomic_type = parse_base_type();
+                    // _Atomic(T) - parse full type T (may include pointers) and consume closing paren
+                    CType* atomic_type = parse_type();
                     consume(CTokenType.RIGHT_PAREN, "Expected ')' after _Atomic type");
                     if (ERROR_OCCURRED) return null;
                     return atomic_type;  // Return the inner type
@@ -2727,6 +2773,9 @@ struct CParser {
     // Statement Parsing
     // =========================================================================
 
+    // (6.8) statement:
+    //     labeled-statement | compound-statement | expression-statement
+    //     selection-statement | iteration-statement | jump-statement
     CStmt* parse_statement() {
         if (match(CTokenType.SEMICOLON)) {
             return CEmptyStmt.get();
@@ -2754,7 +2803,7 @@ struct CParser {
                 tok.type == INT || tok.type == LONG || tok.type == FLOAT ||
                 tok.type == DOUBLE || tok.type == UNSIGNED ||
                 tok.type == SIGNED || tok.type == CONST || tok.type == VOLATILE ||
-                tok.type == RESTRICT || tok.type == STRUCT ||
+                tok.type == RESTRICT || tok.type == ATOMIC || tok.type == STRUCT ||
                 tok.type == UNION || tok.type == ENUM) {
                 return true;
             }
@@ -2766,6 +2815,8 @@ struct CParser {
         }
     }
 
+    // (6.8.6.4) return statement:
+    //     return expression_opt ;
     CStmt* parse_return() {
         CToken keyword = previous();
         CExpr* value = null;
@@ -2781,6 +2832,9 @@ struct CParser {
         return CReturnStmt.make(allocator, value, keyword);
     }
 
+    // (6.8.4.1) if statement:
+    //     if ( expression ) statement
+    //     if ( expression ) statement else statement
     CStmt* parse_if() {
         CToken keyword = previous();
 
@@ -2805,6 +2859,8 @@ struct CParser {
         return CIfStmt.make(allocator, condition, then_branch, else_branch, keyword);
     }
 
+    // (6.8.5.1) while statement:
+    //     while ( expression ) statement
     CStmt* parse_while() {
         CToken keyword = previous();
 
@@ -2823,6 +2879,9 @@ struct CParser {
         return CWhileStmt.make(allocator, condition, body, keyword);
     }
 
+    // (6.8.5.3) for statement:
+    //     for ( expression_opt ; expression_opt ; expression_opt ) statement
+    //     for ( declaration expression_opt ; expression_opt ) statement
     CStmt* parse_for() {
         CToken keyword = previous();
 
@@ -2867,6 +2926,8 @@ struct CParser {
         return CForStmt.make(allocator, init, condition, increment, body, keyword);
     }
 
+    // (6.8.2) compound-statement:
+    //     { block-item-list_opt }
     CStmt* parse_block() {
         CToken brace = previous();
         auto statements = make_barray!(CStmt*)(allocator);
@@ -2883,6 +2944,7 @@ struct CParser {
         return CBlock.make(allocator, statements[], brace);
     }
 
+    // (6.8.6.3) break statement
     CStmt* parse_break() {
         CToken keyword = previous();
         consume(CTokenType.SEMICOLON, "Expected ';' after 'break'");
@@ -2890,6 +2952,7 @@ struct CParser {
         return CBreakStmt.make(allocator, keyword);
     }
 
+    // (6.8.6.2) continue statement
     CStmt* parse_continue() {
         CToken keyword = previous();
         consume(CTokenType.SEMICOLON, "Expected ';' after 'continue'");
@@ -2897,6 +2960,8 @@ struct CParser {
         return CContinueStmt.make(allocator, keyword);
     }
 
+    // (6.7) declaration:
+    //     declaration-specifiers init-declarator-list_opt ;
     CStmt* parse_var_decl() {
         CToken type_tok = peek();
         CType* var_type = parse_type();
@@ -2933,6 +2998,8 @@ struct CParser {
         return CVarDecl.make(allocator, var_type, name, initializer, type_tok);
     }
 
+    // (6.8.3) expression-statement:
+    //     expression_opt ;
     CStmt* parse_expr_stmt() {
         CToken tok = peek();
         CExpr* expr = parse_expression();
@@ -2948,10 +3015,27 @@ struct CParser {
     // Expression Parsing (Pratt/precedence climbing)
     // =========================================================================
 
+    // (6.5.17) expression:
+    //     assignment-expression
+    //     expression , assignment-expression
     CExpr* parse_expression() {
-        return parse_assignment();
+        CExpr* expr = parse_assignment();
+        if (expr is null) return null;
+
+        while (check(CTokenType.COMMA)) {
+            CToken op = advance();
+            CExpr* right = parse_assignment();
+            if (right is null) return null;
+            expr = CBinary.make(allocator, expr, op.type, right, op);
+        }
+
+        return expr;
     }
 
+    // (6.5.16) assignment-expression:
+    //     conditional-expression
+    //     unary-expression assignment-operator assignment-expression
+    // assignment-operator: = *= /= %= += -= <<= >>= &= ^= |=
     CExpr* parse_assignment() {
         CExpr* expr = parse_ternary();
         if (expr is null) return null;
@@ -3001,6 +3085,9 @@ struct CParser {
         return CTernary.make(allocator, condition, if_true, if_false, question_tok);
     }
 
+    // (6.5.14) logical-OR-expression:
+    //     logical-AND-expression
+    //     logical-OR-expression || logical-AND-expression
     CExpr* parse_logical_or() {
         CExpr* expr = parse_logical_and();
         if (expr is null) return null;
@@ -3015,6 +3102,9 @@ struct CParser {
         return expr;
     }
 
+    // (6.5.13) logical-AND-expression:
+    //     inclusive-OR-expression
+    //     logical-AND-expression && inclusive-OR-expression
     CExpr* parse_logical_and() {
         CExpr* expr = parse_bitwise_or();
         if (expr is null) return null;
@@ -3029,6 +3119,9 @@ struct CParser {
         return expr;
     }
 
+    // (6.5.12) inclusive-OR-expression:
+    //     exclusive-OR-expression
+    //     inclusive-OR-expression | exclusive-OR-expression
     CExpr* parse_bitwise_or() {
         CExpr* expr = parse_bitwise_xor();
         if (expr is null) return null;
@@ -3043,6 +3136,9 @@ struct CParser {
         return expr;
     }
 
+    // (6.5.11) exclusive-OR-expression:
+    //     AND-expression
+    //     exclusive-OR-expression ^ AND-expression
     CExpr* parse_bitwise_xor() {
         CExpr* expr = parse_bitwise_and();
         if (expr is null) return null;
@@ -3057,6 +3153,9 @@ struct CParser {
         return expr;
     }
 
+    // (6.5.10) AND-expression:
+    //     equality-expression
+    //     AND-expression & equality-expression
     CExpr* parse_bitwise_and() {
         CExpr* expr = parse_equality();
         if (expr is null) return null;
@@ -3071,6 +3170,10 @@ struct CParser {
         return expr;
     }
 
+    // (6.5.9) equality-expression:
+    //     relational-expression
+    //     equality-expression == relational-expression
+    //     equality-expression != relational-expression
     CExpr* parse_equality() {
         CExpr* expr = parse_comparison();
         if (expr is null) return null;
@@ -3085,6 +3188,12 @@ struct CParser {
         return expr;
     }
 
+    // (6.5.8) relational-expression:
+    //     shift-expression
+    //     relational-expression < shift-expression
+    //     relational-expression > shift-expression
+    //     relational-expression <= shift-expression
+    //     relational-expression >= shift-expression
     CExpr* parse_comparison() {
         CExpr* expr = parse_shift();
         if (expr is null) return null;
@@ -3100,6 +3209,10 @@ struct CParser {
         return expr;
     }
 
+    // (6.5.7) shift-expression:
+    //     additive-expression
+    //     shift-expression << additive-expression
+    //     shift-expression >> additive-expression
     CExpr* parse_shift() {
         CExpr* expr = parse_additive();
         if (expr is null) return null;
@@ -3114,6 +3227,10 @@ struct CParser {
         return expr;
     }
 
+    // (6.5.6) additive-expression:
+    //     multiplicative-expression
+    //     additive-expression + multiplicative-expression
+    //     additive-expression - multiplicative-expression
     CExpr* parse_additive() {
         CExpr* expr = parse_multiplicative();
         if (expr is null) return null;
@@ -3128,6 +3245,11 @@ struct CParser {
         return expr;
     }
 
+    // (6.5.5) multiplicative-expression:
+    //     cast-expression
+    //     multiplicative-expression * cast-expression
+    //     multiplicative-expression / cast-expression
+    //     multiplicative-expression % cast-expression
     CExpr* parse_multiplicative() {
         CExpr* expr = parse_unary();
         if (expr is null) return null;
@@ -3142,6 +3264,14 @@ struct CParser {
         return expr;
     }
 
+    // (6.5.3) unary-expression:
+    //     postfix-expression
+    //     ++ unary-expression
+    //     -- unary-expression
+    //     unary-operator cast-expression
+    //     sizeof unary-expression
+    //     sizeof ( type-name )
+    // unary-operator: & * + - ~ !
     CExpr* parse_unary() {
         // Prefix operators
         if (check(CTokenType.BANG) || check(CTokenType.MINUS) ||
@@ -3195,6 +3325,15 @@ struct CParser {
         return parse_postfix();
     }
 
+    // (6.5.2) postfix-expression:
+    //     primary-expression
+    //     postfix-expression [ expression ]
+    //     postfix-expression ( argument-expression-list? )
+    //     postfix-expression . identifier
+    //     postfix-expression -> identifier
+    //     postfix-expression ++
+    //     postfix-expression --
+    //     ( type-name ) { initializer-list }  (compound literal, not implemented)
     CExpr* parse_postfix() {
         CExpr* expr = parse_primary();
         if (expr is null) return null;
@@ -3254,6 +3393,11 @@ struct CParser {
         return CCall.make(allocator, callee, args[], paren);
     }
 
+    // (6.5.1) primary-expression:
+    //     identifier
+    //     constant
+    //     string-literal
+    //     ( expression )
     CExpr* parse_primary() {
         CToken tok = peek();
 

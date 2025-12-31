@@ -732,6 +732,7 @@ struct CFunction {
     CStmt*[] body;  // Empty for declarations
     bool is_definition;  // true if has body
     bool is_static;      // static linkage - cannot be dlimported
+    bool is_inline;      // inline function - only emit if used
     str library;         // From #pragma library (for declarations)
 }
 
