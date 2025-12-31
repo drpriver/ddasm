@@ -50,23 +50,44 @@ struct CPreprocessor {
         define_object_macro("__STDC__", "1");
         define_object_macro("__STDC_VERSION__", "201710L");
 
-        // Size macros for this platform (64-bit)
-        define_object_macro("__SIZEOF_LONG__", "8");
-        define_object_macro("__SIZEOF_POINTER__", "8");
+        // Size macros - platform dependent
         define_object_macro("__SIZEOF_INT__", "4");
         define_object_macro("__SIZEOF_SHORT__", "2");
         define_object_macro("__SIZEOF_LONG_LONG__", "8");
+        version(D_LP64) {
+            define_object_macro("__SIZEOF_LONG__", "8");
+            define_object_macro("__SIZEOF_POINTER__", "8");
+            define_object_macro("__LP64__", "1");
+        } else {
+            define_object_macro("__SIZEOF_LONG__", "4");
+            define_object_macro("__SIZEOF_POINTER__", "4");
+        }
 
-        // Python compatibility
-        define_object_macro("SIZEOF_LONG", "8");
-        define_object_macro("SIZEOF_VOID_P", "8");
-        define_object_macro("LONG_BIT", "64");
+        // OS detection
+        version(OSX) {
+            define_object_macro("__APPLE__", "1");
+            define_object_macro("__MACH__", "1");
+        } else version(linux) {
+            define_object_macro("__linux__", "1");
+            define_object_macro("__linux", "1");
+            define_object_macro("__unix__", "1");
+        } else version(Windows) {
+            define_object_macro("_WIN32", "1");
+            define_object_macro("_WIN64", "1");
+        }
 
-        // macOS detection
-        define_object_macro("__APPLE__", "1");
-        define_object_macro("__MACH__", "1");
-        define_object_macro("__x86_64__", "1");
-        define_object_macro("__LP64__", "1");
+        // Architecture detection
+        version(X86_64) {
+            define_object_macro("__x86_64__", "1");
+            define_object_macro("__amd64__", "1");
+        } else version(AArch64) {
+            define_object_macro("__aarch64__", "1");
+            define_object_macro("__arm64__", "1");
+        } else version(X86) {
+            define_object_macro("__i386__", "1");
+        } else version(ARM) {
+            define_object_macro("__arm__", "1");
+        }
 
         // GCC compatibility
         define_object_macro("__GNUC__", "4");

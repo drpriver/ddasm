@@ -20,6 +20,7 @@ enum CTypeKind {
     SHORT,
     INT,
     LONG,
+    INT128,
     FLOAT,
     DOUBLE,
     POINTER,
@@ -59,6 +60,7 @@ struct CType {
             case CTypeKind.SHORT:    return 2;
             case CTypeKind.INT:      return 4;
             case CTypeKind.LONG:     return 8;
+            case CTypeKind.INT128:   return 16;
             case CTypeKind.FLOAT:    return 4;
             case CTypeKind.DOUBLE:   return 8;
             case CTypeKind.POINTER:  return 8;  // 64-bit
@@ -138,6 +140,8 @@ __gshared CType TYPE_DOUBLE = { kind: CTypeKind.DOUBLE };
 __gshared CType TYPE_UCHAR = { kind: CTypeKind.CHAR, is_unsigned: true };
 __gshared CType TYPE_UINT = { kind: CTypeKind.INT, is_unsigned: true };
 __gshared CType TYPE_ULONG = { kind: CTypeKind.LONG, is_unsigned: true };
+__gshared CType TYPE_INT128 = { kind: CTypeKind.INT128 };
+__gshared CType TYPE_UINT128 = { kind: CTypeKind.INT128, is_unsigned: true };
 
 // Pointer types
 __gshared CType TYPE_VOID_PTR = { kind: CTypeKind.POINTER, pointed_to: &TYPE_VOID };

@@ -524,8 +524,8 @@ struct CParser {
                         // Each declarator starts with the base type
                         CType* decl_type = base_type;
 
-                        // Handle arrays
-                        if (match(CTokenType.LEFT_BRACKET)) {
+                        // Handle arrays (including multi-dimensional)
+                        while (match(CTokenType.LEFT_BRACKET)) {
                             auto size_result = parse_enum_const_expr();
                             if (size_result.err) return 1;
                             if (size_result.value <= 0) {
@@ -680,8 +680,8 @@ struct CParser {
                         // Each declarator starts with the base type
                         CType* decl_type = base_type;
 
-                        // Handle arrays
-                        if (match(CTokenType.LEFT_BRACKET)) {
+                        // Handle arrays (including multi-dimensional)
+                        while (match(CTokenType.LEFT_BRACKET)) {
                             auto size_result = parse_enum_const_expr();
                             if (size_result.err) return 1;
                             if (size_result.value <= 0) {
@@ -2173,6 +2173,10 @@ struct CParser {
         } else if (match(CTokenType.BOOL)) {
             // _Bool - treat as unsigned char for now
             result = &TYPE_UCHAR;
+        } else if (match(CTokenType.INT128)) {
+            result = &TYPE_INT128;
+        } else if (match(CTokenType.UINT128)) {
+            result = &TYPE_UINT128;
         } else if (match(CTokenType.STRUCT)) {
             // struct Name or struct { ... }
             bool has_name = check(CTokenType.IDENTIFIER);

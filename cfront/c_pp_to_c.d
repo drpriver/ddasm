@@ -81,6 +81,8 @@ enum CTokenType : uint {
     AUTO = 624,
     ATOMIC = 625,
     INLINE = 626,
+    INT128 = 627,
+    UINT128 = 628,
 
     // Control flow keywords
     IF = 700,
@@ -325,6 +327,10 @@ struct PPToCConverter {
         if (name.length == 10) {
             if (str_eq(name, "__restrict")) return CTokenType.RESTRICT;
             if (str_eq(name, "__inline__")) return CTokenType.INLINE;
+            if (str_eq(name, "__int128_t")) return CTokenType.INT128;
+        }
+        if (name.length == 11) {
+            if (str_eq(name, "__uint128_t")) return CTokenType.UINT128;
         }
         if (name.length == 12) {
             if (str_eq(name, "__restrict__")) return CTokenType.RESTRICT;
