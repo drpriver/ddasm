@@ -1069,6 +1069,24 @@ struct Machine {
                     uintptr_t val = read_reg();
                     *dst = cast(uint)val;
                 }break;
+                case SREAD1:{
+                    if(int b = begin(SREAD1)) return b;
+                    uintptr_t* dst = get_reg();
+                    byte* src = cast(byte*)read_reg();
+                    *dst = cast(uintptr_t)cast(intptr_t)*src;
+                }break;
+                case SREAD2:{
+                    if(int b = begin(SREAD2)) return b;
+                    uintptr_t* dst = get_reg();
+                    short* src = cast(short*)read_reg();
+                    *dst = cast(uintptr_t)cast(intptr_t)*src;
+                }break;
+                case SREAD4:{
+                    if(int b = begin(SREAD4)) return b;
+                    uintptr_t* dst = get_reg();
+                    int* src = cast(int*)read_reg();
+                    *dst = cast(uintptr_t)cast(intptr_t)*src;
+                }break;
             }
         }
     }

@@ -7,15 +7,17 @@
 #pragma library("SDL2")
   #include <SDL2/SDL.h>
 
-void* gwindow;
-void* grenderer;
-long* gboard;
+SDL_Window* gwindow;
+SDL_Renderer* grenderer;
+typedef signed char Tile;
+Tile* gboard;
 int gwinlose = 0;
-long** gsnake;
+Tile** gsnake;
 int glen;
 int gpaused;
 void main_loop(void);
 void render_and_present(int sx, int sy, int dx, int dy);
+enum {BOARD_SIZE=10, HALF_BOARD_SIZE=5};
 int start(int width, int height){
   srand(time(NULL));
   void* window;
@@ -38,9 +40,9 @@ int start(int width, int height){
   SDL_SetRenderDrawBlendMode(renderer, 1);
   gwindow = window;
   grenderer = renderer;
-  void* board = calloc(10*10, 8);
+  Tile* board = calloc(BOARD_SIZE*BOARD_SIZE, sizeof *board);
   gboard = board;
-  void* snake = calloc(10*10, 8);
+  Tile** snake = calloc(BOARD_SIZE*BOARD_SIZE, sizeof *snake);
   gsnake = snake;
   main_loop();
   free(board);
@@ -70,10 +72,10 @@ void shrink_window(){
   SDL_SetWindowSize(gwindow, w, h);
 }
 
-int has_apple(long* board){
-  for(int y = 0; y < 10; y = y + 1){
-    for(int x = 0; x < 10; x = x + 1){
-      long* p = y*10+x+board;
+int has_apple(Tile* board){
+  for(int y = 0; y < BOARD_SIZE; y = y + 1){
+    for(int x = 0; x < BOARD_SIZE; x = x + 1){
+      Tile* p = y*BOARD_SIZE+x+board;
       if(*p == -1){
         return 1;
       }
@@ -81,11 +83,11 @@ int has_apple(long* board){
   }
   return 0;
 }
-void place_apple(long* board){
+void place_apple(Tile* board){
   for(;;){
-    int y = rand() % 10;
-    int x = rand() % 10;
-    long* p = y*10+x+board;
+    int y = rand() % BOARD_SIZE;
+    int x = rand() % BOARD_SIZE;
+    Tile* p = y*BOARD_SIZE+x+board;
     if(!*p){
       *p = -1;
       return;
@@ -93,10 +95,10 @@ void place_apple(long* board){
   }
 }
 
-void move_snake(long* board, long** snake, int x, int y){
-  long* p;
-  p = board + 10*y+x;
-  long b = *p;
+void move_snake(Tile* board, Tile** snake, int x, int y){
+  Tile* p;
+  p = board + BOARD_SIZE*y+x;
+  Tile b = *p;
   *p = 1;
   if(b == -1){
     snake[glen] = p;
@@ -104,7 +106,7 @@ void move_snake(long* board, long** snake, int x, int y){
     return;
   }
   if(b == 1){
-    if(glen == 10 * 10){
+    if(glen == BOARD_SIZE * BOARD_SIZE){
       gwinlose = 1;
       return;
     }
@@ -112,7 +114,7 @@ void move_snake(long* board, long** snake, int x, int y){
     return;
   }
   int l = glen-1;
-  long* ps = *snake;
+  Tile* ps = *snake;
   *ps = 0;
   for(int i = 0; i < l; i = i + 1){
     snake[i] = snake[i+1];
@@ -120,7 +122,7 @@ void move_snake(long* board, long** snake, int x, int y){
   snake[glen-1] = p;
 }
 
-void simulate(long* board, int x, int y){
+void simulate(Tile* board, int x, int y){
   move_snake(board, gsnake, x, y);
   if(gwinlose) return;
   int apple = has_apple(board);
@@ -128,19 +130,20 @@ void simulate(long* board, int x, int y){
 }
 
 void main_loop(void){
-  long* board = gboard;
+  Tile* board = gboard;
   SDL_Event* event = calloc(1, sizeof(SDL_Event));
   int poll = 1;
   int t = SDL_GetTicks();
   int trigger = 10;
   int tick = trigger-1;
-  board[5*10+5] = 1;
-  gsnake[0] = board +5*10+5;
+  board[HALF_BOARD_SIZE*BOARD_SIZE+HALF_BOARD_SIZE] = 1;
+  gsnake[0] = board +HALF_BOARD_SIZE*BOARD_SIZE+HALF_BOARD_SIZE;
   glen = 1;
   int dx = 0;
   int dy = 1;
-  int x = 5;
-  int y = 5;
+  int x = HALF_BOARD_SIZE;
+  int y = HALF_BOARD_SIZE;
+  int turned = 0;
   for(;;){
     int got_event = 0;
     if(poll){
@@ -152,11 +155,12 @@ void main_loop(void){
             if(!gpaused){
               x = x + dx;
               y = y + dy;
-              if(x == -1) x = 9;
-              if(y == -1) y = 9;
-              if(x == 10) x = 0;
-              if(y == 10) y = 0;
+              if(x == -1) x = BOARD_SIZE-1;
+              if(y == -1) y = BOARD_SIZE-1;
+              if(x == BOARD_SIZE) x = 0;
+              if(y == BOARD_SIZE) y = 0;
               simulate(board, x, y);
+              turned = 0;
             }
             render_and_present(x, y, dx, dy);
           }
@@ -180,18 +184,7 @@ void main_loop(void){
     if(type == SDL_QUIT){
       break;
     }
-    else if(type == SDL_MOUSEBUTTONDOWN){ // mousedown
-      // char* pbutton = event;
-      // char button = pbutton[16];
-      // io.printf("button: %zd\n", button)
-    }
     else if(type == SDL_KEYDOWN){ //keydown
-      // int* key = event->key;
-      // printf("key: %d\n", key);
-      // SDL_Keysym sym = key.keysym;
-      // SDL_Keycode code = sym.sym;
-      // int* psym = event;
-      // SDL_Keycode code = psym[4+1];
       SDL_Keycode code = event->key.keysym.sym;
       if(code == 'q') break;
       else if(code == ' ') gpaused = !gpaused;
@@ -203,57 +196,53 @@ void main_loop(void){
           dy = 0;
         }
       }
-      else if(code == SDLK_LEFT){
-        if(dx != 1){
-          dx = -1;
-          dy = 0;
-        }
-      }
-      else if(code == 's'){
-        if(dy != -1){
-          dx = 0;
-          dy = 1;
-        }
-      }
-      else if(code == SDLK_DOWN){
-        if(dy != -1){
-          dx = 0;
-          dy = 1;
-        }
-      }
-      else if(code == 'd'){
-        if(dx != -1){
-          dx = 1;
-          dy = 0;
-        }
-      }
-      else if(code == SDLK_RIGHT){
-        if(dx != -1){
-          dx = 1;
-          dy = 0;
-        }
-      }
-      else if(code == 'w'){
-        if(dy != 1){
-          dx = 0;
-          dy = -1;
-        }
-      }
-      else if(code == SDLK_UP){
-        if(dy != 1){
-          dx = 0;
-          dy = -1;
-        }
-      }
       else if(code == 'r'){
         gwinlose = 0;
         tick = trigger-1;
-        memset(board, 0, 10*10*8);
-        x = 5;
-        y = 5;
-        board[5*10+5] = 1;
-        gsnake[0] = board +5*10+5;
+        memset(board, 0, BOARD_SIZE*BOARD_SIZE* sizeof *board);
+        x = HALF_BOARD_SIZE;
+        y = HALF_BOARD_SIZE;
+        board[HALF_BOARD_SIZE*BOARD_SIZE+HALF_BOARD_SIZE] = 1;
+        gsnake[0] = board +HALF_BOARD_SIZE*BOARD_SIZE+HALF_BOARD_SIZE;
         glen = 1;
+      }
+      else if(!turned){
+        switch(code){
+          case SDLK_LEFT:
+          case 'a':
+            if(dx != 1){
+              dx = -1;
+              dy = 0;
+              turned = 1;
+            }
+            break;
+          case SDLK_RIGHT:
+          case 'd':
+            if(dx != -1){
+              dx = 1;
+              dy = 0;
+              turned = 1;
+            }
+            break;
+          case SDLK_UP:
+          case 'w':
+            if(dy != 1){
+              dx = 0;
+              dy = -1;
+              turned = 1;
+            }
+            break;
+          case SDLK_DOWN:
+          case 's':
+            if(dy != -1){
+              dx = 0;
+              dy = 1;
+              turned = 1;
+            }
+            break;
+          default:
+            break;
+        }
       }
     }
   }
@@ -261,8 +250,9 @@ void main_loop(void){
 }
 
 void draw_rect(void* renderer, int x, int y, int w, int h){
-    SDL_Rect r = {x, y, w, h};
-    SDL_RenderFillRect(renderer, &r);
+    // SDL_Rect r = {x, y, w, h};
+    // SDL_RenderFillRect(renderer, &r);
+    SDL_RenderFillRect(renderer, &(SDL_Rect){x, y, w, h});
 }
 
 void render_and_present(int sx, int sy, int dx, int dy){
@@ -270,7 +260,7 @@ void render_and_present(int sx, int sy, int dx, int dy){
   int h = 480;
   void* window = gwindow;
   void* renderer = grenderer;
-  long* board = gboard;
+  Tile* board = gboard;
   int winlose = gwinlose;
   SDL_GetWindowSize(window, &w, &h);
   SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0xff);
@@ -378,12 +368,12 @@ void render_and_present(int sx, int sy, int dx, int dy){
     draw_rect(renderer, 16*ww, 14*hh, ww, hh);
   }
   else {
-    int rw = w/10;
-    int rh = h/10;
-    for(int y = 0; y < 10; y = y + 1){
-      for(int x = 0; x < 10; x = x + 1){
-        long* p = y*10+x+board;
-        long val = *p;
+    int rw = w/BOARD_SIZE;
+    int rh = h/BOARD_SIZE;
+    for(int y = 0; y < BOARD_SIZE; y = y + 1){
+      for(int x = 0; x < BOARD_SIZE; x = x + 1){
+        Tile* p = y*BOARD_SIZE+x+board;
+        Tile val = *p;
         if((x == sx) & (y == sy)){
           SDL_SetRenderDrawColor(renderer, 0x0, 0xff, 0xff, 0xff);
         }

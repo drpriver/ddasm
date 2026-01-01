@@ -85,6 +85,9 @@ enum Instruction: uintptr_t {
     WRITE1,
     WRITE2,
     WRITE4,
+    SREAD1,
+    SREAD2,
+    SREAD4,
 }
 
 struct InstructionInfo {
@@ -177,6 +180,9 @@ immutable InstructionInfo[Instruction.max+1] INSTRUCTION_INFOS = [
     InstructionInfo(Instruction.WRITE1,           "WRITE1",           "write1", [AK.REGISTER, AK.REGISTER]),
     InstructionInfo(Instruction.WRITE2,           "WRITE2",           "write2", [AK.REGISTER, AK.REGISTER]),
     InstructionInfo(Instruction.WRITE4,           "WRITE4",           "write4", [AK.REGISTER, AK.REGISTER]),
+    InstructionInfo(Instruction.SREAD1,           "SREAD1",           "sread1", [AK.REGISTER, AK.REGISTER]),
+    InstructionInfo(Instruction.SREAD2,           "SREAD2",           "sread2", [AK.REGISTER, AK.REGISTER]),
+    InstructionInfo(Instruction.SREAD4,           "SREAD4",           "sread4", [AK.REGISTER, AK.REGISTER]),
 ];
 
 Table!(string, Barray!(InstructionInfo))
