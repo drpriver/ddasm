@@ -25,6 +25,7 @@ struct Box(T){
                 allocator.free(pointer, T.sizeof);
             pointer = null;
         }
+        inout(T)[] opIndex() inout {return pointer?pointer[0..1]:null;}
     }
     else {
         U[] data;
@@ -73,5 +74,21 @@ struct Box(T){
                 data = (cast(U*)d.ptr)[0..N];
             }
         }
+        inout(U)[] opIndex() inout {return data;}
     }
+}
+
+
+Box!T
+boxed(T)(Allocator a, T* val){
+    T* copy = (a.alloc!T)(1).ptr;
+    *copy = *val;
+    return Box!T(a, copy);
+}
+
+Box!T
+boxed(T)(Allocator a, T[] val){
+    T[] copy = (a.alloc!T)(val.length);
+    copy[] = val[];
+    return Box!T(a, copy);
 }

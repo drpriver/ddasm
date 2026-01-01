@@ -41,9 +41,9 @@ struct PPToken {
 
     // Check if this token matches a string
     bool matches(str s) const {
-        if (lexeme.length != s.length) return false;
-        for (size_t i = 0; i < lexeme.length; i++) {
-            if (lexeme[i] != s[i]) return false;
+        if(lexeme.length != s.length) return false;
+        for(size_t i = 0; i < lexeme.length; i++){
+            if(lexeme[i] != s[i]) return false;
         }
         return true;
     }
@@ -68,11 +68,12 @@ struct PPMacroDef {
     bool is_variadic;        // Last param is ... or __VA_ARGS__
     bool is_undefined;       // True if #undef'd
     bool is_builtin;         // __FILE__, __LINE__, etc.
+    bool is_null;            // null macro
 
     // Find parameter index by name, -1 if not found
     int find_param(str param_name) const {
-        foreach (i, p; params) {
-            if (str_eq(p, param_name)) return cast(int)i;
+        foreach(i, p; params){
+            if(p == param_name) return cast(int)i;
         }
         return -1;
     }
@@ -82,26 +83,26 @@ struct PPMacroDef {
 struct HideSet {
     Table!(str, bool) hidden;
 
-    static HideSet create(Allocator alloc) {
+    static HideSet create(Allocator alloc){
         HideSet hs;
         hs.hidden.data.allocator = alloc;
         return hs;
     }
 
-    bool is_hidden(str name) {
+    bool is_hidden(str name){
         // Use iteration due to betterC slice comparison issues
-        foreach (item; hidden.items) {
-            if (str_eq(item.key, name)) return true;
+        foreach(item; hidden.items){
+            if(item.key==name) return true;
         }
         return false;
     }
 
     // Create a new hide set with an additional hidden name
-    HideSet with_hidden(str name) {
+    HideSet with_hidden(str name){
         HideSet result;
         result.hidden.data.allocator = hidden.data.allocator;
         // Copy existing
-        foreach (item; hidden.items) {
+        foreach(item; hidden.items){
             result.hidden[item.key] = true;
         }
         // Add new
@@ -125,36 +126,27 @@ struct PPIncludeFrame {
     int line;
 }
 
-// Helper: String equality (betterC safe)
-bool str_eq(str a, str b) {
-    if (a.length != b.length) return false;
-    for (size_t i = 0; i < a.length; i++) {
-        if (a[i] != b[i]) return false;
-    }
-    return true;
-}
-
 // Helper: Check if character is identifier start
-bool is_ident_start(ubyte c) {
+bool is_ident_start(ubyte c){
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
 }
 
 // Helper: Check if character is identifier continuation
-bool is_ident_char(ubyte c) {
+bool is_ident_char(ubyte c){
     return is_ident_start(c) || (c >= '0' && c <= '9');
 }
 
 // Helper: Check if character is digit
-bool is_digit(ubyte c) {
+bool is_digit(ubyte c){
     return c >= '0' && c <= '9';
 }
 
 // Helper: Check if character is hex digit
-bool is_hex_digit(ubyte c) {
+bool is_hex_digit(ubyte c){
     return is_digit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
 }
 
 // Helper: Check if character is whitespace (not newline)
-bool is_pp_whitespace(ubyte c) {
+bool is_pp_whitespace(ubyte c){
     return c == ' ' || c == '\t' || c == '\r';
 }

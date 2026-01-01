@@ -8,22 +8,21 @@ import core.stdc.stdio : fprintf, stderr;
 import dlib.aliases;
 
 // Platform-specific default C library name
-version(OSX) {
+version(OSX){
     enum str DEFAULT_LIBC = "libSystem.B.dylib";
-} else version(linux) {
+} else version(linux){
     enum str DEFAULT_LIBC = "libc.so.6";
 } else {
     enum str DEFAULT_LIBC = "libc";
 }
 
 // Normalize library name - "libc" is a special alias for the platform's C library
-str normalize_lib(str lib) {
-    import cfront.c_pp_token : str_eq;
-    if (lib.length == 0) return DEFAULT_LIBC;
-    if (str_eq(lib, "libc")) return DEFAULT_LIBC;
+str normalize_lib(str lib){
+    if(lib.length == 0) return DEFAULT_LIBC;
+    if(lib == "libc") return DEFAULT_LIBC;
     // Also handle common libc variants
-    if (str_eq(lib, "libc.so.6")) return DEFAULT_LIBC;
-    if (str_eq(lib, "libSystem.B.dylib")) return DEFAULT_LIBC;
+    if(lib == "libc.so.6") return DEFAULT_LIBC;
+    if(lib == "libSystem.B.dylib") return DEFAULT_LIBC;
     return lib;
 }
 import dlib.allocator : Allocator;
@@ -39,20 +38,20 @@ struct RegisterAllocator {
     int alloced;
     int local_max = 0;
 
-    int allocate() {
+    int allocate(){
         int result = alloced++;
-        if (result > local_max) local_max = result;
+        if(result > local_max) local_max = result;
         return result;
     }
 
-    void reset() { alloced = 0; }
-    void reset_to(int r) { alloced = r; }
+    void reset(){ alloced = 0; }
+    void reset_to(int r){ alloced = r; }
 }
 
 struct LabelAllocator {
     int nalloced;
-    int allocate() { return nalloced++; }
-    void reset() { nalloced = 0; }
+    int allocate(){ return nalloced++; }
+    void reset(){ nalloced = 0; }
 }
 
 // Analysis pass to detect which variables need stack allocation
@@ -64,7 +63,7 @@ struct CAnalyzer {
     Allocator allocator;
     int compound_literal_slots;    // Total slots needed for compound literals
 
-    void analyze_function(CFunction* func) {
+    void analyze_function(CFunction* func){
         addr_taken.data.allocator = allocator;
         arrays.data.allocator = allocator;
         structs.data.allocator = allocator;
@@ -75,31 +74,31 @@ struct CAnalyzer {
         all_vars.clear();
         compound_literal_slots = 0;
 
-        foreach (stmt; func.body) {
+        foreach(stmt; func.body){
             analyze_stmt(stmt);
         }
     }
 
-    bool should_use_stack() {
+    bool should_use_stack(){
         // Use stack if any address is taken, any arrays, structs, compound literals, or more than 4 variables
         return addr_taken.count > 0 || arrays.count > 0 || structs.count > 0 || compound_literal_slots > 0 || all_vars[].length > 4;
     }
 
-    void analyze_stmt(CStmt* stmt) {
-        if (stmt is null) return;
-        final switch (stmt.kind) with (CStmtKind) {
+    void analyze_stmt(CStmt* stmt){
+        if(stmt is null) return;
+        final switch(stmt.kind) with (CStmtKind){
             case EXPR:
                 analyze_expr((cast(CExprStmt*)stmt).expression);
                 break;
             case RETURN:
-                if ((cast(CReturnStmt*)stmt).value)
+                if((cast(CReturnStmt*)stmt).value)
                     analyze_expr((cast(CReturnStmt*)stmt).value);
                 break;
             case IF:
                 auto s = cast(CIfStmt*)stmt;
                 analyze_expr(s.condition);
                 analyze_stmt(s.then_branch);
-                if (s.else_branch) analyze_stmt(s.else_branch);
+                if(s.else_branch) analyze_stmt(s.else_branch);
                 break;
             case WHILE:
                 auto s = cast(CWhileStmt*)stmt;
@@ -113,35 +112,35 @@ struct CAnalyzer {
                 break;
             case FOR:
                 auto s = cast(CForStmt*)stmt;
-                if (s.init_stmt) analyze_stmt(s.init_stmt);
-                if (s.condition) analyze_expr(s.condition);
-                if (s.increment) analyze_expr(s.increment);
+                if(s.init_stmt) analyze_stmt(s.init_stmt);
+                if(s.condition) analyze_expr(s.condition);
+                if(s.increment) analyze_expr(s.increment);
                 analyze_stmt(s.body_);
                 break;
             case BLOCK:
-                foreach (s; (cast(CBlock*)stmt).statements)
+                foreach(s; (cast(CBlock*)stmt).statements)
                     analyze_stmt(s);
                 break;
             case VAR_DECL:
                 auto decl = cast(CVarDecl*)stmt;
                 all_vars.push(decl.name.lexeme);  // Track variable name
                 // Track array variables
-                if (decl.var_type && decl.var_type.is_array()) {
+                if(decl.var_type && decl.var_type.is_array()){
                     arrays[decl.name.lexeme] = true;
                 }
                 // Track struct/union variables
-                if (decl.var_type && decl.var_type.is_struct_or_union()) {
+                if(decl.var_type && decl.var_type.is_struct_or_union()){
                     structs[decl.name.lexeme] = true;
                 }
-                if (decl.initializer)
+                if(decl.initializer)
                     analyze_expr(decl.initializer);
                 break;
             case SWITCH:
                 auto s = cast(CSwitchStmt*)stmt;
                 analyze_expr(s.condition);
-                foreach (ref c; s.cases) {
-                    if (c.case_value) analyze_expr(c.case_value);
-                    foreach (cs; c.statements) analyze_stmt(cs);
+                foreach(ref c; s.cases){
+                    if(c.case_value) analyze_expr(c.case_value);
+                    foreach(cs; c.statements) analyze_stmt(cs);
                 }
                 break;
             case GOTO:
@@ -157,11 +156,11 @@ struct CAnalyzer {
         }
     }
 
-    void analyze_expr(CExpr* expr) {
-        if (expr is null) return;
+    void analyze_expr(CExpr* expr){
+        if(expr is null) return;
         expr = expr.ungroup();
 
-        final switch (expr.kind) with (CExprKind) {
+        final switch(expr.kind) with (CExprKind){
             case LITERAL:
             case IDENTIFIER:
                 break;
@@ -173,8 +172,8 @@ struct CAnalyzer {
             case UNARY:
                 auto e = cast(CUnary*)expr;
                 // Check for address-of operator
-                if (e.op == CTokenType.AMP) {
-                    if (auto id = e.operand.as_identifier()) {
+                if(e.op == CTokenType.AMP){
+                    if(auto id = e.operand.as_identifier()){
                         addr_taken[id.name.lexeme] = true;
                     }
                 }
@@ -183,7 +182,7 @@ struct CAnalyzer {
             case CALL:
                 auto e = cast(CCall*)expr;
                 analyze_expr(e.callee);
-                foreach (arg; e.args)
+                foreach(arg; e.args)
                     analyze_expr(arg);
                 break;
             case ASSIGN:
@@ -205,14 +204,14 @@ struct CAnalyzer {
                 analyze_expr((cast(CMemberAccess*)expr).object);
                 break;
             case SIZEOF:
-                if (auto se = cast(CSizeof*)expr)
-                    if (se.sizeof_expr) analyze_expr(se.sizeof_expr);
+                if(auto se = cast(CSizeof*)expr)
+                    if(se.sizeof_expr) analyze_expr(se.sizeof_expr);
                 break;
             case ALIGNOF:
                 break;
             case COUNTOF:
-                if (auto ce = cast(CCountof*)expr)
-                    if (ce.countof_expr) analyze_expr(ce.countof_expr);
+                if(auto ce = cast(CCountof*)expr)
+                    if(ce.countof_expr) analyze_expr(ce.countof_expr);
                 break;
             case VA_ARG:
                 analyze_expr((cast(CVaArg*)expr).va_list_expr);
@@ -220,7 +219,7 @@ struct CAnalyzer {
             case GENERIC:
                 auto e = cast(CGeneric*)expr;
                 analyze_expr(e.controlling);
-                foreach (assoc; e.associations)
+                foreach(assoc; e.associations)
                     analyze_expr(assoc.result);
                 break;
             case TERNARY:
@@ -231,7 +230,7 @@ struct CAnalyzer {
                 break;
             case INIT_LIST:
                 auto e = cast(CInitList*)expr;
-                foreach (elem; e.elements)
+                foreach(elem; e.elements)
                     analyze_expr(elem.value);
                 break;
             case COMPOUND_LITERAL:
@@ -244,7 +243,7 @@ struct CAnalyzer {
         }
     }
 
-    void cleanup() {
+    void cleanup(){
         addr_taken.cleanup();
         arrays.cleanup();
         all_vars.cleanup();
@@ -296,43 +295,43 @@ struct CDasmWriter {
     // Note: Return value uses named register 'rout1', not a numeric register
 
     // Check if a struct/union type can be returned in registers (1-2 registers for <= 16 bytes)
-    static bool struct_fits_in_registers(CType* t) {
-        if (t is null || !t.is_struct_or_union()) return false;
+    static bool struct_fits_in_registers(CType* t){
+        if(t is null || !t.is_struct_or_union()) return false;
         return t.size_of() <= 16;
     }
 
     // Get number of registers needed to return a struct/union (0, 1, or 2)
-    static int struct_return_regs(CType* t) {
-        if (t is null || !t.is_struct_or_union()) return 0;
+    static int struct_return_regs(CType* t){
+        if(t is null || !t.is_struct_or_union()) return 0;
         size_t size = t.size_of();
-        if (size == 0) return 0;
-        if (size <= 8) return 1;
-        if (size <= 16) return 2;
+        if(size == 0) return 0;
+        if(size <= 8) return 1;
+        if(size <= 16) return 2;
         return 0;  // Too big, use hidden pointer
     }
 
     // Get the type of an expression (for pointer arithmetic scaling)
-    CType* get_expr_type(CExpr* e) {
-        if (e is null) return null;
+    CType* get_expr_type(CExpr* e){
+        if(e is null) return null;
         e = e.ungroup();
 
         // If type is already set, return it
-        if (e.type !is null) return e.type;
+        if(e.type !is null) return e.type;
 
-        final switch (e.kind) with (CExprKind) {
+        final switch(e.kind) with (CExprKind){
             case LITERAL:
                 auto lit = e.as_literal;
-                if (lit.value.type == CTokenType.STRING)
+                if(lit.value.type == CTokenType.STRING)
                     return &TYPE_CHAR_PTR;
-                if (lit.value.type == CTokenType.CHAR_LITERAL)
+                if(lit.value.type == CTokenType.CHAR_LITERAL)
                     return &TYPE_CHAR;
                 return &TYPE_INT;  // Integer literals are int
             case IDENTIFIER:
                 auto id = e.as_identifier;
-                if (auto t = id.name.lexeme in var_types) {
+                if(auto t = id.name.lexeme in var_types){
                     CType* typ = *t;
                     // Arrays decay to pointers
-                    if (typ.is_array()) {
+                    if(typ.is_array()){
                         // Return pointer to element type
                         // For type checking purposes, we can use the element_type
                         // but treat it as a pointer for arithmetic
@@ -340,7 +339,7 @@ struct CDasmWriter {
                     }
                     return typ;
                 }
-                if (auto t = id.name.lexeme in global_types)
+                if(auto t = id.name.lexeme in global_types)
                     return *t;
                 return null;
             case BINARY:
@@ -348,17 +347,17 @@ struct CDasmWriter {
                 // For arithmetic, result type follows the pointer if present
                 auto lt = get_expr_type(bin.left);
                 auto rt = get_expr_type(bin.right);
-                if (lt && lt.is_pointer()) return lt;
-                if (rt && rt.is_pointer()) return rt;
+                if(lt && lt.is_pointer()) return lt;
+                if(rt && rt.is_pointer()) return rt;
                 return lt ? lt : rt;
             case UNARY:
                 auto un = e.as_unary;
-                if (un.op == CTokenType.STAR) {
+                if(un.op == CTokenType.STAR){
                     // Dereference: *ptr -> pointed-to type
                     auto pt = get_expr_type(un.operand);
-                    if (pt && pt.is_pointer()) return pt.pointed_to;
+                    if(pt && pt.is_pointer()) return pt.pointed_to;
                 }
-                if (un.op == CTokenType.AMP) {
+                if(un.op == CTokenType.AMP){
                     // Address-of: &x -> pointer to x's type
                     return null;  // Would need to construct pointer type
                 }
@@ -366,8 +365,8 @@ struct CDasmWriter {
             case CALL:
                 // Look up function return type
                 auto call = cast(CCall*)e;
-                if (CIdentifier* id = call.callee.as_identifier()) {
-                    if (CType** rt = id.name.lexeme in func_return_types) {
+                if(CIdentifier* id = call.callee.as_identifier()){
+                    if(CType** rt = id.name.lexeme in func_return_types){
                         return *rt;
                     }
                 }
@@ -377,19 +376,19 @@ struct CDasmWriter {
             case SUBSCRIPT:
                 auto sub = e.as_subscript;
                 auto at = get_expr_type(sub.array);
-                if (at && (at.is_pointer() || at.is_array())) return at.pointed_to;
+                if(at && (at.is_pointer() || at.is_array())) return at.pointed_to;
                 return null;
             case MEMBER_ACCESS:
                 auto ma = e.as_member_access;
                 auto obj_type = get_expr_type(ma.object);
-                if (obj_type is null) return null;
+                if(obj_type is null) return null;
                 // For ->, dereference pointer first
-                if (ma.is_arrow && obj_type.is_pointer()) {
+                if(ma.is_arrow && obj_type.is_pointer()){
                     obj_type = obj_type.pointed_to;
                 }
-                if (obj_type && obj_type.is_struct_or_union()) {
+                if(obj_type && obj_type.is_struct_or_union()){
                     auto field = obj_type.get_field(ma.member.lexeme);
-                    if (field) return field.type;
+                    if(field) return field.type;
                 }
                 return null;
             case CAST:
@@ -404,13 +403,13 @@ struct CDasmWriter {
                 auto gen = cast(CGeneric*)e;
                 CType* ctrl_type = get_expr_type(gen.controlling);
                 CExpr* result = resolve_generic(gen, ctrl_type);
-                if (result) return get_expr_type(result);
+                if(result) return get_expr_type(result);
                 return null;
             case TERNARY:
                 auto tern = cast(CTernary*)e;
                 // Type of ternary is the common type of branches
                 auto tt = get_expr_type(tern.if_true);
-                if (tt) return tt;
+                if(tt) return tt;
                 return get_expr_type(tern.if_false);
             case INIT_LIST:
                 // Init list type is determined by context (array/struct type)
@@ -423,33 +422,33 @@ struct CDasmWriter {
     }
 
     // Check if two types are compatible for _Generic matching
-    static bool types_compatible(CType* a, CType* b) {
-        if (a is null || b is null) return false;
-        if (a is b) return true;
-        if (a.kind != b.kind) return false;
-        if (a.is_unsigned != b.is_unsigned) return false;
+    static bool types_compatible(CType* a, CType* b){
+        if(a is null || b is null) return false;
+        if(a is b) return true;
+        if(a.kind != b.kind) return false;
+        if(a.is_unsigned != b.is_unsigned) return false;
 
         // For pointers, check pointed-to type
-        if (a.kind == CTypeKind.POINTER) {
+        if(a.kind == CTypeKind.POINTER){
             return types_compatible(a.pointed_to, b.pointed_to);
         }
         // For arrays, check element type
-        if (a.kind == CTypeKind.ARRAY) {
+        if(a.kind == CTypeKind.ARRAY){
             return types_compatible(a.pointed_to, b.pointed_to);
         }
         // For structs/unions, compare by name or identity
-        if (a.kind == CTypeKind.STRUCT || a.kind == CTypeKind.UNION) {
-            if (a.struct_name.length > 0 && b.struct_name.length > 0) {
+        if(a.kind == CTypeKind.STRUCT || a.kind == CTypeKind.UNION){
+            if(a.struct_name.length > 0 && b.struct_name.length > 0){
                 return a.struct_name == b.struct_name;
             }
             return a is b;  // anonymous structs must be same instance
         }
         // For functions, check return type and params
-        if (a.kind == CTypeKind.FUNCTION) {
-            if (!types_compatible(a.return_type, b.return_type)) return false;
-            if (a.param_types.length != b.param_types.length) return false;
-            foreach (i, pt; a.param_types) {
-                if (!types_compatible(pt, b.param_types[i])) return false;
+        if(a.kind == CTypeKind.FUNCTION){
+            if(!types_compatible(a.return_type, b.return_type)) return false;
+            if(a.param_types.length != b.param_types.length) return false;
+            foreach(i, pt; a.param_types){
+                if(!types_compatible(pt, b.param_types[i])) return false;
             }
             return true;
         }
@@ -458,12 +457,12 @@ struct CDasmWriter {
     }
 
     // Resolve _Generic - find matching association
-    static CExpr* resolve_generic(CGeneric* gen, CType* ctrl_type) {
+    static CExpr* resolve_generic(CGeneric* gen, CType* ctrl_type){
         CExpr* default_result = null;
-        foreach (assoc; gen.associations) {
-            if (assoc.type is null) {
+        foreach(assoc; gen.associations){
+            if(assoc.type is null){
                 default_result = assoc.result;
-            } else if (types_compatible(ctrl_type, assoc.type)) {
+            } else if(types_compatible(ctrl_type, assoc.type)){
                 return assoc.result;
             }
         }
@@ -471,16 +470,16 @@ struct CDasmWriter {
     }
 
     // Get the read instruction for a given type size and signedness
-    static str read_instr_for_size(size_t size, bool is_unsigned = true) {
-        if (is_unsigned) {
-            switch (size) {
+    static str read_instr_for_size(size_t size, bool is_unsigned = true){
+        if(is_unsigned){
+            switch(size){
                 case 1: return "read1";
                 case 2: return "read2";
                 case 4: return "read4";
                 default: return "read";
             }
         } else {
-            switch (size) {
+            switch(size){
                 case 1: return "sread1";
                 case 2: return "sread2";
                 case 4: return "sread4";
@@ -490,8 +489,8 @@ struct CDasmWriter {
     }
 
     // Get the write instruction for a given type size
-    static str write_instr_for_size(size_t size) {
-        switch (size) {
+    static str write_instr_for_size(size_t size){
+        switch(size){
             case 1: return "write1";
             case 2: return "write2";
             case 4: return "write4";
@@ -500,13 +499,13 @@ struct CDasmWriter {
     }
 
     // Check if a size can be written with a single write instruction (1, 2, 4, or 8 bytes)
-    static bool needs_memcpy(size_t size) {
+    static bool needs_memcpy(size_t size){
         return size != 1 && size != 2 && size != 4 && size != 8;
     }
 
     @disable this();
 
-    this(StringBuilder* s, Allocator a) {
+    this(StringBuilder* s, Allocator a){
         allocator = a;
         sb = s;
         reglocals.data.allocator = a;
@@ -524,7 +523,7 @@ struct CDasmWriter {
         label_table.data.allocator = a;
     }
 
-    void cleanup() {
+    void cleanup(){
         reglocals.cleanup();
         stacklocals.cleanup();
         var_types.cleanup();
@@ -539,7 +538,7 @@ struct CDasmWriter {
         global_types.cleanup();
     }
 
-    void error(CToken token, str message) {
+    void error(CToken token, str message){
         ERROR_OCCURRED = true;
         fprintf(stderr, "%.*s:%d:%d: Code gen error at '%.*s': %.*s\n",
                 cast(int)token.file.length, token.file.ptr,
@@ -556,19 +555,19 @@ struct CDasmWriter {
 
     // Generate a module alias from library name
     // "libc.so.6" -> "Libc", "libfoo.so" -> "Libfoo", "/path/to/libbar.dylib" -> "Libbar"
-    str make_alias(str lib, int counter) {
+    str make_alias(str lib, int counter){
         // Strip directory path
         str name = lib;
-        foreach_reverse (i, c; lib) {
-            if (c == '/' || c == '\\') {
+        foreach_reverse (i, c; lib){
+            if(c == '/' || c == '\\'){
                 name = lib[i+1 .. $];
                 break;
             }
         }
 
         // Strip .so, .dylib, .dll and version suffixes like .so.6
-        foreach (i, c; name) {
-            if (c == '.') {
+        foreach(i, c; name){
+            if(c == '.'){
                 name = name[0 .. i];
                 break;
             }
@@ -577,11 +576,11 @@ struct CDasmWriter {
         StringBuilder sb;
         sb.allocator = allocator;
 
-        if (name.length == 0) {
+        if(name.length == 0){
             sb.writef("Lib%", counter);
         } else {
             // Capitalize first letter
-            if (name[0] >= 'a' && name[0] <= 'z') {
+            if(name[0] >= 'a' && name[0] <= 'z'){
                 sb.writef("%", cast(char)(name[0] - 32));
                 sb.write(name[1 .. $]);
             } else {
@@ -595,7 +594,7 @@ struct CDasmWriter {
     // Main Entry Point
     // =========================================================================
 
-    int generate(CTranslationUnit* unit) {
+    int generate(CTranslationUnit* unit){
         // Collect unique libraries and assign aliases for extern declarations
         Table!(str, str) lib_to_alias;
         lib_to_alias.data.allocator = allocator;
@@ -603,18 +602,18 @@ struct CDasmWriter {
 
         // Build extern_funcs from function declarations (not definitions)
         int lib_counter = 0;
-        foreach (ref func; unit.functions) {
+        foreach(ref func; unit.functions){
             // Skip definitions and static functions
-            if (func.is_definition) continue;
-            if (func.is_static) continue;
+            if(func.is_definition) continue;
+            if(func.is_static) continue;
 
             str fname = func.name.lexeme;
             // Normalize library name and handle SDL special case
             str lib = normalize_lib(func.library);
-            if (lib == "libSDL2.so" && (fname.length < 4 || fname[0..4] != "SDL_")) {
+            if(lib == "libSDL2.so" && (fname.length < 4 || fname[0..4] != "SDL_")){
                 lib = DEFAULT_LIBC;
             }
-            if (lib !in lib_to_alias) {
+            if(lib !in lib_to_alias){
                 // Generate alias from library name
                 str alias_name = make_alias(lib, lib_counter++);
                 lib_to_alias[lib] = alias_name;
@@ -624,12 +623,12 @@ struct CDasmWriter {
         }
 
         // Build extern_objs from extern global variable declarations
-        foreach (ref gvar; unit.globals) {
-            if (!gvar.is_extern) continue;
+        foreach(ref gvar; unit.globals){
+            if(!gvar.is_extern) continue;
 
             str oname = gvar.name.lexeme;
             str lib = normalize_lib(gvar.library);
-            if (lib !in lib_to_alias) {
+            if(lib !in lib_to_alias){
                 str alias_name = make_alias(lib, lib_counter++);
                 lib_to_alias[lib] = alias_name;
             }
@@ -645,18 +644,18 @@ struct CDasmWriter {
 
         // Generate global variables (skip extern objects - they're dlimported)
         bool emitted_any_vars = false;
-        foreach (ref gvar; unit.globals) {
+        foreach(ref gvar; unit.globals){
             // Track global type for all globals (even extern)
             global_types[gvar.name.lexeme] = gvar.var_type;
 
             // Skip extern objects - they're defined in external libraries
-            if (gvar.is_extern) continue;
+            if(gvar.is_extern) continue;
 
             // Generate var declaration
             sb.writef("var % ", gvar.name.lexeme);
-            if (gvar.initializer !is null) {
+            if(gvar.initializer !is null){
                 // Only support constant initializers for now
-                if (CLiteral* lit = gvar.initializer.as_literal()) {
+                if(CLiteral* lit = gvar.initializer.as_literal()){
                     sb.writef("%\n", lit.value.lexeme);
                 } else {
                     // Non-constant initializer - initialize to 0, will set in start
@@ -667,18 +666,18 @@ struct CDasmWriter {
             }
             emitted_any_vars = true;
         }
-        if (emitted_any_vars) sb.write("\n");
+        if(emitted_any_vars) sb.write("\n");
 
         // First pass: collect function return types for struct return handling
         func_return_types.data.allocator = allocator;
-        foreach (ref func; unit.functions) {
+        foreach(ref func; unit.functions){
             func_return_types[func.name.lexeme] = func.return_type;
         }
 
         // Load enum constants
         enum_constants.data.allocator = allocator;
-        foreach (ref edef; unit.enums) {
-            foreach (ref ec; edef.constants) {
+        foreach(ref edef; unit.enums){
+            foreach(ref ec; edef.constants){
                 enum_constants[ec.name] = ec.value;
             }
         }
@@ -691,38 +690,38 @@ struct CDasmWriter {
         Table!(str, CFunction*) func_map;
         func_map.data.allocator = allocator;
         scope(exit) func_map.cleanup();
-        foreach (ref func; unit.functions) {
+        foreach(ref func; unit.functions){
             func_map[func.name.lexeme] = &func;
         }
 
         // First pass: generate non-inline function definitions
-        foreach (ref func; unit.functions) {
-            if (func.is_definition && !func.is_inline) {
-                if (func.name.lexeme == "main") has_main = true;
-                if (func.name.lexeme == "start") has_start = true;
+        foreach(ref func; unit.functions){
+            if(func.is_definition && !func.is_inline){
+                if(func.name.lexeme == "main") has_main = true;
+                if(func.name.lexeme == "start") has_start = true;
                 generated_funcs[func.name.lexeme] = true;
                 int err = gen_function(&func);
-                if (err) return err;
+                if(err) return err;
             }
         }
 
         // Iteratively generate inline functions that are called
         // Keep going until no new inline functions are needed
         bool made_progress = true;
-        while (made_progress) {
+        while(made_progress){
             made_progress = false;
-            foreach (ref item; called_funcs.items()) {
+            foreach(ref item; called_funcs.items()){
                 str fname = item.key;
                 // Skip if already generated
-                if (fname in generated_funcs) continue;
+                if(fname in generated_funcs) continue;
                 // Find the function
-                if (auto fp = fname in func_map) {
+                if(auto fp = fname in func_map){
                     CFunction* func = *fp;
                     // Only generate if it's an inline definition
-                    if (func.is_definition && func.is_inline) {
+                    if(func.is_definition && func.is_inline){
                         generated_funcs[fname] = true;
                         int err = gen_function(func);
-                        if (err) return err;
+                        if(err) return err;
                         made_progress = true;  // Generated a new function, may have added more calls
                     }
                 }
@@ -730,7 +729,7 @@ struct CDasmWriter {
         }
 
         // If there's a main() but no start(), generate start wrapper
-        if (has_main && !has_start) {
+        if(has_main && !has_start){
             sb.write("function start 0\n");
             sb.write("    call function main 0\n");
             sb.write("    ret\n");
@@ -742,7 +741,7 @@ struct CDasmWriter {
 
         // Generate dlimport blocks for used external symbols (functions and objects)
         // Collect symbols by library first, then emit
-        if (used_funcs.count > 0 || used_objs.count > 0) {
+        if(used_funcs.count > 0 || used_objs.count > 0){
             // Build a list of (library, symbol list) pairs
             // We'll collect function/object info per library
             Table!(str, bool) lib_has_symbols;
@@ -750,24 +749,24 @@ struct CDasmWriter {
             scope(exit) lib_has_symbols.cleanup();
 
             // First pass: determine which libraries have symbols to emit
-            foreach (ref func; unit.functions) {
+            foreach(ref func; unit.functions){
                 str fname = func.name.lexeme;
-                if (fname !in used_funcs) continue;
-                if (func.is_definition) continue;
-                if (func.is_static) continue;
-                if (func.return_type is null) continue;
+                if(fname !in used_funcs) continue;
+                if(func.is_definition) continue;
+                if(func.is_static) continue;
+                if(func.return_type is null) continue;
 
                 str lib = normalize_lib(func.library);
-                if (lib == "libSDL2.so" && (fname.length < 4 || fname[0..4] != "SDL_")) {
+                if(lib == "libSDL2.so" && (fname.length < 4 || fname[0..4] != "SDL_")){
                     lib = DEFAULT_LIBC;
                 }
                 lib_has_symbols[lib] = true;
             }
 
-            foreach (ref gvar; unit.globals) {
+            foreach(ref gvar; unit.globals){
                 str oname = gvar.name.lexeme;
-                if (oname !in used_objs) continue;
-                if (!gvar.is_extern) continue;
+                if(oname !in used_objs) continue;
+                if(!gvar.is_extern) continue;
 
                 str lib = normalize_lib(gvar.library);
                 lib_has_symbols[lib] = true;
@@ -775,9 +774,9 @@ struct CDasmWriter {
 
             // Second pass: emit dlimport blocks per library
             bool first_lib = true;
-            foreach (item; lib_has_symbols.items) {
+            foreach(item; lib_has_symbols.items){
                 str lib = item.key;
-                if (!first_lib) sb.write("\n");
+                if(!first_lib) sb.write("\n");
                 first_lib = false;
 
                 str alias_name = lib_to_alias[lib];
@@ -785,41 +784,41 @@ struct CDasmWriter {
                 sb.writef("  \"%\"\n", lib);
 
                 // Emit functions from this library
-                foreach (ref func; unit.functions) {
+                foreach(ref func; unit.functions){
                     str fname = func.name.lexeme;
-                    if (fname !in used_funcs) continue;
-                    if (func.is_definition) continue;
-                    if (func.is_static) continue;
-                    if (func.return_type is null) continue;
+                    if(fname !in used_funcs) continue;
+                    if(func.is_definition) continue;
+                    if(func.is_static) continue;
+                    if(func.return_type is null) continue;
 
                     str flib = normalize_lib(func.library);
-                    if (flib == "libSDL2.so" && (fname.length < 4 || fname[0..4] != "SDL_")) {
+                    if(flib == "libSDL2.so" && (fname.length < 4 || fname[0..4] != "SDL_")){
                         flib = DEFAULT_LIBC;
                     }
-                    if (flib != lib) continue;
+                    if(flib != lib) continue;
 
                     ubyte n_ret = func.return_type.is_void() ? 0 : 1;
                     auto n_params = func.params.length > 8 ? 8 : func.params.length;
                     sb.writef("  % % %", fname, n_params, n_ret);
-                    if (func.is_varargs) sb.write(" varargs");
+                    if(func.is_varargs) sb.write(" varargs");
                     sb.write("\n");
                 }
 
                 // Emit objects from this library
-                foreach (ref gvar; unit.globals) {
+                foreach(ref gvar; unit.globals){
                     str oname = gvar.name.lexeme;
-                    if (oname !in used_objs) continue;
-                    if (!gvar.is_extern) continue;
+                    if(oname !in used_objs) continue;
+                    if(!gvar.is_extern) continue;
 
                     str olib = normalize_lib(gvar.library);
-                    if (olib != lib) continue;
+                    if(olib != lib) continue;
 
                     sb.writef("  % object\n", oname);
                 }
 
                 sb.write("end\n");
             }
-            if (lib_has_symbols.count > 0) sb.write("\n");
+            if(lib_has_symbols.count > 0) sb.write("\n");
         }
 
         // Append the code (globals and functions)
@@ -833,11 +832,11 @@ struct CDasmWriter {
     // =========================================================================
 
     // Parse a character literal lexeme (e.g., "'q'" or "'\n'") and return its integer value
-    static int parse_char_literal(str lex) {
-        if (lex.length < 3) return 0;
+    static int parse_char_literal(str lex){
+        if(lex.length < 3) return 0;
         char c = lex[1];  // Skip opening quote
-        if (c == '\\' && lex.length >= 4) {
-            switch (lex[2]) {
+        if(c == '\\' && lex.length >= 4){
+            switch(lex[2]){
                 case 'n': c = '\n'; break;
                 case 't': c = '\t'; break;
                 case 'r': c = '\r'; break;
@@ -851,25 +850,25 @@ struct CDasmWriter {
     }
 
     // Count total stack slots needed for variable declarations in statements
-    static int count_var_slots(CStmt*[] stmts) {
+    static int count_var_slots(CStmt*[] stmts){
         int count = 0;
-        foreach (stmt; stmts) {
-            if (stmt.kind == CStmtKind.VAR_DECL) {
+        foreach(stmt; stmts){
+            if(stmt.kind == CStmtKind.VAR_DECL){
                 auto decl = cast(CVarDecl*)stmt;
                 count += cast(int)decl.var_type.stack_slots();
-            } else if (stmt.kind == CStmtKind.BLOCK) {
+            } else if(stmt.kind == CStmtKind.BLOCK){
                 count += count_var_slots((cast(CBlock*)stmt).statements);
-            } else if (stmt.kind == CStmtKind.IF) {
+            } else if(stmt.kind == CStmtKind.IF){
                 auto s = cast(CIfStmt*)stmt;
-                if (s.then_branch) count += count_var_slots((&s.then_branch)[0..1]);
-                if (s.else_branch) count += count_var_slots((&s.else_branch)[0..1]);
-            } else if (stmt.kind == CStmtKind.WHILE) {
+                if(s.then_branch) count += count_var_slots((&s.then_branch)[0..1]);
+                if(s.else_branch) count += count_var_slots((&s.else_branch)[0..1]);
+            } else if(stmt.kind == CStmtKind.WHILE){
                 auto s = cast(CWhileStmt*)stmt;
-                if (s.body) count += count_var_slots((&s.body)[0..1]);
-            } else if (stmt.kind == CStmtKind.FOR) {
+                if(s.body) count += count_var_slots((&s.body)[0..1]);
+            } else if(stmt.kind == CStmtKind.FOR){
                 auto s = cast(CForStmt*)stmt;
-                if (s.init_stmt) count += count_var_slots((&s.init_stmt)[0..1]);
-                if (s.body_) count += count_var_slots((&s.body_)[0..1]);
+                if(s.init_stmt) count += count_var_slots((&s.init_stmt)[0..1]);
+                if(s.body_) count += count_var_slots((&s.body_)[0..1]);
             }
         }
         return count;
@@ -879,9 +878,9 @@ struct CDasmWriter {
     // Function Generation
     // =========================================================================
 
-    int gen_function(CFunction* func) {
+    int gen_function(CFunction* func){
         funcdepth++;
-        scope(exit) {
+        scope(exit){
             funcdepth--;
             reglocals.cleanup();
             stacklocals.cleanup();
@@ -890,7 +889,7 @@ struct CDasmWriter {
             arrays.cleanup();
             regallocator.reset();
             labelallocator.reset();
-            if (label_table.count > 0) label_table.cleanup();  // Reset label mappings for new function
+            if(label_table.count > 0) label_table.cleanup();  // Reset label mappings for new function
             use_stack = false;
             stack_offset = 1;  // Reset to 1 (slot 0 is saved RBP)
             current_return_type = null;
@@ -912,19 +911,19 @@ struct CDasmWriter {
         scope(exit) analyzer.cleanup();
 
         // Copy address-taken and array info
-        foreach (ref item; analyzer.addr_taken.items()) {
+        foreach(ref item; analyzer.addr_taken.items()){
             addr_taken[item.key] = true;
         }
-        foreach (ref item; analyzer.arrays.items()) {
+        foreach(ref item; analyzer.arrays.items()){
             arrays[item.key] = true;
         }
         // Use stack if any address is taken OR if we have many variables (> 4)
         use_stack = analyzer.should_use_stack();
 
         // Also force stack if any parameters are structs/unions or we use hidden return pointer
-        if (uses_hidden_return_ptr) use_stack = true;
-        foreach (ref param; func.params) {
-            if (param.type.is_struct_or_union()) {
+        if(uses_hidden_return_ptr) use_stack = true;
+        foreach(ref param; func.params){
+            if(param.type.is_struct_or_union()){
                 use_stack = true;
                 break;
             }
@@ -932,13 +931,13 @@ struct CDasmWriter {
 
         // First, count how many stack slots we need
         int num_stack_slots = 0;
-        if (use_stack) {
+        if(use_stack){
             // Reserve slot for hidden return pointer if returning large struct
-            if (uses_hidden_return_ptr) {
+            if(uses_hidden_return_ptr){
                 num_stack_slots += 1;
             }
             // Count parameters (struct params need multiple slots)
-            foreach (ref param; func.params) {
+            foreach(ref param; func.params){
                 num_stack_slots += cast(int)param.type.stack_slots();
             }
             // Count local variables, accounting for array sizes
@@ -952,8 +951,8 @@ struct CDasmWriter {
 
         // Calculate total register slots needed for parameters
         int total_param_slots = arg_offset;
-        foreach (ref param; func.params) {
-            if (param.type.is_struct_or_union() && struct_fits_in_registers(param.type)) {
+        foreach(ref param; func.params){
+            if(param.type.is_struct_or_union() && struct_fits_in_registers(param.type)){
                 total_param_slots += struct_return_regs(param.type);
             } else {
                 total_param_slots += 1;
@@ -964,7 +963,7 @@ struct CDasmWriter {
         sb.writef("function % %\n", func.name.lexeme, total_param_slots);
 
         // Set up stack frame if we have address-taken variables
-        if (use_stack) {
+        if(use_stack){
             sb.write("    push rbp\n");
             sb.write("    move rbp rsp\n");
             // Allocate all stack slots upfront (slots 1..n, so need n+1 slots total for push safety)
@@ -972,7 +971,7 @@ struct CDasmWriter {
         }
 
         // Save hidden return pointer if returning large struct
-        if (uses_hidden_return_ptr && use_stack) {
+        if(uses_hidden_return_ptr && use_stack){
             return_ptr_slot = stack_offset++;
             sb.writef("    local_write % rarg1\n", P(return_ptr_slot));
         }
@@ -981,29 +980,29 @@ struct CDasmWriter {
         int current_reg_slot = arg_offset;
 
         // Move arguments from rarg registers to locals
-        foreach (i, ref param; func.params) {
+        foreach(i, ref param; func.params){
             str pname = param.name.lexeme;
             var_types[pname] = param.type;
 
             int reg_slot = current_reg_slot;
             int regs_used = 1;
-            if (param.type.is_struct_or_union() && struct_fits_in_registers(param.type)) {
+            if(param.type.is_struct_or_union() && struct_fits_in_registers(param.type)){
                 regs_used = struct_return_regs(param.type);
             }
             current_reg_slot += regs_used;
 
-            if (use_stack) {
+            if(use_stack){
                 int slot = stack_offset;
                 int num_slots = cast(int)param.type.stack_slots();
                 stack_offset += num_slots;
                 stacklocals[pname] = slot;
 
-                if (param.type.is_struct_or_union()) {
-                    if (struct_fits_in_registers(param.type)) {
+                if(param.type.is_struct_or_union()){
+                    if(struct_fits_in_registers(param.type)){
                         // Small struct: received in 1-2 registers, store to stack
                         sb.writef("    add r0 rbp %\n", P(slot));
                         sb.writef("    write r0 rarg%\n", 1 + reg_slot);
-                        if (regs_used > 1) {
+                        if(regs_used > 1){
                             sb.write("    add r0 r0 8\n");
                             sb.writef("    write r0 rarg%\n", 2 + reg_slot);
                         }
@@ -1024,14 +1023,14 @@ struct CDasmWriter {
         }
 
         // Generate body
-        foreach (stmt; func.body) {
+        foreach(stmt; func.body){
             int err = gen_statement(stmt);
-            if (err) return err;
+            if(err) return err;
         }
 
         // Add implicit return if needed
-        if (func.body.length == 0 || func.body[$ - 1].kind != CStmtKind.RETURN) {
-            if (use_stack) {
+        if(func.body.length == 0 || func.body[$ - 1].kind != CStmtKind.RETURN){
+            if(use_stack){
                 sb.write("    move rsp rbp\n");
                 sb.write("    pop rbp\n");
             }
@@ -1046,8 +1045,8 @@ struct CDasmWriter {
     // Statement Generation
     // =========================================================================
 
-    int gen_statement(CStmt* stmt) {
-        final switch (stmt.kind) with (CStmtKind) {
+    int gen_statement(CStmt* stmt){
+        final switch(stmt.kind) with (CStmtKind){
             case EXPR:     return gen_expr_stmt(cast(CExprStmt*)stmt);
             case RETURN:   return gen_return(cast(CReturnStmt*)stmt);
             case IF:       return gen_if(cast(CIfStmt*)stmt);
@@ -1065,22 +1064,22 @@ struct CDasmWriter {
         }
     }
 
-    int gen_expr_stmt(CExprStmt* stmt) {
+    int gen_expr_stmt(CExprStmt* stmt){
         int before = regallocator.alloced;
         int err = gen_expression(stmt.expression, TARGET_IS_NOTHING);
         regallocator.reset_to(before);
         return err;
     }
 
-    int gen_return(CReturnStmt* stmt) {
-        if (stmt.value !is null) {
+    int gen_return(CReturnStmt* stmt){
+        if(stmt.value !is null){
             int before = regallocator.alloced;
 
-            if (uses_hidden_return_ptr) {
+            if(uses_hidden_return_ptr){
                 // Large struct return (> 16 bytes): copy to hidden return pointer
                 int src_reg = regallocator.allocate();
                 int err = gen_struct_address(stmt.value, src_reg);
-                if (err) return err;
+                if(err) return err;
 
                 int dst_reg = regallocator.allocate();
                 sb.writef("    local_read r% %\n", dst_reg, P(return_ptr_slot));
@@ -1090,17 +1089,17 @@ struct CDasmWriter {
 
                 // Return the pointer in rout1
                 sb.writef("    move rout1 r%\n", dst_reg);
-            } else if (returns_struct) {
+            } else if(returns_struct){
                 // Small struct return (<= 16 bytes): return in registers
                 int src_reg = regallocator.allocate();
                 int err = gen_struct_address(stmt.value, src_reg);
-                if (err) return err;
+                if(err) return err;
 
                 size_t struct_size = current_return_type.size_of();
                 int num_regs = struct_return_regs(current_return_type);
 
                 // Load struct data into return registers
-                if (struct_size <= 8) {
+                if(struct_size <= 8){
                     // Read 8 bytes into rout1
                     sb.writef("    read rout1 r%\n", src_reg);
                 } else {
@@ -1113,12 +1112,12 @@ struct CDasmWriter {
                 // Non-struct return: just move value to rout1
                 int temp = regallocator.allocate();
                 int err = gen_expression(stmt.value, temp);
-                if (err) return err;
+                if(err) return err;
                 sb.writef("    move rout1 r%\n", temp);
             }
             regallocator.reset_to(before);
         }
-        if (use_stack) {
+        if(use_stack){
             sb.write("    move rsp rbp\n");
             sb.write("    pop rbp\n");
         }
@@ -1126,44 +1125,44 @@ struct CDasmWriter {
         return 0;
     }
 
-    int gen_if(CIfStmt* stmt) {
+    int gen_if(CIfStmt* stmt){
         int after_label = labelallocator.allocate();
 
         // Generate condition
         int before = regallocator.alloced;
         int cond = regallocator.allocate();
         int err = gen_expression(stmt.condition, cond);
-        if (err) return err;
+        if(err) return err;
         regallocator.reset_to(before);
 
         sb.writef("    cmp r% 0\n", cond);
 
-        if (stmt.else_branch !is null) {
+        if(stmt.else_branch !is null){
             int else_label = labelallocator.allocate();
             sb.writef("    jump eq label L%\n", else_label);
 
             err = gen_statement(stmt.then_branch);
-            if (err) return err;
+            if(err) return err;
 
             sb.writef("    move rip label L%\n", after_label);
             sb.writef("  label L%\n", else_label);
 
             err = gen_statement(stmt.else_branch);
-            if (err) return err;
+            if(err) return err;
         } else {
             sb.writef("    jump eq label L%\n", after_label);
             err = gen_statement(stmt.then_branch);
-            if (err) return err;
+            if(err) return err;
         }
 
         sb.writef("  label L%\n", after_label);
         return 0;
     }
 
-    int gen_while(CWhileStmt* stmt) {
+    int gen_while(CWhileStmt* stmt){
         int prev_continue = current_continue_target;
         int prev_break = current_break_target;
-        scope(exit) {
+        scope(exit){
             current_continue_target = prev_continue;
             current_break_target = prev_break;
         }
@@ -1179,24 +1178,24 @@ struct CDasmWriter {
         int before = regallocator.alloced;
         int cond = regallocator.allocate();
         int err = gen_expression(stmt.condition, cond);
-        if (err) return err;
+        if(err) return err;
         regallocator.reset_to(before);
 
         sb.writef("    cmp r% 0\n", cond);
         sb.writef("    jump eq label L%\n", after_label);
 
         err = gen_statement(stmt.body);
-        if (err) return err;
+        if(err) return err;
 
         sb.writef("    move rip label L%\n", top_label);
         sb.writef("  label L%\n", after_label);
         return 0;
     }
 
-    int gen_do_while(CDoWhileStmt* stmt) {
+    int gen_do_while(CDoWhileStmt* stmt){
         int prev_continue = current_continue_target;
         int prev_break = current_break_target;
-        scope(exit) {
+        scope(exit){
             current_continue_target = prev_continue;
             current_break_target = prev_break;
         }
@@ -1211,14 +1210,14 @@ struct CDasmWriter {
         sb.writef("  label L%\n", top_label);
 
         int err = gen_statement(stmt.body);
-        if (err) return err;
+        if(err) return err;
 
         // Condition check
         sb.writef("  label L%\n", cond_label);
         int before = regallocator.alloced;
         int cond = regallocator.allocate();
         err = gen_expression(stmt.condition, cond);
-        if (err) return err;
+        if(err) return err;
         regallocator.reset_to(before);
 
         sb.writef("    cmp r% 0\n", cond);
@@ -1228,18 +1227,18 @@ struct CDasmWriter {
         return 0;
     }
 
-    int gen_for(CForStmt* stmt) {
+    int gen_for(CForStmt* stmt){
         int prev_continue = current_continue_target;
         int prev_break = current_break_target;
-        scope(exit) {
+        scope(exit){
             current_continue_target = prev_continue;
             current_break_target = prev_break;
         }
 
         // Initializer
-        if (stmt.init_stmt !is null) {
+        if(stmt.init_stmt !is null){
             int err = gen_statement(stmt.init_stmt);
-            if (err) return err;
+            if(err) return err;
         }
 
         int top_label = labelallocator.allocate();
@@ -1251,11 +1250,11 @@ struct CDasmWriter {
         sb.writef("  label L%\n", top_label);
 
         // Condition
-        if (stmt.condition !is null) {
+        if(stmt.condition !is null){
             int before = regallocator.alloced;
             int cond = regallocator.allocate();
             int err = gen_expression(stmt.condition, cond);
-            if (err) return err;
+            if(err) return err;
             regallocator.reset_to(before);
 
             sb.writef("    cmp r% 0\n", cond);
@@ -1264,14 +1263,14 @@ struct CDasmWriter {
 
         // Body
         int err = gen_statement(stmt.body_);
-        if (err) return err;
+        if(err) return err;
 
         // Increment
         sb.writef("  label L%\n", incr_label);
-        if (stmt.increment !is null) {
+        if(stmt.increment !is null){
             int before = regallocator.alloced;
             err = gen_expression(stmt.increment, TARGET_IS_NOTHING);
-            if (err) return err;
+            if(err) return err;
             regallocator.reset_to(before);
         }
 
@@ -1280,9 +1279,9 @@ struct CDasmWriter {
         return 0;
     }
 
-    int gen_switch(CSwitchStmt* stmt) {
+    int gen_switch(CSwitchStmt* stmt){
         int prev_break = current_break_target;
-        scope(exit) {
+        scope(exit){
             current_break_target = prev_break;
         }
 
@@ -1293,27 +1292,27 @@ struct CDasmWriter {
         int before = regallocator.alloced;
         int cond_reg = regallocator.allocate();
         int err = gen_expression(stmt.condition, cond_reg);
-        if (err) return err;
+        if(err) return err;
 
         // Allocate labels for each case
         auto case_labels = make_barray!int(allocator);
         int default_label = -1;  // -1 means no default
 
-        foreach (ref c; stmt.cases) {
+        foreach(ref c; stmt.cases){
             int lbl = labelallocator.allocate();
             case_labels ~= lbl;
-            if (c.is_default) {
+            if(c.is_default){
                 default_label = lbl;
             }
         }
 
         // Generate jump table: compare and jump to matching case
-        foreach (i, ref c; stmt.cases) {
-            if (!c.is_default) {
+        foreach(i, ref c; stmt.cases){
+            if(!c.is_default){
                 // Generate comparison
                 int case_reg = regallocator.allocate();
                 err = gen_expression(c.case_value, case_reg);
-                if (err) return err;
+                if(err) return err;
 
                 sb.writef("    cmp r% r%\n", cond_reg, case_reg);
                 sb.writef("    jump eq label L%\n", case_labels[i]);
@@ -1322,7 +1321,7 @@ struct CDasmWriter {
         }
 
         // If no case matched, jump to default or end
-        if (default_label >= 0) {
+        if(default_label >= 0){
             sb.writef("    move rip label L%\n", default_label);
         } else {
             sb.writef("    move rip label L%\n", end_label);
@@ -1331,11 +1330,11 @@ struct CDasmWriter {
         regallocator.reset_to(before);
 
         // Generate case bodies (fallthrough behavior)
-        foreach (i, ref c; stmt.cases) {
+        foreach(i, ref c; stmt.cases){
             sb.writef("  label L%\n", case_labels[i]);
-            foreach (s; c.statements) {
+            foreach(s; c.statements){
                 err = gen_statement(s);
-                if (err) return err;
+                if(err) return err;
             }
             // Note: no implicit jump here - fallthrough to next case
         }
@@ -1345,8 +1344,8 @@ struct CDasmWriter {
     }
 
     // Get or allocate a label number for a named label
-    int get_label_number(str name) {
-        if (auto p = name in label_table) {
+    int get_label_number(str name){
+        if(auto p = name in label_table){
             return *p;
         }
         int lbl = labelallocator.allocate();
@@ -1354,34 +1353,34 @@ struct CDasmWriter {
         return lbl;
     }
 
-    int gen_goto(CGotoStmt* stmt) {
+    int gen_goto(CGotoStmt* stmt){
         str label_name = stmt.label.lexeme;
         int lbl = get_label_number(label_name);
         sb.writef("    move rip label L%\n", lbl);
         return 0;
     }
 
-    int gen_label(CLabelStmt* stmt) {
+    int gen_label(CLabelStmt* stmt){
         str label_name = stmt.label.lexeme;
         int lbl = get_label_number(label_name);
         sb.writef("  label L%\n", lbl);
 
         // Generate the statement following the label
-        if (stmt.statement !is null) {
+        if(stmt.statement !is null){
             return gen_statement(stmt.statement);
         }
         return 0;
     }
 
-    int gen_block(CBlock* stmt) {
-        foreach (s; stmt.statements) {
+    int gen_block(CBlock* stmt){
+        foreach(s; stmt.statements){
             int err = gen_statement(s);
-            if (err) return err;
+            if(err) return err;
         }
         return 0;
     }
 
-    int gen_var_decl(CVarDecl* stmt) {
+    int gen_var_decl(CVarDecl* stmt){
         str name = stmt.name.lexeme;
         var_types[name] = stmt.var_type;
 
@@ -1389,11 +1388,11 @@ struct CDasmWriter {
         bool is_array = stmt.var_type.is_array();
         bool is_struct = stmt.var_type.is_struct_or_union();
 
-        if (use_stack) {
+        if(use_stack){
             // All variables go on stack when use_stack is true
             int slot = stack_offset;
 
-            if (is_struct) {
+            if(is_struct){
                 // Structs/unions need multiple slots based on size
                 size_t num_slots = stmt.var_type.stack_slots();
                 stack_offset += cast(int)num_slots;
@@ -1406,8 +1405,8 @@ struct CDasmWriter {
                 regallocator.reset_to(before);
 
                 // Handle struct initializer if present
-                if (stmt.initializer !is null) {
-                    if (CInitList* init_list = stmt.initializer.as_init_list()) {
+                if(stmt.initializer !is null){
+                    if(CInitList* init_list = stmt.initializer.as_init_list()){
                         before = regallocator.alloced;
                         addr_reg = regallocator.allocate();
                         int val_reg = regallocator.allocate();
@@ -1418,16 +1417,16 @@ struct CDasmWriter {
                         // Only limit when there are no designators (pure positional)
                         // With designators, multiple elements can target sub-fields of same field
                         bool has_designators = false;
-                        foreach (e; init_list.elements) {
-                            if (e.designators.length > 0) {
+                        foreach(e; init_list.elements){
+                            if(e.designators.length > 0){
                                 has_designators = true;
                                 break;
                             }
                         }
-                        if (!has_designators && num_elems > fields.length) num_elems = fields.length;
+                        if(!has_designators && num_elems > fields.length) num_elems = fields.length;
 
                         size_t field_idx = 0;
-                        for (size_t i = 0; i < num_elems; i++) {
+                        for(size_t i = 0; i < num_elems; i++){
                             auto elem = init_list.elements[i];
 
                             size_t offset;
@@ -1435,27 +1434,27 @@ struct CDasmWriter {
                             bool is_chained = false;
 
                             // Handle designators
-                            if (elem.designators.length > 0) {
+                            if(elem.designators.length > 0){
                                 // Traverse all designators to compute final offset and type
                                 offset = 0;
                                 CType* current_type = stmt.var_type;
 
-                                foreach (di, desig; elem.designators) {
-                                    if (desig.kind == CDesignatorKind.FIELD) {
-                                        if (current_type.kind != CTypeKind.STRUCT) {
+                                foreach(di, desig; elem.designators){
+                                    if(desig.kind == CDesignatorKind.FIELD){
+                                        if(current_type.kind != CTypeKind.STRUCT){
                                             error(desig.token, "Field designator on non-struct type");
                                             return 1;
                                         }
                                         auto cur_fields = current_type.fields;
                                         bool found = false;
-                                        foreach (f; cur_fields) {
-                                            if (f.name == desig.field_name) {
+                                        foreach(f; cur_fields){
+                                            if(f.name == desig.field_name){
                                                 offset += f.offset;
                                                 current_type = f.type;
                                                 // Update field_idx for continuation (only for first designator)
-                                                if (di == 0) {
-                                                    for (size_t fi = 0; fi < fields.length; fi++) {
-                                                        if (fields[fi].name == desig.field_name) {
+                                                if(di == 0){
+                                                    for(size_t fi = 0; fi < fields.length; fi++){
+                                                        if(fields[fi].name == desig.field_name){
                                                             field_idx = fi + 1;
                                                             break;
                                                         }
@@ -1465,12 +1464,12 @@ struct CDasmWriter {
                                                 break;
                                             }
                                         }
-                                        if (!found) {
+                                        if(!found){
                                             error(desig.token, "Unknown field in designator");
                                             return 1;
                                         }
                                     } else { // INDEX
-                                        if (!current_type.is_array()) {
+                                        if(!current_type.is_array()){
                                             error(desig.token, "Index designator on non-array type");
                                             return 1;
                                         }
@@ -1483,7 +1482,7 @@ struct CDasmWriter {
                                 is_chained = elem.designators.length > 1;
                             } else {
                                 // Positional: use field_idx
-                                if (field_idx >= fields.length) break;
+                                if(field_idx >= fields.length) break;
                                 offset = fields[field_idx].offset;
                                 field_type = fields[field_idx].type;
                                 field_idx++;
@@ -1492,48 +1491,48 @@ struct CDasmWriter {
                             size_t field_size = field_type.size_of();
 
                             // Check if field value is a nested init list (for nested struct)
-                            if (CInitList* nested_init = elem.value.as_init_list()) {
-                                if (field_type.kind == CTypeKind.STRUCT) {
+                            if(CInitList* nested_init = elem.value.as_init_list()){
+                                if(field_type.kind == CTypeKind.STRUCT){
                                     // Initialize nested struct field
                                     auto nested_fields = field_type.fields;
                                     size_t num_nested = nested_init.elements.length;
-                                    if (num_nested > nested_fields.length) num_nested = nested_fields.length;
+                                    if(num_nested > nested_fields.length) num_nested = nested_fields.length;
 
                                     size_t nested_field_idx = 0;
-                                    for (size_t j = 0; j < num_nested; j++) {
+                                    for(size_t j = 0; j < num_nested; j++){
                                         auto nested_elem = nested_init.elements[j];
 
                                         // Handle field designators in nested init
-                                        if (nested_elem.designators.length > 0) {
-                                            if (nested_elem.designators[0].kind != CDesignatorKind.FIELD) {
+                                        if(nested_elem.designators.length > 0){
+                                            if(nested_elem.designators[0].kind != CDesignatorKind.FIELD){
                                                 error(nested_elem.designators[0].token, "Expected field designator");
                                                 return 1;
                                             }
                                             str fname = nested_elem.designators[0].field_name;
                                             bool found = false;
-                                            for (size_t fi = 0; fi < nested_fields.length; fi++) {
-                                                if (nested_fields[fi].name == fname) {
+                                            for(size_t fi = 0; fi < nested_fields.length; fi++){
+                                                if(nested_fields[fi].name == fname){
                                                     nested_field_idx = fi;
                                                     found = true;
                                                     break;
                                                 }
                                             }
-                                            if (!found) {
+                                            if(!found){
                                                 error(nested_elem.designators[0].token, "Unknown field");
                                                 return 1;
                                             }
                                         }
 
-                                        if (nested_field_idx >= nested_fields.length) break;
+                                        if(nested_field_idx >= nested_fields.length) break;
 
                                         int err = gen_expression(nested_elem.value, val_reg);
-                                        if (err) return err;
+                                        if(err) return err;
 
                                         size_t nested_offset = offset + nested_fields[nested_field_idx].offset;
                                         size_t nested_size = nested_fields[nested_field_idx].type.size_of();
                                         int nested_slot = slot + cast(int)(nested_offset / 8);
                                         sb.writef("    add r% rbp %\n", addr_reg, P(nested_slot));
-                                        if (nested_offset % 8 != 0) {
+                                        if(nested_offset % 8 != 0){
                                             sb.writef("    add r% r% %\n", addr_reg, addr_reg, nested_offset % 8);
                                         }
                                         sb.writef("    % r% r%\n", write_instr_for_size(nested_size), addr_reg, val_reg);
@@ -1543,24 +1542,24 @@ struct CDasmWriter {
                                     error(elem.value.token, "Nested initializer for non-struct field");
                                     return 1;
                                 }
-                            } else if (field_type.kind == CTypeKind.STRUCT && needs_memcpy(field_size)) {
+                            } else if(field_type.kind == CTypeKind.STRUCT && needs_memcpy(field_size)){
                                 // Large struct field - need memcpy
                                 int src_reg = val_reg;
                                 int err = gen_struct_address(elem.value, src_reg);
-                                if (err) return err;
+                                if(err) return err;
                                 int field_slot = slot + cast(int)(offset / 8);
                                 sb.writef("    add r% rbp %\n", addr_reg, P(field_slot));
-                                if (offset % 8 != 0) {
+                                if(offset % 8 != 0){
                                     sb.writef("    add r% r% %\n", addr_reg, addr_reg, offset % 8);
                                 }
                                 sb.writef("    memcpy r% r% %\n", addr_reg, src_reg, field_size);
                             } else {
                                 // Scalar field (or small struct <= 8 bytes)
                                 int err = gen_expression(elem.value, val_reg);
-                                if (err) return err;
+                                if(err) return err;
                                 int field_slot = slot + cast(int)(offset / 8);
                                 sb.writef("    add r% rbp %\n", addr_reg, P(field_slot));
-                                if (offset % 8 != 0) {
+                                if(offset % 8 != 0){
                                     sb.writef("    add r% r% %\n", addr_reg, addr_reg, offset % 8);
                                 }
                                 sb.writef("    % r% r%\n", write_instr_for_size(field_size), addr_reg, val_reg);
@@ -1580,7 +1579,7 @@ struct CDasmWriter {
 
                         // src = address of source struct
                         int err = gen_struct_address(stmt.initializer, src_reg);
-                        if (err) return err;
+                        if(err) return err;
 
                         // memcpy
                         sb.writef("    memcpy r% r% %\n", dst_reg, src_reg, struct_size);
@@ -1588,21 +1587,21 @@ struct CDasmWriter {
                         regallocator.reset_to(before);
                     }
                 }
-            } else if (is_array) {
+            } else if(is_array){
                 // Arrays need multiple slots
                 size_t arr_size = stmt.var_type.array_size;
                 stack_offset += cast(int)arr_size;
 
                 // Handle array initializer
-                if (stmt.initializer !is null) {
-                    if (CLiteral* lit = stmt.initializer.as_literal()) {
-                        if (lit.value.type == CTokenType.STRING) {
+                if(stmt.initializer !is null){
+                    if(CLiteral* lit = stmt.initializer.as_literal()){
+                        if(lit.value.type == CTokenType.STRING){
                             // String literal initializer for char array
                             // Compute string length (excluding quotes, accounting for escapes)
                             str lex = lit.value.lexeme;
                             size_t str_len = 0;
-                            for (size_t i = 1; i < lex.length - 1; i++) {
-                                if (lex[i] == '\\' && i + 1 < lex.length - 1) i++;  // Skip escape
+                            for(size_t i = 1; i < lex.length - 1; i++){
+                                if(lex[i] == '\\' && i + 1 < lex.length - 1) i++;  // Skip escape
                                 str_len++;
                             }
                             str_len++;  // Include null terminator
@@ -1627,7 +1626,7 @@ struct CDasmWriter {
                             error(stmt.stmt.token, "Array initializers must be string literals or initializer lists");
                             return 1;
                         }
-                    } else if (CInitList* init_list = stmt.initializer.as_init_list()) {
+                    } else if(CInitList* init_list = stmt.initializer.as_init_list()){
                         // Brace-enclosed initializer list for array
                         int before = regallocator.alloced;
                         int addr_reg = regallocator.allocate();
@@ -1645,7 +1644,7 @@ struct CDasmWriter {
                         size_t num_elems = init_list.elements.length;
 
                         size_t current_idx = 0;
-                        for (size_t i = 0; i < num_elems; i++) {
+                        for(size_t i = 0; i < num_elems; i++){
                             auto elem = init_list.elements[i];
 
                             size_t offset;
@@ -1653,14 +1652,14 @@ struct CDasmWriter {
                             bool is_chained = false;
 
                             // Handle designators
-                            if (elem.designators.length > 0) {
+                            if(elem.designators.length > 0){
                                 // Traverse all designators to compute final offset and type
                                 offset = 0;
                                 CType* current_type = stmt.var_type;
 
-                                foreach (di, desig; elem.designators) {
-                                    if (desig.kind == CDesignatorKind.INDEX) {
-                                        if (!current_type.is_array()) {
+                                foreach(di, desig; elem.designators){
+                                    if(desig.kind == CDesignatorKind.INDEX){
+                                        if(!current_type.is_array()){
                                             error(desig.token, "Index designator on non-array type");
                                             return 1;
                                         }
@@ -1668,25 +1667,25 @@ struct CDasmWriter {
                                         offset += idx * current_type.pointed_to.size_of();
                                         current_type = current_type.pointed_to;
                                         // Update current_idx for continuation (only for first designator)
-                                        if (di == 0) {
+                                        if(di == 0){
                                             current_idx = idx + 1;
                                         }
                                     } else { // FIELD
-                                        if (current_type.kind != CTypeKind.STRUCT) {
+                                        if(current_type.kind != CTypeKind.STRUCT){
                                             error(desig.token, "Field designator on non-struct type");
                                             return 1;
                                         }
                                         auto cur_fields = current_type.fields;
                                         bool found = false;
-                                        foreach (f; cur_fields) {
-                                            if (f.name == desig.field_name) {
+                                        foreach(f; cur_fields){
+                                            if(f.name == desig.field_name){
                                                 offset += f.offset;
                                                 current_type = f.type;
                                                 found = true;
                                                 break;
                                             }
                                         }
-                                        if (!found) {
+                                        if(!found){
                                             error(desig.token, "Unknown field in designator");
                                             return 1;
                                         }
@@ -1697,7 +1696,7 @@ struct CDasmWriter {
                                 is_chained = elem.designators.length > 1;
                             } else {
                                 // Positional: use current_idx
-                                if (current_idx >= arr_size) break;
+                                if(current_idx >= arr_size) break;
                                 offset = current_idx * elem_size;
                                 target_type = stmt.var_type.pointed_to;
                                 current_idx++;
@@ -1707,21 +1706,21 @@ struct CDasmWriter {
                             size_t target_size = target_type.size_of();
 
                             // For chained designators, initialize directly at target
-                            if (is_chained) {
-                                if (target_type.kind == CTypeKind.STRUCT && needs_memcpy(target_size)) {
+                            if(is_chained){
+                                if(target_type.kind == CTypeKind.STRUCT && needs_memcpy(target_size)){
                                     int src_reg = val_reg;
                                     int err = gen_struct_address(elem.value, src_reg);
-                                    if (err) return err;
+                                    if(err) return err;
                                     sb.writef("    add r% rbp %\n", addr_reg, P(target_slot));
-                                    if (offset % 8 != 0) {
+                                    if(offset % 8 != 0){
                                         sb.writef("    add r% r% %\n", addr_reg, addr_reg, offset % 8);
                                     }
                                     sb.writef("    memcpy r% r% %\n", addr_reg, src_reg, target_size);
                                 } else {
                                     int err = gen_expression(elem.value, val_reg);
-                                    if (err) return err;
+                                    if(err) return err;
                                     sb.writef("    add r% rbp %\n", addr_reg, P(target_slot));
-                                    if (offset % 8 != 0) {
+                                    if(offset % 8 != 0){
                                         sb.writef("    add r% r% %\n", addr_reg, addr_reg, offset % 8);
                                     }
                                     sb.writef("    % r% r%\n", write_instr_for_size(target_size), addr_reg, val_reg);
@@ -1730,49 +1729,49 @@ struct CDasmWriter {
                             }
 
                             // Check if element is a nested init list (for array of structs)
-                            if (CInitList* nested_init = elem.value.as_init_list()) {
+                            if(CInitList* nested_init = elem.value.as_init_list()){
                                 CType* elem_type = stmt.var_type.pointed_to;
-                                if (elem_type.kind == CTypeKind.STRUCT) {
+                                if(elem_type.kind == CTypeKind.STRUCT){
                                     // Initialize nested struct at this array position
                                     auto fields = elem_type.fields;
                                     size_t num_nested = nested_init.elements.length;
-                                    if (num_nested > fields.length) num_nested = fields.length;
+                                    if(num_nested > fields.length) num_nested = fields.length;
 
                                     size_t field_idx = 0;
-                                    for (size_t j = 0; j < num_nested; j++) {
+                                    for(size_t j = 0; j < num_nested; j++){
                                         auto nested_elem = nested_init.elements[j];
 
                                         // Handle field designators in nested init
-                                        if (nested_elem.designators.length > 0) {
-                                            if (nested_elem.designators[0].kind != CDesignatorKind.FIELD) {
+                                        if(nested_elem.designators.length > 0){
+                                            if(nested_elem.designators[0].kind != CDesignatorKind.FIELD){
                                                 error(nested_elem.designators[0].token, "Expected field designator");
                                                 return 1;
                                             }
                                             str field_name = nested_elem.designators[0].field_name;
                                             bool found = false;
-                                            for (size_t fi = 0; fi < fields.length; fi++) {
-                                                if (fields[fi].name == field_name) {
+                                            for(size_t fi = 0; fi < fields.length; fi++){
+                                                if(fields[fi].name == field_name){
                                                     field_idx = fi;
                                                     found = true;
                                                     break;
                                                 }
                                             }
-                                            if (!found) {
+                                            if(!found){
                                                 error(nested_elem.designators[0].token, "Unknown field");
                                                 return 1;
                                             }
                                         }
 
-                                        if (field_idx >= fields.length) break;
+                                        if(field_idx >= fields.length) break;
 
                                         int err = gen_expression(nested_elem.value, val_reg);
-                                        if (err) return err;
+                                        if(err) return err;
 
                                         size_t field_offset = offset + fields[field_idx].offset;
                                         size_t field_size = fields[field_idx].type.size_of();
                                         int field_slot = slot + cast(int)(field_offset / 8);
                                         sb.writef("    add r% rbp %\n", addr_reg, P(field_slot));
-                                        if (field_offset % 8 != 0) {
+                                        if(field_offset % 8 != 0){
                                             sb.writef("    add r% r% %\n", addr_reg, addr_reg, field_offset % 8);
                                         }
                                         sb.writef("    % r% r%\n", write_instr_for_size(field_size), addr_reg, val_reg);
@@ -1783,22 +1782,22 @@ struct CDasmWriter {
                                     return 1;
                                 }
                             } else {
-                                if (target_type.kind == CTypeKind.STRUCT && needs_memcpy(target_size)) {
+                                if(target_type.kind == CTypeKind.STRUCT && needs_memcpy(target_size)){
                                     // Large struct element - need memcpy
                                     int src_reg = val_reg;
                                     int err = gen_struct_address(elem.value, src_reg);
-                                    if (err) return err;
+                                    if(err) return err;
                                     sb.writef("    add r% rbp %\n", addr_reg, P(target_slot));
-                                    if (offset % 8 != 0) {
+                                    if(offset % 8 != 0){
                                         sb.writef("    add r% r% %\n", addr_reg, addr_reg, offset % 8);
                                     }
                                     sb.writef("    memcpy r% r% %\n", addr_reg, src_reg, target_size);
                                 } else {
                                     // Scalar element (or small struct <= 8 bytes)
                                     int err = gen_expression(elem.value, val_reg);
-                                    if (err) return err;
+                                    if(err) return err;
                                     sb.writef("    add r% rbp %\n", addr_reg, P(target_slot));
-                                    if (offset % 8 != 0) {
+                                    if(offset % 8 != 0){
                                         sb.writef("    add r% r% %\n", addr_reg, addr_reg, offset % 8);
                                     }
                                     sb.writef("    % r% r%\n", write_instr_for_size(target_size), addr_reg, val_reg);
@@ -1818,11 +1817,11 @@ struct CDasmWriter {
                 stack_offset++;
 
                 // Initialize on stack using local_write
-                if (stmt.initializer !is null) {
+                if(stmt.initializer !is null){
                     int before = regallocator.alloced;
                     int temp = regallocator.allocate();
                     int err = gen_expression(stmt.initializer, temp);
-                    if (err) return err;
+                    if(err) return err;
                     sb.writef("    local_write % r%\n", P(slot), temp);
                     regallocator.reset_to(before);
                 } else {
@@ -1837,9 +1836,9 @@ struct CDasmWriter {
             reglocals[name] = r;
 
             // Initialize if needed
-            if (stmt.initializer !is null) {
+            if(stmt.initializer !is null){
                 int err = gen_expression(stmt.initializer, r);
-                if (err) return err;
+                if(err) return err;
             } else {
                 // Default initialize to 0
                 sb.writef("    move r% 0\n", r);
@@ -1849,8 +1848,8 @@ struct CDasmWriter {
         return 0;
     }
 
-    int gen_break(CBreakStmt* stmt) {
-        if (current_break_target == -1) {
+    int gen_break(CBreakStmt* stmt){
+        if(current_break_target == -1){
             error(stmt.stmt.token, "'break' outside of loop");
             return 1;
         }
@@ -1858,8 +1857,8 @@ struct CDasmWriter {
         return 0;
     }
 
-    int gen_continue(CContinueStmt* stmt) {
-        if (current_continue_target == -1) {
+    int gen_continue(CContinueStmt* stmt){
+        if(current_continue_target == -1){
             error(stmt.stmt.token, "'continue' outside of loop");
             return 1;
         }
@@ -1871,10 +1870,10 @@ struct CDasmWriter {
     // Expression Generation
     // =========================================================================
 
-    int gen_expression(CExpr* e, int target) {
+    int gen_expression(CExpr* e, int target){
         e = e.ungroup();
 
-        final switch (e.kind) with (CExprKind) {
+        final switch(e.kind) with (CExprKind){
             case LITERAL:    return gen_literal(cast(CLiteral*)e, target);
             case IDENTIFIER: return gen_identifier(cast(CIdentifier*)e, target);
             case BINARY:     return gen_binary(cast(CBinary*)e, target);
@@ -1901,23 +1900,23 @@ struct CDasmWriter {
         }
     }
 
-    int gen_literal(CLiteral* expr, int target) {
-        if (target == TARGET_IS_NOTHING) return 0;
+    int gen_literal(CLiteral* expr, int target){
+        if(target == TARGET_IS_NOTHING) return 0;
 
         str lex = expr.value.lexeme;
 
-        if (expr.value.type == CTokenType.STRING) {
+        if(expr.value.type == CTokenType.STRING){
             // String literal - emit as-is (DASM handles strings)
             sb.writef("    move r% %\n", target, lex);
-        } else if (expr.value.type == CTokenType.CHAR_LITERAL) {
+        } else if(expr.value.type == CTokenType.CHAR_LITERAL){
             // Character literal - parse the value
             sb.writef("    move r% %\n", target, parse_char_literal(lex));
-        } else if (expr.value.type == CTokenType.HEX) {
+        } else if(expr.value.type == CTokenType.HEX){
             // Hex literal - strip suffix (u, U, l, L) if present
             str hex_val = lex;
-            while (hex_val.length > 0) {
+            while(hex_val.length > 0){
                 ubyte last = hex_val[$ - 1];
-                if (last == 'u' || last == 'U' || last == 'l' || last == 'L') {
+                if(last == 'u' || last == 'U' || last == 'l' || last == 'L'){
                     hex_val = hex_val[0 .. $ - 1];
                 } else {
                     break;
@@ -1927,9 +1926,9 @@ struct CDasmWriter {
         } else {
             // Integer literal - strip suffix (u, U, l, L) if present
             str int_val = lex;
-            while (int_val.length > 0) {
+            while(int_val.length > 0){
                 ubyte last = int_val[$ - 1];
-                if (last == 'u' || last == 'U' || last == 'l' || last == 'L') {
+                if(last == 'u' || last == 'U' || last == 'l' || last == 'L'){
                     int_val = int_val[0 .. $ - 1];
                 } else {
                     break;
@@ -1941,12 +1940,12 @@ struct CDasmWriter {
         return 0;
     }
 
-    int gen_cast(CCast* expr, int target) {
+    int gen_cast(CCast* expr, int target){
         // Cast just generates the operand - type conversion is implicit at this level
         return gen_expression(expr.operand, target);
     }
 
-    int gen_compound_literal(CCompoundLiteral* expr, int target) {
+    int gen_compound_literal(CCompoundLiteral* expr, int target){
         // Compound literal: (type){...}
         // Use pre-allocated stack space and initialize, return address
         CType* lit_type = expr.literal_type;
@@ -1967,55 +1966,55 @@ struct CDasmWriter {
 
         // Handle initializer
         CExpr* init_expr = expr.initializer();
-        if (init_expr !is null) {
-            if (CInitList* init_list = init_expr.as_init_list()) {
-                if (lit_type.is_struct_or_union()) {
+        if(init_expr !is null){
+            if(CInitList* init_list = init_expr.as_init_list()){
+                if(lit_type.is_struct_or_union()){
                     // Initialize struct fields (with flattening for array fields)
                     auto fields = lit_type.fields;
                     size_t num_elems = init_list.elements.length;
                     size_t field_idx = 0;
                     size_t array_elem_idx = 0;  // For flattening into array fields
 
-                    for (size_t i = 0; i < num_elems; i++) {
+                    for(size_t i = 0; i < num_elems; i++){
                         auto elem = init_list.elements[i];
                         size_t offset;
                         size_t write_size;
 
                         // Handle designators
-                        if (elem.designators.length > 0) {
-                            if (elem.designators[0].kind == CDesignatorKind.FIELD) {
+                        if(elem.designators.length > 0){
+                            if(elem.designators[0].kind == CDesignatorKind.FIELD){
                                 str fname = elem.designators[0].field_name;
                                 bool found = false;
-                                foreach (fi, f; fields) {
-                                    if (f.name == fname) {
+                                foreach(fi, f; fields){
+                                    if(f.name == fname){
                                         field_idx = fi;
                                         array_elem_idx = 0;
                                         found = true;
                                         break;
                                     }
                                 }
-                                if (!found) continue;
+                                if(!found) continue;
                             } else {
                                 continue;  // Skip non-field designators in struct
                             }
                         }
 
                         // Check if we've exhausted all fields
-                        if (field_idx >= fields.length) break;
+                        if(field_idx >= fields.length) break;
 
                         auto field = &fields[field_idx];
 
                         // Check if field is an array and value is scalar (flattening)
-                        if (field.type.is_array() && elem.value.as_init_list() is null) {
+                        if(field.type.is_array() && elem.value.as_init_list() is null){
                             // Flatten scalar into array field
                             size_t elem_size = field.type.element_size();
                             size_t array_size = field.type.array_size;
 
-                            if (array_elem_idx >= array_size) {
+                            if(array_elem_idx >= array_size){
                                 // Array is full, move to next field
                                 field_idx++;
                                 array_elem_idx = 0;
-                                if (field_idx >= fields.length) break;
+                                if(field_idx >= fields.length) break;
                                 field = &fields[field_idx];
                             }
 
@@ -2031,31 +2030,31 @@ struct CDasmWriter {
                         }
 
                         int err = gen_expression(elem.value, val_reg);
-                        if (err) return err;
+                        if(err) return err;
 
                         int field_slot = slot + cast(int)(offset / 8);
                         sb.writef("    add r% rbp %\n", addr_reg, P(field_slot));
-                        if (offset % 8 != 0) {
+                        if(offset % 8 != 0){
                             sb.writef("    add r% r% %\n", addr_reg, addr_reg, offset % 8);
                         }
                         sb.writef("    % r% r%\n", write_instr_for_size(write_size), addr_reg, val_reg);
                     }
-                } else if (lit_type.is_array()) {
+                } else if(lit_type.is_array()){
                     // Initialize array elements
                     size_t elem_size = lit_type.element_size();
                     size_t num_elems = init_list.elements.length;
                     size_t current_idx = 0;
 
-                    for (size_t i = 0; i < num_elems; i++) {
+                    for(size_t i = 0; i < num_elems; i++){
                         auto elem = init_list.elements[i];
                         size_t offset = current_idx * elem_size;
 
                         int err = gen_expression(elem.value, val_reg);
-                        if (err) return err;
+                        if(err) return err;
 
                         int elem_slot = slot + cast(int)(offset / 8);
                         sb.writef("    add r% rbp %\n", addr_reg, P(elem_slot));
-                        if (offset % 8 != 0) {
+                        if(offset % 8 != 0){
                             sb.writef("    add r% r% %\n", addr_reg, addr_reg, offset % 8);
                         }
                         sb.writef("    % r% r%\n", write_instr_for_size(elem_size), addr_reg, val_reg);
@@ -2068,21 +2067,21 @@ struct CDasmWriter {
         regallocator.reset_to(before);
 
         // Return address of the compound literal
-        if (target != TARGET_IS_NOTHING) {
+        if(target != TARGET_IS_NOTHING){
             sb.writef("    add r% rbp %\n", target, P(slot));
         }
         return 0;
     }
 
-    int gen_identifier(CIdentifier* expr, int target) {
-        if (target == TARGET_IS_NOTHING) return 0;
+    int gen_identifier(CIdentifier* expr, int target){
+        if(target == TARGET_IS_NOTHING) return 0;
 
         str name = expr.name.lexeme;
 
         // Check if this is an array - arrays decay to pointers (address of first element)
-        if (CType** vt = name in var_types) {
-            if ((*vt).is_array()) {
-                if (int* offset = name in stacklocals) {
+        if(CType** vt = name in var_types){
+            if((*vt).is_array()){
+                if(int* offset = name in stacklocals){
                     // Array-to-pointer decay: compute address of first element
                     sb.writef("    add r% rbp %\n", target, P(*offset));
                     return 0;
@@ -2090,39 +2089,39 @@ struct CDasmWriter {
             }
         }
 
-        if (int* r = name in reglocals) {
-            if (target == *r) return 0;  // Already in target register
+        if(int* r = name in reglocals){
+            if(target == *r) return 0;  // Already in target register
             sb.writef("    move r% r%\n", target, *r);
             return 0;
         }
 
-        if (int* offset = name in stacklocals) {
+        if(int* offset = name in stacklocals){
             // Read from stack
             sb.writef("    local_read r% %\n", target, P(*offset));
             return 0;
         }
 
         // Check for enum constant
-        if (long* val = name in enum_constants) {
+        if(long* val = name in enum_constants){
             sb.writef("    move r% %\n", target, *val);
             return 0;
         }
 
         // Must be a global or function
         // Track if it's an extern object
-        if (name in extern_objs) {
+        if(name in extern_objs){
             used_objs[name] = true;
         }
 
         // Get the global's type for sized read
-        if (CType** gtype = name in global_types) {
+        if(CType** gtype = name in global_types){
             size_t var_size = (*gtype) ? (*gtype).size_of() : 8;
             bool is_unsigned = (*gtype) ? (*gtype).is_unsigned : true;
             // Get address into a temp register, then do sized read
             int before = regallocator.alloced;
             int addr_reg = regallocator.allocate();
             // For extern objects, use qualified name with module alias
-            if (str* mod_alias = name in extern_objs) {
+            if(str* mod_alias = name in extern_objs){
                 sb.writef("    move r% var %.%\n", addr_reg, *mod_alias, name);
             } else {
                 sb.writef("    move r% var %\n", addr_reg, name);
@@ -2131,7 +2130,7 @@ struct CDasmWriter {
             regallocator.reset_to(before);
         } else {
             // Unknown global (function pointer?) - use regular read
-            if (str* mod_alias = name in extern_objs) {
+            if(str* mod_alias = name in extern_objs){
                 sb.writef("    read r% var %.%\n", target, *mod_alias, name);
             } else {
                 sb.writef("    read r% var %\n", target, name);
@@ -2140,32 +2139,145 @@ struct CDasmWriter {
         return 0;
     }
 
-    int gen_binary(CBinary* expr, int target) {
-        if (target == TARGET_IS_NOTHING) {
+    int gen_binary(CBinary* expr, int target){
+        if(target == TARGET_IS_NOTHING){
             // Still need to evaluate for side effects
             int before = regallocator.alloced;
             int tmp = regallocator.allocate();
             int err = gen_expression(expr.left, tmp);
-            if (err) return err;
+            if(err) return err;
             err = gen_expression(expr.right, tmp);
             regallocator.reset_to(before);
             return err;
         }
 
         // Comma operator: evaluate left for side effects, return right value
-        if (expr.op == CTokenType.COMMA) {
+        if(expr.op == CTokenType.COMMA){
             int before = regallocator.alloced;
             int tmp = regallocator.allocate();
             int err = gen_expression(expr.left, tmp);
             regallocator.reset_to(before);
-            if (err) return err;
+            if(err) return err;
             return gen_expression(expr.right, target);
         }
+
+        // Constant folding: if both operands are literals, compute at compile time
+        CLiteral* left_lit = expr.left.as_literal();
+        CLiteral* right_lit = expr.right.as_literal();
+        if(left_lit !is null && right_lit !is null){
+            import dlib.parse_numbers : parse_unsigned_human;
+
+            // Check if either operand is unsigned (has u/U suffix)
+            static bool is_unsigned_literal(str lex){
+                if(lex.length == 0) return false;
+                char last = lex[$ - 1];
+                if(last == 'u' || last == 'U') return true;
+                if(lex.length >= 2){
+                    char prev = lex[$ - 2];
+                    // Check for ul, uL, Ul, UL, lu, lU, Lu, LU
+                    if((last == 'l' || last == 'L') && (prev == 'u' || prev == 'U')) return true;
+                    if((last == 'u' || last == 'U') && (prev == 'l' || prev == 'L')) return true;
+                }
+                return false;
+            }
+
+            bool is_unsigned = is_unsigned_literal(left_lit.value.lexeme) ||
+                               is_unsigned_literal(right_lit.value.lexeme);
+
+            // Parse left operand
+            ulong lhs_val;
+            if(left_lit.value.type == CTokenType.CHAR_LITERAL){
+                lhs_val = parse_char_literal(left_lit.value.lexeme);
+            } else {
+                auto parsed = parse_unsigned_human(left_lit.value.lexeme);
+                if(parsed.errored) goto no_fold;
+                lhs_val = parsed.value;
+            }
+
+            // Parse right operand
+            ulong rhs_val;
+            if(right_lit.value.type == CTokenType.CHAR_LITERAL){
+                rhs_val = parse_char_literal(right_lit.value.lexeme);
+            } else {
+                auto parsed = parse_unsigned_human(right_lit.value.lexeme);
+                if(parsed.errored) goto no_fold;
+                rhs_val = parsed.value;
+            }
+
+            // Compute result at compile time
+            ulong result;
+            switch(expr.op) with (CTokenType){
+                // These operations are the same for signed/unsigned at bit level
+                case PLUS:          result = lhs_val + rhs_val; break;
+                case MINUS:         result = lhs_val - rhs_val; break;
+                case STAR:          result = lhs_val * rhs_val; break;
+                case AMP:           result = lhs_val & rhs_val; break;
+                case PIPE:          result = lhs_val | rhs_val; break;
+                case CARET:         result = lhs_val ^ rhs_val; break;
+                case LESS_LESS:     result = lhs_val << rhs_val; break;
+                case EQUAL_EQUAL:   result = lhs_val == rhs_val ? 1 : 0; break;
+                case BANG_EQUAL:    result = lhs_val != rhs_val ? 1 : 0; break;
+                case AMP_AMP:       result = (lhs_val != 0 && rhs_val != 0) ? 1 : 0; break;
+                case PIPE_PIPE:     result = (lhs_val != 0 || rhs_val != 0) ? 1 : 0; break;
+
+                // These differ for signed vs unsigned
+                case SLASH:
+                    if(rhs_val == 0) goto no_fold;
+                    if(is_unsigned)
+                        result = lhs_val / rhs_val;
+                    else
+                        result = cast(ulong)(cast(long)lhs_val / cast(long)rhs_val);
+                    break;
+                case PERCENT:
+                    if(rhs_val == 0) goto no_fold;
+                    if(is_unsigned)
+                        result = lhs_val % rhs_val;
+                    else
+                        result = cast(ulong)(cast(long)lhs_val % cast(long)rhs_val);
+                    break;
+                case GREATER_GREATER:
+                    if(is_unsigned)
+                        result = lhs_val >> rhs_val;
+                    else
+                        result = cast(ulong)(cast(long)lhs_val >> rhs_val);
+                    break;
+                case LESS:
+                    if(is_unsigned)
+                        result = lhs_val < rhs_val ? 1 : 0;
+                    else
+                        result = cast(long)lhs_val < cast(long)rhs_val ? 1 : 0;
+                    break;
+                case LESS_EQUAL:
+                    if(is_unsigned)
+                        result = lhs_val <= rhs_val ? 1 : 0;
+                    else
+                        result = cast(long)lhs_val <= cast(long)rhs_val ? 1 : 0;
+                    break;
+                case GREATER:
+                    if(is_unsigned)
+                        result = lhs_val > rhs_val ? 1 : 0;
+                    else
+                        result = cast(long)lhs_val > cast(long)rhs_val ? 1 : 0;
+                    break;
+                case GREATER_EQUAL:
+                    if(is_unsigned)
+                        result = lhs_val >= rhs_val ? 1 : 0;
+                    else
+                        result = cast(long)lhs_val >= cast(long)rhs_val ? 1 : 0;
+                    break;
+                default:
+                    goto no_fold;
+            }
+
+            sb.writef("    move r% %\n", target, result);
+            return 0;
+        }
+    no_fold:
 
         int before = regallocator.alloced;
         int lhs = target;
         int err = gen_expression(expr.left, lhs);
-        if (err) return err;
+        if(err) return err;
 
         // Check for pointer/array arithmetic scaling
         CType* left_type = get_expr_type(expr.left);
@@ -2177,24 +2289,24 @@ struct CDasmWriter {
 
         // Check for literal RHS optimization
         CExpr* right = expr.right;
-        if (CLiteral* lit = right.as_literal()) {
+        if(CLiteral* lit = right.as_literal()){
             str rhs = lit.value.lexeme;
 
             // Convert char literals to numeric value
             __gshared char[16] char_lit_buf;
-            if (lit.value.type == CTokenType.CHAR_LITERAL) {
+            if(lit.value.type == CTokenType.CHAR_LITERAL){
                 import core.stdc.stdio : snprintf;
                 int len = snprintf(char_lit_buf.ptr, 16, "%d", parse_char_literal(rhs));
                 rhs = cast(str)char_lit_buf[0 .. len];
             }
 
-            switch (expr.op) with (CTokenType) {
+            switch(expr.op) with (CTokenType){
                 case PLUS:
-                    if (left_elem_size > 1) {
+                    if(left_elem_size > 1){
                         // Pointer + integer: scale integer by element size at compile time
                         import dlib.parse_numbers : parse_unsigned_human;
                         auto parsed = parse_unsigned_human(rhs);
-                        if (!parsed.errored) {
+                        if(!parsed.errored){
                             ulong scaled = parsed.value * left_elem_size;
                             sb.writef("    add r% r% %\n", target, lhs, scaled);
                             break;
@@ -2204,11 +2316,11 @@ struct CDasmWriter {
                     break;
                 case MINUS:
                     // Literals can't be pointers, so this is ptr - int
-                    if (left_elem_size > 1) {
+                    if(left_elem_size > 1){
                         // Pointer - integer: scale integer by element size at compile time
                         import dlib.parse_numbers : parse_unsigned_human;
                         auto parsed = parse_unsigned_human(rhs);
-                        if (!parsed.errored) {
+                        if(!parsed.errored){
                             ulong scaled = parsed.value * left_elem_size;
                             sb.writef("    sub r% r% %\n", target, lhs, scaled);
                             break;
@@ -2273,7 +2385,7 @@ struct CDasmWriter {
                 case AMP_AMP:
                     // Logical AND: result is 1 iff both lhs and rhs are non-zero
                     // For literal RHS, we know at compile time if rhs is 0
-                    if (rhs == "0") {
+                    if(rhs == "0"){
                         // x && 0 is always 0
                         sb.writef("    move r% 0\n", target);
                     } else {
@@ -2286,7 +2398,7 @@ struct CDasmWriter {
                 case PIPE_PIPE:
                     // Logical OR: result is 1 iff either lhs or rhs is non-zero
                     // For literal RHS, we know at compile time if rhs is 0
-                    if (rhs != "0") {
+                    if(rhs != "0"){
                         // x || non-zero is always 1
                         sb.writef("    move r% 1\n", target);
                     } else {
@@ -2306,33 +2418,33 @@ struct CDasmWriter {
         // General case: evaluate RHS to register
         int rhs = regallocator.allocate();
         err = gen_expression(right, rhs);
-        if (err) return err;
+        if(err) return err;
 
-        switch (expr.op) with (CTokenType) {
+        switch(expr.op) with (CTokenType){
             case PLUS:
-                if (left_elem_size > 1 && !right_is_ptr) {
+                if(left_elem_size > 1 && !right_is_ptr){
                     // Pointer + integer: scale integer by element size
                     sb.writef("    mul r% r% %\n", rhs, rhs, left_elem_size);
-                } else if (right_elem_size > 1 && !left_is_ptr) {
+                } else if(right_elem_size > 1 && !left_is_ptr){
                     // Integer + pointer: scale integer by element size
                     sb.writef("    mul r% r% %\n", lhs, lhs, right_elem_size);
                 }
                 sb.writef("    add r% r% r%\n", target, lhs, rhs);
                 break;
             case MINUS:
-                if (left_is_ptr && right_is_ptr) {
+                if(left_is_ptr && right_is_ptr){
                     // Pointer - pointer: check element sizes match, subtract, divide by size
-                    if (left_elem_size != right_elem_size) {
+                    if(left_elem_size != right_elem_size){
                         error(expr.expr.token, "Subtraction of pointers to different types");
                         return 1;
                     }
                     sb.writef("    sub r% r% r%\n", target, lhs, rhs);
-                    if (left_elem_size > 1) {
+                    if(left_elem_size > 1){
                         sb.writef("    div r% rjunk r% %\n", target, target, left_elem_size);
                     }
-                } else if (left_is_ptr) {
+                } else if(left_is_ptr){
                     // Pointer - integer: scale integer by element size
-                    if (left_elem_size > 1) {
+                    if(left_elem_size > 1){
                         sb.writef("    mul r% r% %\n", rhs, rhs, left_elem_size);
                     }
                     sb.writef("    sub r% r% r%\n", target, lhs, rhs);
@@ -2424,28 +2536,28 @@ struct CDasmWriter {
         return 0;
     }
 
-    int gen_unary(CUnary* expr, int target) {
-        if (expr.op == CTokenType.AMP) {
+    int gen_unary(CUnary* expr, int target){
+        if(expr.op == CTokenType.AMP){
             // Address-of operator
-            if (CIdentifier* id = expr.operand.as_identifier()) {
+            if(CIdentifier* id = expr.operand.as_identifier()){
                 str name = id.name.lexeme;
-                if (target != TARGET_IS_NOTHING) {
-                    if (int* offset = name in stacklocals) {
+                if(target != TARGET_IS_NOTHING){
+                    if(int* offset = name in stacklocals){
                         // Compute stack address: rbp + offset * wordsize
                         // Stack grows up, so locals are at positive offsets from rbp
                         sb.writef("    add r% rbp %\n", target, P(*offset));
                         return 0;
                     }
-                    if (name in reglocals) {
+                    if(name in reglocals){
                         error(expr.expr.token, "Cannot take address of register variable");
                         return 1;
                     }
                     // Global variable - track extern object usage
-                    if (name in extern_objs) {
+                    if(name in extern_objs){
                         used_objs[name] = true;
                     }
                     // For extern objects, use qualified name with module alias
-                    if (str* mod_alias = name in extern_objs) {
+                    if(str* mod_alias = name in extern_objs){
                         sb.writef("    move r% var %.%\n", target, *mod_alias, name);
                     } else {
                         sb.writef("    move r% var %\n", target, name);
@@ -2455,52 +2567,52 @@ struct CDasmWriter {
             }
 
             // Address of member access: &p.x or &pp->x
-            if (CMemberAccess* ma = expr.operand.as_member_access()) {
-                if (target == TARGET_IS_NOTHING) return 0;
+            if(CMemberAccess* ma = expr.operand.as_member_access()){
+                if(target == TARGET_IS_NOTHING) return 0;
 
                 int before = regallocator.alloced;
                 int addr_reg = regallocator.allocate();
 
                 // Get the struct type
                 CType* obj_type = get_expr_type(ma.object);
-                if (obj_type is null) {
+                if(obj_type is null){
                     error(expr.expr.token, "Cannot determine type for member access");
                     return 1;
                 }
 
                 CType* struct_type = obj_type;
-                if (ma.is_arrow) {
-                    if (!obj_type.is_pointer()) {
+                if(ma.is_arrow){
+                    if(!obj_type.is_pointer()){
                         error(expr.expr.token, "'->' requires pointer type");
                         return 1;
                     }
                     struct_type = obj_type.pointed_to;
                 }
 
-                if (struct_type is null || !struct_type.is_struct_or_union()) {
+                if(struct_type is null || !struct_type.is_struct_or_union()){
                     error(expr.expr.token, "Member access requires struct/union type");
                     return 1;
                 }
 
                 // Find the field offset
                 StructField* field = struct_type.get_field(ma.member.lexeme);
-                if (field is null) {
+                if(field is null){
                     error(expr.expr.token, "Unknown field");
                     return 1;
                 }
 
-                if (ma.is_arrow) {
+                if(ma.is_arrow){
                     // &pp->x: get pointer value, add offset
                     int err = gen_expression(ma.object, addr_reg);
-                    if (err) return err;
+                    if(err) return err;
                 } else {
                     // &p.x: get address of struct, add offset
                     int err = gen_struct_address(ma.object, addr_reg);
-                    if (err) return err;
+                    if(err) return err;
                 }
 
                 // Add field offset
-                if (field.offset != 0) {
+                if(field.offset != 0){
                     sb.writef("    add r% r% %\n", target, addr_reg, field.offset);
                 } else {
                     sb.writef("    move r% r%\n", target, addr_reg);
@@ -2511,29 +2623,37 @@ struct CDasmWriter {
             }
 
             // Address of array subscript: &arr[i]
-            if (CSubscript* sub = expr.operand.as_subscript()) {
-                if (target == TARGET_IS_NOTHING) return 0;
+            if(CSubscript* sub = expr.operand.as_subscript()){
+                if(target == TARGET_IS_NOTHING) return 0;
                 // Just compute the address without dereferencing
                 return gen_subscript_address(sub, target);
             }
 
             // Address of compound literal: &(type){...}
             // gen_compound_literal already returns the address
-            if (expr.operand.as_compound_literal() !is null) {
+            if(expr.operand.as_compound_literal() !is null){
                 return gen_expression(expr.operand, target);
+            }
+
+            // Address of dereference: &*ptr == ptr
+            if(CUnary* deref = expr.operand.as_unary()){
+                if(deref.op == CTokenType.STAR){
+                    // &*ptr cancels out, just evaluate the pointer
+                    return gen_expression(deref.operand, target);
+                }
             }
 
             error(expr.expr.token, "Invalid operand for address-of");
             return 1;
         }
 
-        if (expr.op == CTokenType.STAR) {
+        if(expr.op == CTokenType.STAR){
             // Dereference operator
             int before = regallocator.alloced;
             int ptr_reg = target == TARGET_IS_NOTHING ? regallocator.allocate() : target;
             int err = gen_expression(expr.operand, ptr_reg);
-            if (err) return err;
-            if (target != TARGET_IS_NOTHING) {
+            if(err) return err;
+            if(target != TARGET_IS_NOTHING){
                 // Get the pointed-to type's size and signedness for proper sized read
                 CType* ptr_type = get_expr_type(expr.operand);
                 size_t elem_size = (ptr_type && ptr_type.is_pointer()) ? ptr_type.element_size() : 8;
@@ -2545,14 +2665,134 @@ struct CDasmWriter {
             return 0;
         }
 
+        // Handle increment/decrement specially - they have side effects even when result is discarded
+        if(expr.op == CTokenType.PLUS_PLUS || expr.op == CTokenType.MINUS_MINUS){
+            bool is_inc = expr.op == CTokenType.PLUS_PLUS;
+            str op_instr = is_inc ? "add" : "sub";
+            int before = regallocator.alloced;
+
+            // Get operand type to determine increment amount (1 for scalars, element_size for pointers)
+            CType* operand_type = get_expr_type(expr.operand);
+            size_t inc_amount = 1;
+            if(operand_type && operand_type.is_pointer()){
+                inc_amount = operand_type.element_size();
+            }
+
+            if(CIdentifier* id = expr.operand.as_identifier()){
+                str name = id.name.lexeme;
+                if(int* r = name in reglocals){
+                    // Register variable
+                    if(expr.is_prefix){
+                        sb.writef("    % r% r% %\n", op_instr, *r, *r, inc_amount);
+                        if(target != TARGET_IS_NOTHING && target != *r)
+                            sb.writef("    move r% r%\n", target, *r);
+                    } else {
+                        if(target != TARGET_IS_NOTHING && target != *r)
+                            sb.writef("    move r% r%\n", target, *r);
+                        sb.writef("    % r% r% %\n", op_instr, *r, *r, inc_amount);
+                    }
+                } else if(int* offset = name in stacklocals){
+                    // Stack variable
+                    size_t var_size = operand_type ? operand_type.size_of() : 8;
+                    bool is_unsigned = operand_type ? operand_type.is_unsigned : true;
+                    str read_instr = read_instr_for_size(var_size, is_unsigned);
+                    str write_instr = write_instr_for_size(var_size);
+                    int addr_reg = regallocator.allocate();
+                    int val_reg = target != TARGET_IS_NOTHING ? target : regallocator.allocate();
+
+                    // Get address of variable
+                    sb.writef("    add r% rbp %\n", addr_reg, P(*offset));
+                    // Read current value
+                    sb.writef("    % r% r%\n", read_instr, val_reg, addr_reg);
+
+                    if(expr.is_prefix){
+                        // ++x: increment, write, return new value
+                        sb.writef("    % r% r% %\n", op_instr, val_reg, val_reg, inc_amount);
+                        sb.writef("    % r% r%\n", write_instr, addr_reg, val_reg);
+                    } else {
+                        // x++: save old value, increment, write, return old value
+                        int new_val = regallocator.allocate();
+                        sb.writef("    % r% r% %\n", op_instr, new_val, val_reg, inc_amount);
+                        sb.writef("    % r% r%\n", write_instr, addr_reg, new_val);
+                    }
+                }
+                regallocator.reset_to(before);
+                return 0;
+            }
+
+            // Increment/decrement on subscript: ++arr[i] or arr[i]++
+            if(CSubscript* sub = expr.operand.as_subscript()){
+                int addr_reg = regallocator.allocate();
+                int err = gen_subscript_address(sub, addr_reg);
+                if(err) return err;
+
+                size_t elem_size = operand_type ? operand_type.size_of() : 8;
+                bool is_unsigned = operand_type ? operand_type.is_unsigned : true;
+                str read_instr = read_instr_for_size(elem_size, is_unsigned);
+                str write_instr = write_instr_for_size(elem_size);
+                int val_reg = target != TARGET_IS_NOTHING ? target : regallocator.allocate();
+
+                // Read current value
+                sb.writef("    % r% r%\n", read_instr, val_reg, addr_reg);
+
+                if(expr.is_prefix){
+                    sb.writef("    % r% r% %\n", op_instr, val_reg, val_reg, inc_amount);
+                    sb.writef("    % r% r%\n", write_instr, addr_reg, val_reg);
+                } else {
+                    int new_val = regallocator.allocate();
+                    sb.writef("    % r% r% %\n", op_instr, new_val, val_reg, inc_amount);
+                    sb.writef("    % r% r%\n", write_instr, addr_reg, new_val);
+                }
+                regallocator.reset_to(before);
+                return 0;
+            }
+
+            // Increment/decrement on dereference: ++*p or (*p)++
+            if(CUnary* deref = expr.operand.as_unary()){
+                if(deref.op == CTokenType.STAR){
+                    int addr_reg = regallocator.allocate();
+                    int err = gen_expression(deref.operand, addr_reg);
+                    if(err) return err;
+
+                    size_t elem_size = operand_type ? operand_type.size_of() : 8;
+                    bool is_unsigned = operand_type ? operand_type.is_unsigned : true;
+                    str read_instr = read_instr_for_size(elem_size, is_unsigned);
+                    str write_instr = write_instr_for_size(elem_size);
+                    int val_reg = target != TARGET_IS_NOTHING ? target : regallocator.allocate();
+
+                    // Read current value
+                    sb.writef("    % r% r%\n", read_instr, val_reg, addr_reg);
+
+                    if(expr.is_prefix){
+                        sb.writef("    % r% r% %\n", op_instr, val_reg, val_reg, inc_amount);
+                        sb.writef("    % r% r%\n", write_instr, addr_reg, val_reg);
+                    } else {
+                        int new_val = regallocator.allocate();
+                        sb.writef("    % r% r% %\n", op_instr, new_val, val_reg, inc_amount);
+                        sb.writef("    % r% r%\n", write_instr, addr_reg, new_val);
+                    }
+                    regallocator.reset_to(before);
+                    return 0;
+                }
+            }
+
+            regallocator.reset_to(before);
+            return 0;
+        }
+
         // Other unary operators
         int before = regallocator.alloced;
         int operand_reg = target == TARGET_IS_NOTHING ? regallocator.allocate() : target;
         int err = gen_expression(expr.operand, operand_reg);
-        if (err) return err;
+        if(err) return err;
 
-        if (target != TARGET_IS_NOTHING) {
-            switch (expr.op) with (CTokenType) {
+        if(target != TARGET_IS_NOTHING){
+            switch(expr.op) with (CTokenType){
+                case PLUS:
+                    // Unary plus is a no-op, just ensure value is in target
+                    if(target != operand_reg)
+                        sb.writef("    move r% r%\n", target, operand_reg);
+                    break;
                 case MINUS:
                     sb.writef("    neg r% r%\n", target, operand_reg);
                     break;
@@ -2562,46 +2802,6 @@ struct CDasmWriter {
                 case TILDE:
                     // Bitwise NOT - XOR with -1
                     sb.writef("    xor r% r% -1\n", target, operand_reg);
-                    break;
-                case PLUS_PLUS:
-                    if (expr.is_prefix) {
-                        // ++x: increment then return
-                        if (CIdentifier* id = expr.operand.as_identifier()) {
-                            if (int* r = id.name.lexeme in reglocals) {
-                                sb.writef("    add r% r% 1\n", *r, *r);
-                                if (target != *r)
-                                    sb.writef("    move r% r%\n", target, *r);
-                            }
-                        }
-                    } else {
-                        // x++: return then increment
-                        if (CIdentifier* id = expr.operand.as_identifier()) {
-                            if (int* r = id.name.lexeme in reglocals) {
-                                if (target != *r)
-                                    sb.writef("    move r% r%\n", target, *r);
-                                sb.writef("    add r% r% 1\n", *r, *r);
-                            }
-                        }
-                    }
-                    break;
-                case MINUS_MINUS:
-                    if (expr.is_prefix) {
-                        if (CIdentifier* id = expr.operand.as_identifier()) {
-                            if (int* r = id.name.lexeme in reglocals) {
-                                sb.writef("    sub r% r% 1\n", *r, *r);
-                                if (target != *r)
-                                    sb.writef("    move r% r%\n", target, *r);
-                            }
-                        }
-                    } else {
-                        if (CIdentifier* id = expr.operand.as_identifier()) {
-                            if (int* r = id.name.lexeme in reglocals) {
-                                if (target != *r)
-                                    sb.writef("    move r% r%\n", target, *r);
-                                sb.writef("    sub r% r% 1\n", *r, *r);
-                            }
-                        }
-                    }
                     break;
                 default:
                     error(expr.expr.token, "Unhandled unary operator");
@@ -2613,15 +2813,15 @@ struct CDasmWriter {
         return 0;
     }
 
-    int gen_call(CCall* expr, int target) {
+    int gen_call(CCall* expr, int target){
         int before = regallocator.alloced;
 
         // Check if callee returns a struct
         bool callee_returns_struct = false;
         bool callee_uses_hidden_ptr = false;
         CType* callee_return_type = null;
-        if (CIdentifier* id = expr.callee.as_identifier()) {
-            if (CType** rt = id.name.lexeme in func_return_types) {
+        if(CIdentifier* id = expr.callee.as_identifier()){
+            if(CType** rt = id.name.lexeme in func_return_types){
                 callee_return_type = *rt;
                 callee_returns_struct = callee_return_type !is null && callee_return_type.is_struct_or_union();
                 callee_uses_hidden_ptr = callee_returns_struct && !struct_fits_in_registers(callee_return_type);
@@ -2632,19 +2832,19 @@ struct CDasmWriter {
         int arg_offset = callee_uses_hidden_ptr ? 1 : 0;
 
         // Helper to get number of register slots for an argument
-        int arg_slots(CExpr* arg) {
+        int arg_slots(CExpr* arg){
             CType* t = get_expr_type(arg);
-            if (t && t.is_struct_or_union() && struct_fits_in_registers(t)) {
+            if(t && t.is_struct_or_union() && struct_fits_in_registers(t)){
                 return struct_return_regs(t);
             }
             return 1;
         }
 
         // Calculate starting slot for argument i
-        int get_arg_slot(size_t idx) {
+        int get_arg_slot(size_t idx){
             int slot = arg_offset;
-            foreach (j, arg; expr.args) {
-                if (j == idx) return slot;
+            foreach(j, arg; expr.args){
+                if(j == idx) return slot;
                 slot += arg_slots(arg);
             }
             return slot;
@@ -2652,26 +2852,26 @@ struct CDasmWriter {
 
         // Calculate total register slots
         int total_reg_slots = arg_offset;
-        foreach (arg; expr.args) {
+        foreach(arg; expr.args){
             total_reg_slots += arg_slots(arg);
         }
 
         // Evaluate arguments
-        foreach (i, arg; expr.args) {
+        foreach(i, arg; expr.args){
             CType* arg_type = get_expr_type(arg);
             int slot = get_arg_slot(i);
             int num_slots = arg_slots(arg);
 
-            if (arg_type && arg_type.is_struct_or_union()) {
-                if (struct_fits_in_registers(arg_type)) {
+            if(arg_type && arg_type.is_struct_or_union()){
+                if(struct_fits_in_registers(arg_type)){
                     // Small struct: load data into register(s)
                     int addr_reg = regallocator.allocate();
                     int err = gen_struct_address(arg, addr_reg);
-                    if (err) return err;
+                    if(err) return err;
 
                     size_t struct_size = arg_type.size_of();
                     sb.writef("    read rarg% r%\n", 1 + slot, addr_reg);
-                    if (struct_size > 8) {
+                    if(struct_size > 8){
                         sb.writef("    add r% r% 8\n", addr_reg, addr_reg);
                         sb.writef("    read rarg% r%\n", 2 + slot, addr_reg);
                     }
@@ -2679,26 +2879,26 @@ struct CDasmWriter {
                 } else {
                     // Large struct: pass address (callee copies)
                     int err = gen_struct_address(arg, RARG1 + slot);
-                    if (err) return err;
+                    if(err) return err;
                 }
             } else {
                 int err = gen_expression(arg, RARG1 + slot);
-                if (err) return err;
+                if(err) return err;
             }
 
             // Push to preserve across subsequent arg evaluation
-            if (i != expr.args.length - 1) {
-                for (int s = 0; s < num_slots; s++) {
+            if(i != expr.args.length - 1){
+                for(int s = 0; s < num_slots; s++){
                     sb.writef("    push rarg%\n", 1 + slot + s);
                 }
             }
         }
 
         // Pop arguments back in reverse order
-        for (int i = cast(int)expr.args.length - 2; i >= 0; i--) {
+        for(int i = cast(int)expr.args.length - 2; i >= 0; i--){
             int slot = get_arg_slot(i);
             int num_slots = arg_slots(expr.args[i]);
-            for (int s = num_slots - 1; s >= 0; s--) {
+            for(int s = num_slots - 1; s >= 0; s--){
                 sb.writef("    pop rarg%\n", 1 + slot + s);
             }
         }
@@ -2706,7 +2906,7 @@ struct CDasmWriter {
         // For large struct returns, pass destination address in rarg1
         // We use rsp as the temp location (it points past the allocated frame)
         int struct_slots_needed = 0;
-        if (callee_uses_hidden_ptr) {
+        if(callee_uses_hidden_ptr){
             struct_slots_needed = cast(int)callee_return_type.stack_slots();
             // Allocate temp space by advancing rsp
             sb.writef("    add rsp rsp %\n", P(struct_slots_needed));
@@ -2717,14 +2917,14 @@ struct CDasmWriter {
         int total_args = total_reg_slots;  // Accounts for multi-register struct params
 
         // Generate call
-        if (CIdentifier* id = expr.callee.as_identifier()) {
+        if(CIdentifier* id = expr.callee.as_identifier()){
             // Save registers before call
-            for (int i = 0; i < before; i++) {
+            for(int i = 0; i < before; i++){
                 sb.writef("    push r%\n", i);
             }
 
             // Direct call - use qualified name for extern functions
-            if (str* mod_alias = id.name.lexeme in extern_funcs) {
+            if(str* mod_alias = id.name.lexeme in extern_funcs){
                 used_funcs[id.name.lexeme] = true;  // Mark as used
                 sb.writef("    call function %.% %\n", *mod_alias, id.name.lexeme, total_args);
             } else {
@@ -2733,31 +2933,31 @@ struct CDasmWriter {
             }
 
             // Restore registers
-            for (int i = before - 1; i >= 0; i--) {
+            for(int i = before - 1; i >= 0; i--){
                 sb.writef("    pop r%\n", i);
             }
         } else {
             // Indirect call through register
             int func_reg = regallocator.allocate();
             int err = gen_expression(expr.callee, func_reg);
-            if (err) return err;
+            if(err) return err;
 
-            for (int i = 0; i < before; i++) {
+            for(int i = 0; i < before; i++){
                 sb.writef("    push r%\n", i);
             }
 
             sb.writef("    call r% %\n", func_reg, total_args);
 
-            for (int i = before - 1; i >= 0; i--) {
+            for(int i = before - 1; i >= 0; i--){
                 sb.writef("    pop r%\n", i);
             }
         }
 
-        if (target != TARGET_IS_NOTHING) {
-            if (callee_uses_hidden_ptr) {
+        if(target != TARGET_IS_NOTHING){
+            if(callee_uses_hidden_ptr){
                 // Large struct returns: temp space already allocated, address is at rsp - slots
                 sb.writef("    sub r% rsp %\n", target, P(struct_slots_needed));
-            } else if (callee_returns_struct) {
+            } else if(callee_returns_struct){
                 // Small struct returns: allocate temp space and store rout1/rout2 there
                 size_t struct_size = callee_return_type.size_of();
                 int slots = cast(int)callee_return_type.stack_slots();
@@ -2771,7 +2971,7 @@ struct CDasmWriter {
                 sb.writef("    write r% rout1\n", target);
 
                 // Store rout2 if needed (9-16 bytes)
-                if (struct_size > 8) {
+                if(struct_size > 8){
                     sb.writef("    add r% r% 8\n", target, target);
                     sb.writef("    write r% rout2\n", target);
                     // Reset target to start of struct
@@ -2790,27 +2990,27 @@ struct CDasmWriter {
         return 0;
     }
 
-    int gen_assign(CAssign* expr, int target) {
+    int gen_assign(CAssign* expr, int target){
         CExpr* lhs = expr.target.ungroup();
 
         // Simple variable assignment
-        if (CIdentifier* id = lhs.as_identifier()) {
+        if(CIdentifier* id = lhs.as_identifier()){
             str name = id.name.lexeme;
 
             // Check for register variable
-            if (int* r = name in reglocals) {
-                if (expr.op == CTokenType.EQUAL) {
+            if(int* r = name in reglocals){
+                if(expr.op == CTokenType.EQUAL){
                     // Simple assignment
                     int err = gen_expression(expr.value, *r);
-                    if (err) return err;
+                    if(err) return err;
                 } else {
                     // Compound assignment (+=, -=, etc.)
                     int before = regallocator.alloced;
                     int rhs_reg = regallocator.allocate();
                     int err = gen_expression(expr.value, rhs_reg);
-                    if (err) return err;
+                    if(err) return err;
 
-                    switch (expr.op) with (CTokenType) {
+                    switch(expr.op) with (CTokenType){
                         case PLUS_EQUAL:
                             sb.writef("    add r% r% r%\n", *r, *r, rhs_reg);
                             break;
@@ -2848,19 +3048,19 @@ struct CDasmWriter {
                     regallocator.reset_to(before);
                 }
 
-                if (target != TARGET_IS_NOTHING && target != *r) {
+                if(target != TARGET_IS_NOTHING && target != *r){
                     sb.writef("    move r% r%\n", target, *r);
                 }
                 return 0;
             }
 
             // Check for stack variable
-            if (int* offset = name in stacklocals) {
+            if(int* offset = name in stacklocals){
                 // Check if this is a struct/union assignment
                 CType** var_type_ptr = name in var_types;
-                if (var_type_ptr && (*var_type_ptr).is_struct_or_union()) {
+                if(var_type_ptr && (*var_type_ptr).is_struct_or_union()){
                     // Struct/union assignment - use memcpy
-                    if (expr.op != CTokenType.EQUAL) {
+                    if(expr.op != CTokenType.EQUAL){
                         error(expr.expr.token, "Compound assignment not supported for structs");
                         return 1;
                     }
@@ -2874,31 +3074,31 @@ struct CDasmWriter {
 
                     // src = address of source struct
                     CExpr* val = expr.value.ungroup();
-                    if (CIdentifier* src_id = val.as_identifier()) {
+                    if(CIdentifier* src_id = val.as_identifier()){
                         // Source is a variable
                         str src_name = src_id.name.lexeme;
-                        if (int* src_offset = src_name in stacklocals) {
+                        if(int* src_offset = src_name in stacklocals){
                             sb.writef("    add r% rbp %\n", src_reg, P(*src_offset));
                         } else {
                             error(expr.expr.token, "Source struct must be a local variable");
                             return 1;
                         }
-                    } else if (val.kind == CExprKind.CALL) {
+                    } else if(val.kind == CExprKind.CALL){
                         // Source is a function call that returns a struct
                         // Generate the call - it will return pointer to struct in src_reg
                         int err = gen_expression(val, src_reg);
-                        if (err) return err;
+                        if(err) return err;
                         // src_reg now contains pointer to the returned struct
-                    } else if (val.kind == CExprKind.ASSIGN) {
+                    } else if(val.kind == CExprKind.ASSIGN){
                         // Source is another assignment (chained: a = b = c)
                         // Generate the inner assignment, which returns address of its destination
                         int err = gen_expression(val, src_reg);
-                        if (err) return err;
+                        if(err) return err;
                         // src_reg now contains address of the inner assignment's destination
                     } else {
                         // Try gen_struct_address for other expressions (member access, etc.)
                         int err = gen_struct_address(val, src_reg);
-                        if (err) return err;
+                        if(err) return err;
                     }
 
                     // memcpy dst src size
@@ -2906,7 +3106,7 @@ struct CDasmWriter {
                     sb.writef("    memcpy r% r% %\n", dst_reg, src_reg, struct_size);
 
                     // Return address of destination for chained assignment
-                    if (target != TARGET_IS_NOTHING) {
+                    if(target != TARGET_IS_NOTHING){
                         sb.writef("    move r% r%\n", target, dst_reg);
                     }
 
@@ -2918,19 +3118,19 @@ struct CDasmWriter {
                 int before = regallocator.alloced;
                 int val_reg = regallocator.allocate();
 
-                if (expr.op == CTokenType.EQUAL) {
+                if(expr.op == CTokenType.EQUAL){
                     // Simple assignment
                     int err = gen_expression(expr.value, val_reg);
-                    if (err) return err;
+                    if(err) return err;
                 } else {
                     // Compound assignment - read current value first
                     int cur_reg = regallocator.allocate();
                     sb.writef("    local_read r% %\n", cur_reg, P(*offset));
 
                     int err = gen_expression(expr.value, val_reg);
-                    if (err) return err;
+                    if(err) return err;
 
-                    switch (expr.op) with (CTokenType) {
+                    switch(expr.op) with (CTokenType){
                         case PLUS_EQUAL:
                             sb.writef("    add r% r% r%\n", val_reg, cur_reg, val_reg);
                             break;
@@ -2969,7 +3169,7 @@ struct CDasmWriter {
 
                 sb.writef("    local_write % r%\n", P(*offset), val_reg);
 
-                if (target != TARGET_IS_NOTHING) {
+                if(target != TARGET_IS_NOTHING){
                     sb.writef("    move r% r%\n", target, val_reg);
                 }
                 regallocator.reset_to(before);
@@ -2977,9 +3177,9 @@ struct CDasmWriter {
             }
 
             // Check for global variable
-            if (CType** gtype = name in global_types) {
+            if(CType** gtype = name in global_types){
                 // Track extern object usage
-                if (name in extern_objs) {
+                if(name in extern_objs){
                     used_objs[name] = true;
                 }
 
@@ -2989,7 +3189,7 @@ struct CDasmWriter {
 
                 // Get address of global and its size
                 // For extern objects, use qualified name with module alias
-                if (str* mod_alias = name in extern_objs) {
+                if(str* mod_alias = name in extern_objs){
                     sb.writef("    move r% var %.%\n", addr_reg, *mod_alias, name);
                 } else {
                     sb.writef("    move r% var %\n", addr_reg, name);
@@ -2997,19 +3197,19 @@ struct CDasmWriter {
                 size_t var_size = (*gtype) ? (*gtype).size_of() : 8;
                 bool is_unsigned = (*gtype) ? (*gtype).is_unsigned : true;
 
-                if (expr.op == CTokenType.EQUAL) {
+                if(expr.op == CTokenType.EQUAL){
                     // Simple assignment
                     int err = gen_expression(expr.value, val_reg);
-                    if (err) return err;
+                    if(err) return err;
                 } else {
                     // Compound assignment - read current value first
                     int cur_reg = regallocator.allocate();
                     sb.writef("    % r% r%\n", read_instr_for_size(var_size, is_unsigned), cur_reg, addr_reg);
 
                     int err = gen_expression(expr.value, val_reg);
-                    if (err) return err;
+                    if(err) return err;
 
-                    switch (expr.op) with (CTokenType) {
+                    switch(expr.op) with (CTokenType){
                         case PLUS_EQUAL:
                             sb.writef("    add r% r% r%\n", val_reg, cur_reg, val_reg);
                             break;
@@ -3048,7 +3248,7 @@ struct CDasmWriter {
 
                 sb.writef("    % r% r%\n", write_instr_for_size(var_size), addr_reg, val_reg);
 
-                if (target != TARGET_IS_NOTHING) {
+                if(target != TARGET_IS_NOTHING){
                     sb.writef("    move r% r%\n", target, val_reg);
                 }
                 regallocator.reset_to(before);
@@ -3057,24 +3257,24 @@ struct CDasmWriter {
         }
 
         // Pointer dereference assignment: *ptr = value
-        if (CUnary* deref = lhs.as_unary()) {
-            if (deref.op == CTokenType.STAR) {
+        if(CUnary* deref = lhs.as_unary()){
+            if(deref.op == CTokenType.STAR){
                 int before = regallocator.alloced;
                 int ptr_reg = regallocator.allocate();
                 int val_reg = regallocator.allocate();
 
                 int err = gen_expression(deref.operand, ptr_reg);
-                if (err) return err;
+                if(err) return err;
 
                 err = gen_expression(expr.value, val_reg);
-                if (err) return err;
+                if(err) return err;
 
                 // Get pointed-to type's size for proper sized write
                 CType* ptr_type = get_expr_type(deref.operand);
                 size_t elem_size = (ptr_type && ptr_type.is_pointer()) ? ptr_type.element_size() : 8;
                 sb.writef("    % r% r%\n", write_instr_for_size(elem_size), ptr_reg, val_reg);
 
-                if (target != TARGET_IS_NOTHING) {
+                if(target != TARGET_IS_NOTHING){
                     sb.writef("    move r% r%\n", target, val_reg);
                 }
 
@@ -3084,32 +3284,32 @@ struct CDasmWriter {
         }
 
         // Subscript assignment: arr[i] = value (equivalent to *(arr + i) = value)
-        if (CSubscript* sub = lhs.as_subscript()) {
+        if(CSubscript* sub = lhs.as_subscript()){
             int before = regallocator.alloced;
             int ptr_reg = regallocator.allocate();
             int idx_reg = regallocator.allocate();
             int val_reg = regallocator.allocate();
 
             int err = gen_expression(sub.array, ptr_reg);
-            if (err) return err;
+            if(err) return err;
 
             err = gen_expression(sub.index, idx_reg);
-            if (err) return err;
+            if(err) return err;
 
             // Scale index by element size
             CType* arr_type = get_expr_type(sub.array);
             size_t elem_size = (arr_type && (arr_type.is_pointer() || arr_type.is_array())) ? arr_type.element_size() : 1;
-            if (elem_size > 1) {
+            if(elem_size > 1){
                 sb.writef("    mul r% r% %\n", idx_reg, idx_reg, elem_size);
             }
             sb.writef("    add r% r% r%\n", ptr_reg, ptr_reg, idx_reg);
 
             err = gen_expression(expr.value, val_reg);
-            if (err) return err;
+            if(err) return err;
 
             sb.writef("    % r% r%\n", write_instr_for_size(elem_size), ptr_reg, val_reg);
 
-            if (target != TARGET_IS_NOTHING) {
+            if(target != TARGET_IS_NOTHING){
                 sb.writef("    move r% r%\n", target, val_reg);
             }
 
@@ -3118,70 +3318,70 @@ struct CDasmWriter {
         }
 
         // Member access assignment: p.x = value or p->x = value
-        if (CMemberAccess* ma = lhs.as_member_access()) {
+        if(CMemberAccess* ma = lhs.as_member_access()){
             int before = regallocator.alloced;
             int addr_reg = regallocator.allocate();
             int val_reg = regallocator.allocate();
 
             // Get the object type
             CType* obj_type = get_expr_type(ma.object);
-            if (obj_type is null) {
+            if(obj_type is null){
                 error(expr.expr.token, "Cannot determine type of struct expression");
                 return 1;
             }
 
             // For ->, obj_type is a pointer to struct
             CType* struct_type = obj_type;
-            if (ma.is_arrow) {
-                if (!obj_type.is_pointer()) {
+            if(ma.is_arrow){
+                if(!obj_type.is_pointer()){
                     error(expr.expr.token, "'->' requires pointer to struct");
                     return 1;
                 }
                 struct_type = obj_type.pointed_to;
             }
 
-            if (struct_type is null || !struct_type.is_struct_or_union()) {
+            if(struct_type is null || !struct_type.is_struct_or_union()){
                 error(expr.expr.token, "Member access requires struct/union type");
                 return 1;
             }
 
             // Find the field
             StructField* field = struct_type.get_field(ma.member.lexeme);
-            if (field is null) {
+            if(field is null){
                 error(expr.expr.token, "Unknown struct/union field");
                 return 1;
             }
 
             // Get address of struct/object
-            if (ma.is_arrow) {
+            if(ma.is_arrow){
                 int err = gen_expression(ma.object, addr_reg);
-                if (err) return err;
+                if(err) return err;
             } else {
                 // For ., we need the address of the struct
                 int err = gen_struct_address(ma.object, addr_reg);
-                if (err) return err;
+                if(err) return err;
             }
 
             // Add field offset
-            if (field.offset > 0) {
+            if(field.offset > 0){
                 sb.writef("    add r% r% %\n", addr_reg, addr_reg, field.offset);
             }
 
             // Write to field
             size_t field_size = field.type.size_of();
-            if (field.type.is_struct_or_union() && needs_memcpy(field_size)) {
+            if(field.type.is_struct_or_union() && needs_memcpy(field_size)){
                 // Struct/union field that needs memcpy
                 int err = gen_struct_address(expr.value, val_reg);
-                if (err) return err;
+                if(err) return err;
                 sb.writef("    memcpy r% r% %\n", addr_reg, val_reg, field_size);
             } else {
                 // Scalar or small struct field
                 int err = gen_expression(expr.value, val_reg);
-                if (err) return err;
+                if(err) return err;
                 sb.writef("    % r% r%\n", write_instr_for_size(field_size), addr_reg, val_reg);
             }
 
-            if (target != TARGET_IS_NOTHING) {
+            if(target != TARGET_IS_NOTHING){
                 sb.writef("    move r% r%\n", target, val_reg);
             }
 
@@ -3193,29 +3393,29 @@ struct CDasmWriter {
         return 1;
     }
 
-    int gen_subscript(CSubscript* expr, int target) {
+    int gen_subscript(CSubscript* expr, int target){
         // array[index] is equivalent to *(array + index)
         int before = regallocator.alloced;
         int arr_reg = regallocator.allocate();
         int idx_reg = regallocator.allocate();
 
         int err = gen_expression(expr.array, arr_reg);
-        if (err) return err;
+        if(err) return err;
 
         err = gen_expression(expr.index, idx_reg);
-        if (err) return err;
+        if(err) return err;
 
         // Scale index by element size for proper pointer/array arithmetic
         CType* arr_type = get_expr_type(expr.array);
         size_t elem_size = (arr_type && (arr_type.is_pointer() || arr_type.is_array())) ? arr_type.element_size() : 1;
         CType* elem_type = (arr_type && (arr_type.is_pointer() || arr_type.is_array())) ? arr_type.element_type() : null;
         bool is_unsigned = elem_type ? elem_type.is_unsigned : true;
-        if (elem_size > 1) {
+        if(elem_size > 1){
             sb.writef("    mul r% r% %\n", idx_reg, idx_reg, elem_size);
         }
         sb.writef("    add r% r% r%\n", arr_reg, arr_reg, idx_reg);
 
-        if (target != TARGET_IS_NOTHING) {
+        if(target != TARGET_IS_NOTHING){
             sb.writef("    % r% r%\n", read_instr_for_size(elem_size, is_unsigned), target, arr_reg);
         }
 
@@ -3224,21 +3424,21 @@ struct CDasmWriter {
     }
 
     // Generate address of array subscript (for &arr[i])
-    int gen_subscript_address(CSubscript* expr, int target) {
+    int gen_subscript_address(CSubscript* expr, int target){
         int before = regallocator.alloced;
         int arr_reg = regallocator.allocate();
         int idx_reg = regallocator.allocate();
 
         int err = gen_expression(expr.array, arr_reg);
-        if (err) return err;
+        if(err) return err;
 
         err = gen_expression(expr.index, idx_reg);
-        if (err) return err;
+        if(err) return err;
 
         // Scale index by element size
         CType* arr_type = get_expr_type(expr.array);
         size_t elem_size = (arr_type && (arr_type.is_pointer() || arr_type.is_array())) ? arr_type.element_size() : 1;
-        if (elem_size > 1) {
+        if(elem_size > 1){
             sb.writef("    mul r% r% %\n", idx_reg, idx_reg, elem_size);
         }
         sb.writef("    add r% r% r%\n", target, arr_reg, idx_reg);
@@ -3247,13 +3447,13 @@ struct CDasmWriter {
         return 0;
     }
 
-    int gen_member_access(CMemberAccess* expr, int target) {
+    int gen_member_access(CMemberAccess* expr, int target){
         int before = regallocator.alloced;
         int obj_reg = regallocator.allocate();
 
         // Get the object type
         CType* obj_type = get_expr_type(expr.object);
-        if (obj_type is null) {
+        if(obj_type is null){
             error(expr.expr.token, "Cannot determine type of struct expression");
             return 1;
         }
@@ -3261,49 +3461,49 @@ struct CDasmWriter {
         // For ->, obj_type is a pointer to struct
         // For ., obj_type is the struct itself
         CType* struct_type = obj_type;
-        if (expr.is_arrow) {
-            if (!obj_type.is_pointer()) {
+        if(expr.is_arrow){
+            if(!obj_type.is_pointer()){
                 error(expr.expr.token, "'->' requires pointer to struct");
                 return 1;
             }
             struct_type = obj_type.pointed_to;
         }
 
-        if (struct_type is null || !struct_type.is_struct_or_union()) {
+        if(struct_type is null || !struct_type.is_struct_or_union()){
             error(expr.expr.token, "Member access requires struct/union type");
             return 1;
         }
 
         // Find the field
         StructField* field = struct_type.get_field(expr.member.lexeme);
-        if (field is null) {
+        if(field is null){
             error(expr.expr.token, "Unknown struct/union field");
             return 1;
         }
 
         // Generate code to get address of object
-        if (expr.is_arrow) {
+        if(expr.is_arrow){
             // For ->, the expression gives us the pointer directly
             int err = gen_expression(expr.object, obj_reg);
-            if (err) return err;
+            if(err) return err;
         } else {
             // For ., we need the address of the struct
             // Use gen_struct_address which handles nested member access recursively
             int err = gen_struct_address(expr.object, obj_reg);
-            if (err) return err;
+            if(err) return err;
         }
 
         // Add field offset
-        if (field.offset > 0) {
+        if(field.offset > 0){
             sb.writef("    add r% r% %\n", obj_reg, obj_reg, field.offset);
         }
 
         // For array and struct/union fields, return the address rather than reading
         // (they decay to pointers in most contexts)
-        if (target != TARGET_IS_NOTHING) {
-            if (field.type.is_array() || field.type.is_struct_or_union()) {
+        if(target != TARGET_IS_NOTHING){
+            if(field.type.is_array() || field.type.is_struct_or_union()){
                 // Return address of the array/struct field
-                if (target != obj_reg) {
+                if(target != obj_reg){
                     sb.writef("    move r% r%\n", target, obj_reg);
                 }
             } else {
@@ -3318,11 +3518,11 @@ struct CDasmWriter {
         return 0;
     }
 
-    int gen_sizeof(CSizeof* expr, int target) {
-        if (target == TARGET_IS_NOTHING) return 0;
+    int gen_sizeof(CSizeof* expr, int target){
+        if(target == TARGET_IS_NOTHING) return 0;
 
         size_t size = expr.size;
-        if (size == 0 && expr.sizeof_expr !is null) {
+        if(size == 0 && expr.sizeof_expr !is null){
             // sizeof expr - compute size from expression type
             CType* t = get_expr_type(expr.sizeof_expr);
             size = t ? t.size_of() : 8;
@@ -3332,11 +3532,11 @@ struct CDasmWriter {
         return 0;
     }
 
-    int gen_alignof(CAlignof* expr, int target) {
-        if (target == TARGET_IS_NOTHING) return 0;
+    int gen_alignof(CAlignof* expr, int target){
+        if(target == TARGET_IS_NOTHING) return 0;
 
         size_t alignment = expr.alignment;
-        if (alignment == 0 && expr.alignof_expr !is null) {
+        if(alignment == 0 && expr.alignof_expr !is null){
             // _Alignof(expr) - compute alignment from expression type
             CType* t = get_expr_type(expr.alignof_expr);
             alignment = t ? t.align_of() : 8;
@@ -3346,14 +3546,14 @@ struct CDasmWriter {
         return 0;
     }
 
-    int gen_countof(CCountof* expr, int target) {
-        if (target == TARGET_IS_NOTHING) return 0;
+    int gen_countof(CCountof* expr, int target){
+        if(target == TARGET_IS_NOTHING) return 0;
 
         size_t count = expr.count;
-        if (count == 0 && expr.countof_expr !is null) {
+        if(count == 0 && expr.countof_expr !is null){
             // _Countof(expr) - compute count from expression type
             CType* t = get_expr_type(expr.countof_expr);
-            if (t !is null && t.is_array()) {
+            if(t !is null && t.is_array()){
                 count = t.array_size;
             } else {
                 error(expr.expr.token, "_Countof requires an array expression");
@@ -3365,19 +3565,19 @@ struct CDasmWriter {
         return 0;
     }
 
-    int gen_generic(CGeneric* expr, int target) {
+    int gen_generic(CGeneric* expr, int target){
         // _Generic is resolved at compile time
         CType* ctrl_type = get_expr_type(expr.controlling);
         CExpr* result = resolve_generic(expr, ctrl_type);
-        if (result is null) {
+        if(result is null){
             error(expr.expr.token, "No matching type in _Generic");
             return 1;
         }
         return gen_expression(result, target);
     }
 
-    int gen_va_arg(CVaArg* expr, int target) {
-        if (target == TARGET_IS_NOTHING) return 0;
+    int gen_va_arg(CVaArg* expr, int target){
+        if(target == TARGET_IS_NOTHING) return 0;
 
         // va_arg(ap, type): read value from va_list pointer and advance it
         // va_list is a pointer to the varargs on stack
@@ -3386,7 +3586,7 @@ struct CDasmWriter {
         // Get va_list pointer into a register
         int va_reg = regallocator.allocate();
         int err = gen_expression(expr.va_list_expr, va_reg);
-        if (err) return err;
+        if(err) return err;
 
         // Read value from va_list (pointer to pointer - need to dereference)
         sb.writef("    read r% r%\n", va_reg, va_reg);  // Load current va_list position
@@ -3394,7 +3594,7 @@ struct CDasmWriter {
 
         // Advance va_list by size of type
         size_t type_size = expr.arg_type ? expr.arg_type.size_of() : 8;
-        if (type_size < 8) type_size = 8;  // Arguments are at least word-sized
+        if(type_size < 8) type_size = 8;  // Arguments are at least word-sized
 
         // We need to write back the advanced pointer
         // But we've already dereferenced... this is tricky
@@ -3405,7 +3605,7 @@ struct CDasmWriter {
         return 0;
     }
 
-    int gen_ternary(CTernary* expr, int target) {
+    int gen_ternary(CTernary* expr, int target){
         // condition ? if_true : if_false
         int else_label = labelallocator.allocate();
         int after_label = labelallocator.allocate();
@@ -3414,21 +3614,21 @@ struct CDasmWriter {
         int before = regallocator.alloced;
         int cond = (target == TARGET_IS_NOTHING) ? regallocator.allocate() : target;
         int err = gen_expression(expr.condition, cond);
-        if (err) return err;
+        if(err) return err;
 
         sb.writef("    cmp r% 0\n", cond);
         sb.writef("    jump eq label L%\n", else_label);  // Jump to else if condition is false
 
         // Generate true branch
         err = gen_expression(expr.if_true, target);
-        if (err) return err;
+        if(err) return err;
 
         sb.writef("    move rip label L%\n", after_label);  // Skip else branch
 
         // Generate false branch
         sb.writef("  label L%\n", else_label);
         err = gen_expression(expr.if_false, target);
-        if (err) return err;
+        if(err) return err;
 
         sb.writef("  label L%\n", after_label);
         regallocator.reset_to(before);
@@ -3436,23 +3636,23 @@ struct CDasmWriter {
     }
 
     // Generate code to get the address of a struct expression (for pass-by-value)
-    int gen_struct_address(CExpr* e, int target) {
+    int gen_struct_address(CExpr* e, int target){
         e = e.ungroup();
 
         // Identifier - get address of struct variable
-        if (CIdentifier* id = e.as_identifier()) {
+        if(CIdentifier* id = e.as_identifier()){
             str name = id.name.lexeme;
             // Local variable on stack
-            if (int* offset = name in stacklocals) {
+            if(int* offset = name in stacklocals){
                 sb.writef("    add r% rbp %\n", target, P(*offset));
                 return 0;
             }
             // Global or extern variable
-            if (name in global_types || name in extern_objs) {
-                if (name in extern_objs) {
+            if(name in global_types || name in extern_objs){
+                if(name in extern_objs){
                     used_objs[name] = true;
                 }
-                if (str* mod_alias = name in extern_objs) {
+                if(str* mod_alias = name in extern_objs){
                     sb.writef("    move r% var %.%\n", target, *mod_alias, name);
                 } else {
                     sb.writef("    move r% var %\n", target, name);
@@ -3464,16 +3664,16 @@ struct CDasmWriter {
         }
 
         // Member access - get address of struct member
-        if (CMemberAccess* ma = e.as_member_access()) {
+        if(CMemberAccess* ma = e.as_member_access()){
             CType* obj_type = get_expr_type(ma.object);
-            if (obj_type is null) {
+            if(obj_type is null){
                 error(ma.expr.token, "Cannot determine type for member access");
                 return 1;
             }
 
             CType* struct_type = obj_type;
-            if (ma.is_arrow) {
-                if (!obj_type.is_pointer()) {
+            if(ma.is_arrow){
+                if(!obj_type.is_pointer()){
                     error(ma.expr.token, "'->' requires pointer to struct");
                     return 1;
                 }
@@ -3481,38 +3681,38 @@ struct CDasmWriter {
             }
 
             StructField* field = struct_type.get_field(ma.member.lexeme);
-            if (field is null) {
+            if(field is null){
                 error(ma.expr.token, "Unknown struct field");
                 return 1;
             }
 
             // Get base address
-            if (ma.is_arrow) {
+            if(ma.is_arrow){
                 int err = gen_expression(ma.object, target);
-                if (err) return err;
+                if(err) return err;
             } else {
                 // Recursively get address of the object
                 int err = gen_struct_address(ma.object, target);
-                if (err) return err;
+                if(err) return err;
             }
 
             // Add field offset
-            if (field.offset > 0) {
+            if(field.offset > 0){
                 sb.writef("    add r% r% %\n", target, target, field.offset);
             }
             return 0;
         }
 
         // Function call returning struct/union - gen_expression returns the address
-        if (e.kind == CExprKind.CALL) {
+        if(e.kind == CExprKind.CALL){
             CType* call_type = get_expr_type(e);
-            if (call_type && call_type.is_struct_or_union()) {
+            if(call_type && call_type.is_struct_or_union()){
                 return gen_expression(e, target);
             }
         }
 
         // Compound literal - gen_expression returns the address
-        if (e.kind == CExprKind.COMPOUND_LITERAL) {
+        if(e.kind == CExprKind.COMPOUND_LITERAL){
             return gen_expression(e, target);
         }
 

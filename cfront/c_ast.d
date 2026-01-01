@@ -88,8 +88,8 @@ struct CType {
     size_t struct_size;    // Cached total size of struct
 
     // Get size in bytes (for pointer arithmetic)
-    size_t size_of() {
-        final switch (kind) {
+    size_t size_of(){
+        final switch(kind){
             case CTypeKind.VOID:     return 0;
             case CTypeKind.CHAR:     return 1;
             case CTypeKind.SHORT:    return 2;
@@ -108,8 +108,8 @@ struct CType {
     }
 
     // Get alignment in bytes
-    size_t align_of() {
-        final switch (kind) {
+    size_t align_of(){
+        final switch(kind){
             case CTypeKind.VOID:     return 1;
             case CTypeKind.CHAR:     return 1;
             case CTypeKind.SHORT:    return 2;
@@ -125,9 +125,9 @@ struct CType {
             case CTypeKind.UNION:
                 // Alignment is max alignment of all fields
                 size_t max_align = 1;
-                foreach (ref f; fields) {
+                foreach(ref f; fields){
                     size_t a = f.type.align_of();
-                    if (a > max_align) max_align = a;
+                    if(a > max_align) max_align = a;
                 }
                 return max_align;
             case CTypeKind.ENUM:     return 4;
@@ -135,56 +135,56 @@ struct CType {
     }
 
     // Get element size for pointer arithmetic
-    size_t element_size() {
-        if ((kind == CTypeKind.POINTER || kind == CTypeKind.ARRAY) && pointed_to) {
+    size_t element_size(){
+        if((kind == CTypeKind.POINTER || kind == CTypeKind.ARRAY) && pointed_to){
             size_t s = pointed_to.size_of();
             return s ? s : 1;  // void* arithmetic uses size 1
         }
         return 1;
     }
 
-    bool is_void() { return kind == CTypeKind.VOID; }
-    bool is_pointer() { return kind == CTypeKind.POINTER; }
-    bool is_array() { return kind == CTypeKind.ARRAY; }
-    bool is_struct() { return kind == CTypeKind.STRUCT; }
-    bool is_union() { return kind == CTypeKind.UNION; }
-    bool is_struct_or_union() { return kind == CTypeKind.STRUCT || kind == CTypeKind.UNION; }
-    bool is_enum() { return kind == CTypeKind.ENUM; }
-    bool is_integer() {
+    bool is_void(){ return kind == CTypeKind.VOID; }
+    bool is_pointer(){ return kind == CTypeKind.POINTER; }
+    bool is_array(){ return kind == CTypeKind.ARRAY; }
+    bool is_struct(){ return kind == CTypeKind.STRUCT; }
+    bool is_union(){ return kind == CTypeKind.UNION; }
+    bool is_struct_or_union(){ return kind == CTypeKind.STRUCT || kind == CTypeKind.UNION; }
+    bool is_enum(){ return kind == CTypeKind.ENUM; }
+    bool is_integer(){
         return kind == CTypeKind.CHAR || kind == CTypeKind.SHORT ||
                kind == CTypeKind.INT || kind == CTypeKind.LONG ||
                kind == CTypeKind.ENUM;  // Enums are integer-compatible
     }
-    bool is_float() {
+    bool is_float(){
         return kind == CTypeKind.FLOAT || kind == CTypeKind.DOUBLE;
     }
-    bool is_arithmetic() {
+    bool is_arithmetic(){
         return is_integer() || is_float();
     }
 
     // Get a struct/union field by name
-    StructField* get_field(str name) {
-        if (kind != CTypeKind.STRUCT && kind != CTypeKind.UNION) return null;
-        foreach (ref f; fields) {
-            if (f.name == name) return &f;
+    StructField* get_field(str name){
+        if(kind != CTypeKind.STRUCT && kind != CTypeKind.UNION) return null;
+        foreach(ref f; fields){
+            if(f.name == name) return &f;
         }
         return null;
     }
 
     // Get element type for arrays/pointers
-    CType* element_type() {
-        if (kind == CTypeKind.ARRAY || kind == CTypeKind.POINTER)
+    CType* element_type(){
+        if(kind == CTypeKind.ARRAY || kind == CTypeKind.POINTER)
             return pointed_to;
         return null;
     }
 
     // Number of stack slots needed for this type (for local allocation)
-    size_t stack_slots() {
-        if (kind == CTypeKind.ARRAY) {
+    size_t stack_slots(){
+        if(kind == CTypeKind.ARRAY){
             // Array needs one slot per element
             return array_size;
         }
-        if (kind == CTypeKind.STRUCT || kind == CTypeKind.UNION) {
+        if(kind == CTypeKind.STRUCT || kind == CTypeKind.UNION){
             // Struct/union needs enough slots for its size (8 bytes per slot)
             return (struct_size + 7) / 8;
         }
@@ -211,7 +211,7 @@ __gshared CType TYPE_CHAR_PTR = { kind: CTypeKind.POINTER, pointed_to: &TYPE_CHA
 __gshared CType TYPE_INT_PTR = { kind: CTypeKind.POINTER, pointed_to: &TYPE_INT };
 __gshared CType TYPE_LONG_PTR = { kind: CTypeKind.POINTER, pointed_to: &TYPE_LONG };
 
-CType* make_pointer_type(Allocator a, CType* base) {
+CType* make_pointer_type(Allocator a, CType* base){
     auto data = a.alloc(CType.sizeof);
     auto result = cast(CType*)data.ptr;
     result.kind = CTypeKind.POINTER;
@@ -219,7 +219,7 @@ CType* make_pointer_type(Allocator a, CType* base) {
     return result;
 }
 
-CType* make_array_type(Allocator a, CType* element_type, size_t size) {
+CType* make_array_type(Allocator a, CType* element_type, size_t size){
     auto data = a.alloc(CType.sizeof);
     auto result = cast(CType*)data.ptr;
     result.kind = CTypeKind.ARRAY;
@@ -228,7 +228,7 @@ CType* make_array_type(Allocator a, CType* element_type, size_t size) {
     return result;
 }
 
-CType* make_struct_type(Allocator a, str name, StructField[] fields, size_t total_size) {
+CType* make_struct_type(Allocator a, str name, StructField[] fields, size_t total_size){
     auto data = a.alloc(CType.sizeof);
     auto result = cast(CType*)data.ptr;
     result.kind = CTypeKind.STRUCT;
@@ -238,7 +238,7 @@ CType* make_struct_type(Allocator a, str name, StructField[] fields, size_t tota
     return result;
 }
 
-CType* make_union_type(Allocator a, str name, StructField[] fields, size_t total_size) {
+CType* make_union_type(Allocator a, str name, StructField[] fields, size_t total_size){
     auto data = a.alloc(CType.sizeof);
     auto result = cast(CType*)data.ptr;
     result.kind = CTypeKind.UNION;
@@ -248,7 +248,7 @@ CType* make_union_type(Allocator a, str name, StructField[] fields, size_t total
     return result;
 }
 
-CType* make_enum_type(Allocator a, str name) {
+CType* make_enum_type(Allocator a, str name){
     auto data = a.alloc(CType.sizeof);
     auto result = cast(CType*)data.ptr;
     result.kind = CTypeKind.ENUM;
@@ -256,7 +256,7 @@ CType* make_enum_type(Allocator a, str name) {
     return result;
 }
 
-CType* make_function_type(Allocator a, CType* ret_type, CType*[] param_types, bool is_varargs) {
+CType* make_function_type(Allocator a, CType* ret_type, CType*[] param_types, bool is_varargs){
     auto data = a.alloc(CType.sizeof);
     auto result = cast(CType*)data.ptr;
     result.kind = CTypeKind.FUNCTION;
@@ -345,8 +345,8 @@ struct CExpr {
         return kind == CExprKind.GENERIC ? cast(typeof(return))&this : null;
     }
 
-    CExpr* ungroup() {
-        if (kind == CExprKind.GROUPING) {
+    CExpr* ungroup(){
+        if(kind == CExprKind.GROUPING){
             return (cast(CGrouping*)&this).expression.ungroup();
         }
         return &this;
@@ -357,7 +357,7 @@ struct CLiteral {
     CExpr expr;
     CToken value;
 
-    static CExpr* make(Allocator a, CToken t, CType* type) {
+    static CExpr* make(Allocator a, CToken t, CType* type){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.LITERAL;
@@ -368,7 +368,7 @@ struct CLiteral {
     }
 
     // Create a synthetic integer literal
-    static CExpr* make_int(Allocator a, long val, CToken tok) {
+    static CExpr* make_int(Allocator a, long val, CToken tok){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.LITERAL;
@@ -387,7 +387,7 @@ struct CSizeof {
     CExpr* sizeof_expr;   // If sizeof expr
     size_t size;          // Precomputed size (if known)
 
-    static CExpr* make(Allocator a, CType* t, size_t sz, CToken tok) {
+    static CExpr* make(Allocator a, CType* t, size_t sz, CToken tok){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.SIZEOF;
@@ -399,7 +399,7 @@ struct CSizeof {
         return &result.expr;
     }
 
-    static CExpr* make_expr(Allocator a, CExpr* e, CToken tok) {
+    static CExpr* make_expr(Allocator a, CExpr* e, CToken tok){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.SIZEOF;
@@ -418,7 +418,7 @@ struct CAlignof {
     CExpr* alignof_expr;   // If _Alignof(expr) (GNU extension)
     size_t alignment;      // Precomputed alignment (if known)
 
-    static CExpr* make(Allocator a, CType* t, size_t align_, CToken tok) {
+    static CExpr* make(Allocator a, CType* t, size_t align_, CToken tok){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.ALIGNOF;
@@ -430,7 +430,7 @@ struct CAlignof {
         return &result.expr;
     }
 
-    static CExpr* make_expr(Allocator a, CExpr* e, CToken tok) {
+    static CExpr* make_expr(Allocator a, CExpr* e, CToken tok){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.ALIGNOF;
@@ -449,7 +449,7 @@ struct CCountof {
     CExpr* countof_expr;   // If _Countof(expr)
     size_t count;          // Precomputed count (if known)
 
-    static CExpr* make(Allocator a, CType* t, size_t count_, CToken tok) {
+    static CExpr* make(Allocator a, CType* t, size_t count_, CToken tok){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.COUNTOF;
@@ -461,7 +461,7 @@ struct CCountof {
         return &result.expr;
     }
 
-    static CExpr* make_expr(Allocator a, CExpr* e, size_t count_, CToken tok) {
+    static CExpr* make_expr(Allocator a, CExpr* e, size_t count_, CToken tok){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.COUNTOF;
@@ -479,7 +479,7 @@ struct CVaArg {
     CExpr* va_list_expr;   // The va_list argument
     CType* arg_type;       // The type to extract
 
-    static CExpr* make(Allocator a, CExpr* va_list_, CType* type, CToken tok) {
+    static CExpr* make(Allocator a, CExpr* va_list_, CType* type, CToken tok){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.VA_ARG;
@@ -495,7 +495,7 @@ struct CIdentifier {
     CExpr expr;
     CToken name;
 
-    static CExpr* make(Allocator a, CToken t) {
+    static CExpr* make(Allocator a, CToken t){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.IDENTIFIER;
@@ -511,10 +511,10 @@ struct CBinary {
     CTokenType op;
     CExpr* right_;
 
-    CExpr* left() { return left_.ungroup(); }
-    CExpr* right() { return right_.ungroup(); }
+    CExpr* left(){ return left_.ungroup(); }
+    CExpr* right(){ return right_.ungroup(); }
 
-    static CExpr* make(Allocator a, CExpr* l, CTokenType op, CExpr* r, CToken t) {
+    static CExpr* make(Allocator a, CExpr* l, CTokenType op, CExpr* r, CToken t){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.BINARY;
@@ -532,9 +532,9 @@ struct CUnary {
     CExpr* operand_;
     bool is_prefix;  // true for prefix ops like *p, &x, -x; false for postfix like p++
 
-    CExpr* operand() { return operand_.ungroup(); }
+    CExpr* operand(){ return operand_.ungroup(); }
 
-    static CExpr* make(Allocator a, CTokenType op, CExpr* operand, bool prefix, CToken t) {
+    static CExpr* make(Allocator a, CTokenType op, CExpr* operand, bool prefix, CToken t){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.UNARY;
@@ -551,9 +551,9 @@ struct CCall {
     CExpr* callee_;
     CExpr*[] args;
 
-    CExpr* callee() { return callee_.ungroup(); }
+    CExpr* callee(){ return callee_.ungroup(); }
 
-    static CExpr* make(Allocator a, CExpr* callee, CExpr*[] args, CToken t) {
+    static CExpr* make(Allocator a, CExpr* callee, CExpr*[] args, CToken t){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.CALL;
@@ -570,10 +570,10 @@ struct CAssign {
     CTokenType op;  // EQUAL, PLUS_EQUAL, etc.
     CExpr* value_;
 
-    CExpr* target() { return target_.ungroup(); }
-    CExpr* value() { return value_.ungroup(); }
+    CExpr* target(){ return target_.ungroup(); }
+    CExpr* value(){ return value_.ungroup(); }
 
-    static CExpr* make(Allocator a, CExpr* target, CTokenType op, CExpr* value, CToken t) {
+    static CExpr* make(Allocator a, CExpr* target, CTokenType op, CExpr* value, CToken t){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.ASSIGN;
@@ -589,7 +589,7 @@ struct CGrouping {
     CExpr expr;
     CExpr* expression;
 
-    static CExpr* make(Allocator a, CExpr* e, CToken t) {
+    static CExpr* make(Allocator a, CExpr* e, CToken t){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.GROUPING;
@@ -605,11 +605,11 @@ struct CTernary {
     CExpr* if_true_;
     CExpr* if_false_;
 
-    CExpr* condition() { return condition_.ungroup(); }
-    CExpr* if_true() { return if_true_.ungroup(); }
-    CExpr* if_false() { return if_false_.ungroup(); }
+    CExpr* condition(){ return condition_.ungroup(); }
+    CExpr* if_true(){ return if_true_.ungroup(); }
+    CExpr* if_false(){ return if_false_.ungroup(); }
 
-    static CExpr* make(Allocator a, CExpr* cond, CExpr* t, CExpr* f, CToken tok) {
+    static CExpr* make(Allocator a, CExpr* cond, CExpr* t, CExpr* f, CToken tok){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.TERNARY;
@@ -652,7 +652,7 @@ struct CInitList {
     CExpr expr;
     CInitElement[] elements;
 
-    static CExpr* make(Allocator a, CInitElement[] elems, CToken tok) {
+    static CExpr* make(Allocator a, CInitElement[] elems, CToken tok){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.INIT_LIST;
@@ -667,9 +667,9 @@ struct CCast {
     CType* cast_type;
     CExpr* operand_;
 
-    CExpr* operand() { return operand_.ungroup(); }
+    CExpr* operand(){ return operand_.ungroup(); }
 
-    static CExpr* make(Allocator a, CType* t, CExpr* e, CToken tok) {
+    static CExpr* make(Allocator a, CType* t, CExpr* e, CToken tok){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.CAST;
@@ -686,9 +686,9 @@ struct CCompoundLiteral {
     CType* literal_type;
     CExpr* initializer_;
 
-    CExpr* initializer() { return initializer_.ungroup(); }
+    CExpr* initializer(){ return initializer_.ungroup(); }
 
-    static CExpr* make(Allocator a, CType* t, CExpr* init, CToken tok) {
+    static CExpr* make(Allocator a, CType* t, CExpr* init, CToken tok){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.COMPOUND_LITERAL;
@@ -705,10 +705,10 @@ struct CSubscript {
     CExpr* array_;
     CExpr* index_;
 
-    CExpr* array() { return array_.ungroup(); }
-    CExpr* index() { return index_.ungroup(); }
+    CExpr* array(){ return array_.ungroup(); }
+    CExpr* index(){ return index_.ungroup(); }
 
-    static CExpr* make(Allocator a, CExpr* arr, CExpr* idx, CToken t) {
+    static CExpr* make(Allocator a, CExpr* arr, CExpr* idx, CToken t){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.SUBSCRIPT;
@@ -725,9 +725,9 @@ struct CMemberAccess {
     CToken member;
     bool is_arrow;  // true for ->, false for .
 
-    CExpr* object() { return object_.ungroup(); }
+    CExpr* object(){ return object_.ungroup(); }
 
-    static CExpr* make(Allocator a, CExpr* obj, CToken member_, bool arrow, CToken t) {
+    static CExpr* make(Allocator a, CExpr* obj, CToken member_, bool arrow, CToken t){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.MEMBER_ACCESS;
@@ -749,9 +749,9 @@ struct CGeneric {
     CExpr* controlling_;
     CGenericAssoc[] associations;
 
-    CExpr* controlling() { return controlling_.ungroup(); }
+    CExpr* controlling(){ return controlling_.ungroup(); }
 
-    static CExpr* make(Allocator a, CExpr* ctrl, CGenericAssoc[] assocs, CToken tok) {
+    static CExpr* make(Allocator a, CExpr* ctrl, CGenericAssoc[] assocs, CToken tok){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.GENERIC;
@@ -792,7 +792,7 @@ struct CExprStmt {
     CStmt stmt;
     CExpr* expression;
 
-    static CStmt* make(Allocator a, CExpr* e, CToken t) {
+    static CStmt* make(Allocator a, CExpr* e, CToken t){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.stmt.kind = CStmtKind.EXPR;
@@ -806,7 +806,7 @@ struct CReturnStmt {
     CStmt stmt;
     CExpr* value;  // null for bare return
 
-    static CStmt* make(Allocator a, CExpr* v, CToken t) {
+    static CStmt* make(Allocator a, CExpr* v, CToken t){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.stmt.kind = CStmtKind.RETURN;
@@ -822,7 +822,7 @@ struct CIfStmt {
     CStmt* then_branch;
     CStmt* else_branch;  // null if no else
 
-    static CStmt* make(Allocator a, CExpr* cond, CStmt* then_, CStmt* else_, CToken t) {
+    static CStmt* make(Allocator a, CExpr* cond, CStmt* then_, CStmt* else_, CToken t){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.stmt.kind = CStmtKind.IF;
@@ -839,7 +839,7 @@ struct CWhileStmt {
     CExpr* condition;
     CStmt* body;
 
-    static CStmt* make(Allocator a, CExpr* cond, CStmt* body_, CToken t) {
+    static CStmt* make(Allocator a, CExpr* cond, CStmt* body_, CToken t){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.stmt.kind = CStmtKind.WHILE;
@@ -855,7 +855,7 @@ struct CDoWhileStmt {
     CExpr* condition;
     CStmt* body;
 
-    static CStmt* make(Allocator a, CStmt* body_, CExpr* cond, CToken t) {
+    static CStmt* make(Allocator a, CStmt* body_, CExpr* cond, CToken t){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.stmt.kind = CStmtKind.DO_WHILE;
@@ -873,7 +873,7 @@ struct CForStmt {
     CExpr* increment;   // null if none
     CStmt* body_;
 
-    static CStmt* make(Allocator a, CStmt* init_, CExpr* cond, CExpr* incr, CStmt* body__, CToken t) {
+    static CStmt* make(Allocator a, CStmt* init_, CExpr* cond, CExpr* incr, CStmt* body__, CToken t){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.stmt.kind = CStmtKind.FOR;
@@ -890,7 +890,7 @@ struct CBlock {
     CStmt stmt;
     CStmt*[] statements;
 
-    static CStmt* make(Allocator a, CStmt*[] stmts, CToken t) {
+    static CStmt* make(Allocator a, CStmt*[] stmts, CToken t){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.stmt.kind = CStmtKind.BLOCK;
@@ -906,7 +906,7 @@ struct CVarDecl {
     CToken name;
     CExpr* initializer;  // null if uninitialized
 
-    static CStmt* make(Allocator a, CType* type, CToken name_, CExpr* init, CToken t) {
+    static CStmt* make(Allocator a, CType* type, CToken name_, CExpr* init, CToken t){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.stmt.kind = CStmtKind.VAR_DECL;
@@ -921,7 +921,7 @@ struct CVarDecl {
 struct CBreakStmt {
     CStmt stmt;
 
-    static CStmt* make(Allocator a, CToken t) {
+    static CStmt* make(Allocator a, CToken t){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.stmt.kind = CStmtKind.BREAK;
@@ -933,7 +933,7 @@ struct CBreakStmt {
 struct CContinueStmt {
     CStmt stmt;
 
-    static CStmt* make(Allocator a, CToken t) {
+    static CStmt* make(Allocator a, CToken t){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.stmt.kind = CStmtKind.CONTINUE;
@@ -947,7 +947,7 @@ struct CEmptyStmt {
 
     __gshared CEmptyStmt singleton = { stmt: { kind: CStmtKind.EMPTY } };
 
-    static CStmt* get() {
+    static CStmt* get(){
         return &singleton.stmt;
     }
 }
@@ -964,7 +964,7 @@ struct CSwitchStmt {
     CExpr* condition;
     CSwitchCase[] cases;
 
-    static CStmt* make(Allocator a, CExpr* cond, CSwitchCase[] case_list, CToken t) {
+    static CStmt* make(Allocator a, CExpr* cond, CSwitchCase[] case_list, CToken t){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.stmt.kind = CStmtKind.SWITCH;
@@ -981,7 +981,7 @@ struct CGotoStmt {
     CStmt stmt;
     CToken label;  // The label to jump to
 
-    static CStmt* make(Allocator a, CToken lbl, CToken t) {
+    static CStmt* make(Allocator a, CToken lbl, CToken t){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.stmt.kind = CStmtKind.GOTO;
@@ -998,7 +998,7 @@ struct CLabelStmt {
     CToken label;      // The label identifier
     CStmt* statement;  // The statement following the label
 
-    static CStmt* make(Allocator a, CToken lbl, CStmt* s, CToken t) {
+    static CStmt* make(Allocator a, CToken lbl, CStmt* s, CToken t){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.stmt.kind = CStmtKind.LABEL;

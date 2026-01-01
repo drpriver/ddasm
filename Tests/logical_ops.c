@@ -1,24 +1,32 @@
 // Test logical && and || operators
-// EXPECTED: 6
+#pragma library("libc")
+int printf(const char*, ...);
+void exit(int);
+
+#define assert(x) do { if (!(x)) { printf("%s:%d: FAIL: %s\n", __FILE__, __LINE__, #x); exit(1); } } while(0)
 
 int main() {
-    int result = 0;
-
     // && tests
-    if (1 && 1) result += 1;      // true
-    if (1 && 0) result += 100;    // false
-    if (0 && 1) result += 100;    // false
-    if (0 && 0) result += 100;    // false
+    assert(1 && 1);
+    assert(!(1 && 0));
+    assert(!(0 && 1));
+    assert(!(0 && 0));
 
     // || tests
-    if (1 || 1) result += 1;      // true
-    if (1 || 0) result += 1;      // true
-    if (0 || 1) result += 1;      // true
-    if (0 || 0) result += 100;    // false
+    assert(1 || 1);
+    assert(1 || 0);
+    assert(0 || 1);
+    assert(!(0 || 0));
 
     // With non-zero values
-    if (0xf0 && 0x0f) result += 1;  // true
-    if (0xf0 || 0) result += 1;     // true
+    assert(0xf0 && 0x0f);
+    assert(0xf0 || 0);
 
-    return result;  // Expected: 6
+    // Result values
+    assert((1 && 1) == 1);
+    assert((1 && 0) == 0);
+    assert((1 || 0) == 1);
+    assert((0 || 0) == 0);
+
+    exit(0);
 }

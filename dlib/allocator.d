@@ -38,7 +38,7 @@ struct Allocator {
         }
     }
 
-    T[] alloc(T)(size_t count){ return alloc(count * T.sizeof); }
+    T[] alloc(T)(size_t count){ return cast(T[])alloc(count * T.sizeof); }
 
     void[]
     zalloc(size_t size){

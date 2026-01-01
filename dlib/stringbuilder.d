@@ -353,7 +353,7 @@ struct StringBuilder{
     }
     static if(Allocator.state_size){
         static
-        Box!(char[], Allocator)
+        Box!(char[])
         mwrite(R...)(Allocator a, R args){
             StringBuilder sb;
             sb.allocator = a;
@@ -362,7 +362,7 @@ struct StringBuilder{
             return sb.detach;
         }
         static
-        Box!(char[], Allocator)
+        Box!(char[])
         mwritef(R...)(Allocator a, R args){
             StringBuilder sb;
             sb.allocator = a;
@@ -372,7 +372,7 @@ struct StringBuilder{
     }
     else {
         static
-        Box!(char[], Allocator)
+        Box!(char[])
         mwrite(R...)(R args){
             StringBuilder sb;
             foreach(a; args)
@@ -381,7 +381,7 @@ struct StringBuilder{
         }
 
         static
-        Box!(char[], Allocator)
+        Box!(char[])
         mwritef(R...)(R args){
             StringBuilder sb;
             sb.writef(args);
@@ -390,13 +390,13 @@ struct StringBuilder{
     }
 }
 
-Box!(char[], Allocator)
+Box!(char[])
 mwritef(Allocator, R...)(R args)if(!Allocator.state_size){
-    return StringBuilder!(Allocator).mwritef(args);
+    return StringBuilder(Allocator.allocator()).mwritef(args);
 }
-Box!(char[], Allocator)
+Box!(char[])
 mwritef(Allocator, R...)(Allocator a, R args)if(Allocator.state_size){
-    return StringBuilder!(Allocator).mwritef(a, args);
+    return StringBuilder(a).mwritef(a, args);
 }
 
 struct Quoted(T){

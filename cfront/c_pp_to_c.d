@@ -136,46 +136,46 @@ struct PPToCConverter {
     Barray!CToken* output;
     size_t pos = 0;
 
-    int convert() {
-        while (pos < input.length) {
+    int convert(){
+        while(pos < input.length){
             PPToken pp = input[pos];
 
             // Skip whitespace and newlines
-            if (pp.type == PPTokenType.PP_WHITESPACE ||
-                pp.type == PPTokenType.PP_NEWLINE) {
+            if(pp.type == PPTokenType.PP_WHITESPACE ||
+                pp.type == PPTokenType.PP_NEWLINE){
                 pos++;
                 continue;
             }
 
             // EOF
-            if (pp.type == PPTokenType.PP_EOF) {
+            if(pp.type == PPTokenType.PP_EOF){
                 add_token(CTokenType.EOF, "", pp);
                 pos++;
                 continue;
             }
 
             // String literal - handle concatenation
-            if (pp.type == PPTokenType.PP_STRING) {
+            if(pp.type == PPTokenType.PP_STRING){
                 convert_string();
                 continue;
             }
 
             // Character literal
-            if (pp.type == PPTokenType.PP_CHAR) {
+            if(pp.type == PPTokenType.PP_CHAR){
                 add_token(CTokenType.CHAR_LITERAL, pp.lexeme, pp);
                 pos++;
                 continue;
             }
 
             // Number
-            if (pp.type == PPTokenType.PP_NUMBER) {
+            if(pp.type == PPTokenType.PP_NUMBER){
                 convert_number(pp);
                 pos++;
                 continue;
             }
 
             // Identifier - check for keywords
-            if (pp.type == PPTokenType.PP_IDENTIFIER) {
+            if(pp.type == PPTokenType.PP_IDENTIFIER){
                 CTokenType keyword = check_keyword(pp.lexeme);
                 add_token(keyword, pp.lexeme, pp);
                 pos++;
@@ -183,7 +183,7 @@ struct PPToCConverter {
             }
 
             // Punctuator
-            if (pp.type == PPTokenType.PP_PUNCTUATOR) {
+            if(pp.type == PPTokenType.PP_PUNCTUATOR){
                 CTokenType punct = convert_punctuator(pp.lexeme);
                 add_token(punct, pp.lexeme, pp);
                 pos++;
@@ -195,7 +195,7 @@ struct PPToCConverter {
         }
 
         // Add EOF if not already present
-        if (output.count == 0 || (*output)[output.count - 1].type != CTokenType.EOF) {
+        if(output.count == 0 || (*output)[output.count - 1].type != CTokenType.EOF){
             CToken eof;
             eof.type = CTokenType.EOF;
             eof.lexeme = "";
@@ -205,7 +205,7 @@ struct PPToCConverter {
         return 0;
     }
 
-    void add_token(CTokenType type, str lexeme, PPToken source) {
+    void add_token(CTokenType type, str lexeme, PPToken source){
         CToken tok;
         tok.type = type;
         tok.lexeme = lexeme;
@@ -219,7 +219,7 @@ struct PPToCConverter {
     }
 
     // Concatenate adjacent string literals
-    void convert_string() {
+    void convert_string(){
         StringBuilder sb;
         sb.allocator = allocator;
 
@@ -228,17 +228,17 @@ struct PPToCConverter {
         int start_column = first.column;
         str start_file = first.file;
 
-        while (pos < input.length) {
+        while(pos < input.length){
             PPToken pp = input[pos];
 
-            if (pp.type == PPTokenType.PP_STRING) {
+            if(pp.type == PPTokenType.PP_STRING){
                 // Remove quotes and append content
-                if (pp.lexeme.length >= 2) {
+                if(pp.lexeme.length >= 2){
                     sb.write(pp.lexeme[1 .. $ - 1]);
                 }
                 pos++;
-            } else if (pp.type == PPTokenType.PP_WHITESPACE ||
-                       pp.type == PPTokenType.PP_NEWLINE) {
+            } else if(pp.type == PPTokenType.PP_WHITESPACE ||
+                       pp.type == PPTokenType.PP_NEWLINE){
                 // Skip whitespace between strings
                 pos++;
             } else {
@@ -263,12 +263,12 @@ struct PPToCConverter {
     }
 
     // Convert pp-number to NUMBER or HEX
-    void convert_number(PPToken pp) {
+    void convert_number(PPToken pp){
         str s = pp.lexeme;
         CTokenType type = CTokenType.NUMBER;
 
         // Check for hex prefix
-        if (s.length >= 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
+        if(s.length >= 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')){
             type = CTokenType.HEX;
         }
 
@@ -276,101 +276,101 @@ struct PPToCConverter {
     }
 
     // Check if identifier is a keyword
-    CTokenType check_keyword(str name) {
+    CTokenType check_keyword(str name){
         // Keywords sorted by length for efficient matching
-        if (name.length == 2) {
-            if (str_eq(name, "if")) return CTokenType.IF;
-            if (str_eq(name, "do")) return CTokenType.DO;
+        if(name.length == 2){
+            if(name == "if") return CTokenType.IF;
+            if(name == "do") return CTokenType.DO;
         }
-        if (name.length == 3) {
-            if (str_eq(name, "int")) return CTokenType.INT;
-            if (str_eq(name, "for")) return CTokenType.FOR;
-            if (str_eq(name, "asm")) return CTokenType.ASM;
+        if(name.length == 3){
+            if(name == "int") return CTokenType.INT;
+            if(name == "for") return CTokenType.FOR;
+            if(name == "asm") return CTokenType.ASM;
         }
-        if (name.length == 4) {
-            if (str_eq(name, "void")) return CTokenType.VOID;
-            if (str_eq(name, "char")) return CTokenType.CHAR;
-            if (str_eq(name, "long")) return CTokenType.LONG;
-            if (str_eq(name, "else")) return CTokenType.ELSE;
-            if (str_eq(name, "case")) return CTokenType.CASE;
-            if (str_eq(name, "enum")) return CTokenType.ENUM;
-            if (str_eq(name, "goto")) return CTokenType.GOTO;
-            if (str_eq(name, "auto")) return CTokenType.AUTO;
-            if (str_eq(name, "bool")) return CTokenType.BOOL;
-            if (str_eq(name, "true")) return CTokenType.TRUE_KW;
+        if(name.length == 4){
+            if(name == "void") return CTokenType.VOID;
+            if(name == "char") return CTokenType.CHAR;
+            if(name == "long") return CTokenType.LONG;
+            if(name == "else") return CTokenType.ELSE;
+            if(name == "case") return CTokenType.CASE;
+            if(name == "enum") return CTokenType.ENUM;
+            if(name == "goto") return CTokenType.GOTO;
+            if(name == "auto") return CTokenType.AUTO;
+            if(name == "bool") return CTokenType.BOOL;
+            if(name == "true") return CTokenType.TRUE_KW;
         }
-        if (name.length == 5) {
-            if (str_eq(name, "short")) return CTokenType.SHORT;
-            if (str_eq(name, "float")) return CTokenType.FLOAT;
-            if (str_eq(name, "while")) return CTokenType.WHILE;
-            if (str_eq(name, "break")) return CTokenType.BREAK;
-            if (str_eq(name, "const")) return CTokenType.CONST;
-            if (str_eq(name, "union")) return CTokenType.UNION;
-            if (str_eq(name, "__asm")) return CTokenType.ASM;
-            if (str_eq(name, "_Bool")) return CTokenType.BOOL;
-            if (str_eq(name, "false")) return CTokenType.FALSE_KW;
+        if(name.length == 5){
+            if(name == "short") return CTokenType.SHORT;
+            if(name == "float") return CTokenType.FLOAT;
+            if(name == "while") return CTokenType.WHILE;
+            if(name == "break") return CTokenType.BREAK;
+            if(name == "const") return CTokenType.CONST;
+            if(name == "union") return CTokenType.UNION;
+            if(name == "__asm") return CTokenType.ASM;
+            if(name == "_Bool") return CTokenType.BOOL;
+            if(name == "false") return CTokenType.FALSE_KW;
         }
-        if (name.length == 6) {
-            if (str_eq(name, "double")) return CTokenType.DOUBLE;
-            if (str_eq(name, "return")) return CTokenType.RETURN;
-            if (str_eq(name, "switch")) return CTokenType.SWITCH;
-            if (str_eq(name, "static")) return CTokenType.STATIC;
-            if (str_eq(name, "extern")) return CTokenType.EXTERN;
-            if (str_eq(name, "struct")) return CTokenType.STRUCT;
-            if (str_eq(name, "sizeof")) return CTokenType.SIZEOF;
-            if (str_eq(name, "signed")) return CTokenType.SIGNED;
-            if (str_eq(name, "inline")) return CTokenType.INLINE;
+        if(name.length == 6){
+            if(name == "double") return CTokenType.DOUBLE;
+            if(name == "return") return CTokenType.RETURN;
+            if(name == "switch") return CTokenType.SWITCH;
+            if(name == "static") return CTokenType.STATIC;
+            if(name == "extern") return CTokenType.EXTERN;
+            if(name == "struct") return CTokenType.STRUCT;
+            if(name == "sizeof") return CTokenType.SIZEOF;
+            if(name == "signed") return CTokenType.SIGNED;
+            if(name == "inline") return CTokenType.INLINE;
         }
-        if (name.length == 7) {
-            if (str_eq(name, "typedef")) return CTokenType.TYPEDEF;
-            if (str_eq(name, "default")) return CTokenType.DEFAULT;
-            if (str_eq(name, "__asm__")) return CTokenType.ASM;
-            if (str_eq(name, "_Atomic")) return CTokenType.ATOMIC;
-            if (str_eq(name, "alignof")) return CTokenType.ALIGNOF;
+        if(name.length == 7){
+            if(name == "typedef") return CTokenType.TYPEDEF;
+            if(name == "default") return CTokenType.DEFAULT;
+            if(name == "__asm__") return CTokenType.ASM;
+            if(name == "_Atomic") return CTokenType.ATOMIC;
+            if(name == "alignof") return CTokenType.ALIGNOF;
         }
-        if (name.length == 8) {
-            if (str_eq(name, "unsigned")) return CTokenType.UNSIGNED;
-            if (str_eq(name, "volatile")) return CTokenType.VOLATILE;
-            if (str_eq(name, "continue")) return CTokenType.CONTINUE;
-            if (str_eq(name, "_Alignof")) return CTokenType.ALIGNOF;
-            if (str_eq(name, "_Countof")) return CTokenType.COUNTOF;
-            if (str_eq(name, "noreturn")) return CTokenType.NORETURN;
-            if (str_eq(name, "register")) return CTokenType.REGISTER;
-            if (str_eq(name, "restrict")) return CTokenType.RESTRICT;
-            if (str_eq(name, "_Float16")) return CTokenType.FLOAT16;
-            if (str_eq(name, "__inline")) return CTokenType.INLINE;
-            if (str_eq(name, "_Complex")) return CTokenType.COMPLEX;
-            if (str_eq(name, "_Generic")) return CTokenType.GENERIC;
+        if(name.length == 8){
+            if(name == "unsigned") return CTokenType.UNSIGNED;
+            if(name == "volatile") return CTokenType.VOLATILE;
+            if(name == "continue") return CTokenType.CONTINUE;
+            if(name == "_Alignof") return CTokenType.ALIGNOF;
+            if(name == "_Countof") return CTokenType.COUNTOF;
+            if(name == "noreturn") return CTokenType.NORETURN;
+            if(name == "register") return CTokenType.REGISTER;
+            if(name == "restrict") return CTokenType.RESTRICT;
+            if(name == "_Float16") return CTokenType.FLOAT16;
+            if(name == "__inline") return CTokenType.INLINE;
+            if(name == "_Complex") return CTokenType.COMPLEX;
+            if(name == "_Generic") return CTokenType.GENERIC;
         }
-        if (name.length == 9) {
-            if (str_eq(name, "_Noreturn")) return CTokenType.NORETURN;
+        if(name.length == 9){
+            if(name == "_Noreturn") return CTokenType.NORETURN;
         }
-        if (name.length == 10) {
-            if (str_eq(name, "__restrict")) return CTokenType.RESTRICT;
-            if (str_eq(name, "__inline__")) return CTokenType.INLINE;
-            if (str_eq(name, "__int128_t")) return CTokenType.INT128;
-            if (str_eq(name, "_Decimal32")) return CTokenType.DECIMAL32;
-            if (str_eq(name, "_Decimal64")) return CTokenType.DECIMAL64;
+        if(name.length == 10){
+            if(name == "__restrict") return CTokenType.RESTRICT;
+            if(name == "__inline__") return CTokenType.INLINE;
+            if(name == "__int128_t") return CTokenType.INT128;
+            if(name == "_Decimal32") return CTokenType.DECIMAL32;
+            if(name == "_Decimal64") return CTokenType.DECIMAL64;
         }
-        if (name.length == 11) {
-            if (str_eq(name, "__uint128_t")) return CTokenType.UINT128;
-            if (str_eq(name, "_Decimal128")) return CTokenType.DECIMAL128;
+        if(name.length == 11){
+            if(name == "__uint128_t") return CTokenType.UINT128;
+            if(name == "_Decimal128") return CTokenType.DECIMAL128;
         }
-        if (name.length == 12) {
-            if (str_eq(name, "__restrict__")) return CTokenType.RESTRICT;
+        if(name.length == 12){
+            if(name == "__restrict__") return CTokenType.RESTRICT;
         }
-        if (name.length == 14) {
-            if (str_eq(name, "_Static_assert")) return CTokenType.STATIC_ASSERT;
-            if (str_eq(name, "static_assert")) return CTokenType.STATIC_ASSERT;
+        if(name.length == 14){
+            if(name == "_Static_assert") return CTokenType.STATIC_ASSERT;
+            if(name == "static_assert") return CTokenType.STATIC_ASSERT;
         }
 
         return CTokenType.IDENTIFIER;
     }
 
     // Convert punctuator to CTokenType
-    CTokenType convert_punctuator(str p) {
-        if (p.length == 1) {
-            switch (p[0]) {
+    CTokenType convert_punctuator(str p){
+        if(p.length == 1){
+            switch(p[0]){
                 case '(': return CTokenType.LEFT_PAREN;
                 case ')': return CTokenType.RIGHT_PAREN;
                 case '{': return CTokenType.LEFT_BRACE;
@@ -399,32 +399,32 @@ struct PPToCConverter {
                 default: break;
             }
         }
-        if (p.length == 2) {
-            if (str_eq(p, "==")) return CTokenType.EQUAL_EQUAL;
-            if (str_eq(p, "!=")) return CTokenType.BANG_EQUAL;
-            if (str_eq(p, "<=")) return CTokenType.LESS_EQUAL;
-            if (str_eq(p, ">=")) return CTokenType.GREATER_EQUAL;
-            if (str_eq(p, "<<")) return CTokenType.LESS_LESS;
-            if (str_eq(p, ">>")) return CTokenType.GREATER_GREATER;
-            if (str_eq(p, "&&")) return CTokenType.AMP_AMP;
-            if (str_eq(p, "||")) return CTokenType.PIPE_PIPE;
-            if (str_eq(p, "++")) return CTokenType.PLUS_PLUS;
-            if (str_eq(p, "--")) return CTokenType.MINUS_MINUS;
-            if (str_eq(p, "->")) return CTokenType.ARROW;
-            if (str_eq(p, "+=")) return CTokenType.PLUS_EQUAL;
-            if (str_eq(p, "-=")) return CTokenType.MINUS_EQUAL;
-            if (str_eq(p, "*=")) return CTokenType.STAR_EQUAL;
-            if (str_eq(p, "/=")) return CTokenType.SLASH_EQUAL;
-            if (str_eq(p, "%=")) return CTokenType.PERCENT_EQUAL;
-            if (str_eq(p, "&=")) return CTokenType.AMP_EQUAL;
-            if (str_eq(p, "|=")) return CTokenType.PIPE_EQUAL;
-            if (str_eq(p, "^=")) return CTokenType.CARET_EQUAL;
-            if (str_eq(p, "##")) return CTokenType.HASH;  // Token paste (shouldn't appear after preprocess)
+        if(p.length == 2){
+            if(p == "==") return CTokenType.EQUAL_EQUAL;
+            if(p == "!=") return CTokenType.BANG_EQUAL;
+            if(p == "<=") return CTokenType.LESS_EQUAL;
+            if(p == ">=") return CTokenType.GREATER_EQUAL;
+            if(p == "<<") return CTokenType.LESS_LESS;
+            if(p == ">>") return CTokenType.GREATER_GREATER;
+            if(p == "&&") return CTokenType.AMP_AMP;
+            if(p == "||") return CTokenType.PIPE_PIPE;
+            if(p == "++") return CTokenType.PLUS_PLUS;
+            if(p == "--") return CTokenType.MINUS_MINUS;
+            if(p == "->") return CTokenType.ARROW;
+            if(p == "+=") return CTokenType.PLUS_EQUAL;
+            if(p == "-=") return CTokenType.MINUS_EQUAL;
+            if(p == "*=") return CTokenType.STAR_EQUAL;
+            if(p == "/=") return CTokenType.SLASH_EQUAL;
+            if(p == "%=") return CTokenType.PERCENT_EQUAL;
+            if(p == "&=") return CTokenType.AMP_EQUAL;
+            if(p == "|=") return CTokenType.PIPE_EQUAL;
+            if(p == "^=") return CTokenType.CARET_EQUAL;
+            if(p == "##") return CTokenType.HASH;  // Token paste (shouldn't appear after preprocess)
         }
-        if (p.length == 3) {
-            if (str_eq(p, "...")) return CTokenType.ELLIPSIS;
-            if (str_eq(p, "<<=")) return CTokenType.LESS_LESS_EQUAL;
-            if (str_eq(p, ">>=")) return CTokenType.GREATER_GREATER_EQUAL;
+        if(p.length == 3){
+            if(p == "...") return CTokenType.ELLIPSIS;
+            if(p == "<<=") return CTokenType.LESS_LESS_EQUAL;
+            if(p == ">>=") return CTokenType.GREATER_GREATER_EQUAL;
         }
 
         // Unknown punctuator - return as-is (should not happen)
@@ -433,7 +433,7 @@ struct PPToCConverter {
 }
 
 // Convert PPToken array to CToken array
-int pp_to_c_tokens(PPToken[] input, Barray!CToken* output, Allocator allocator) {
+int pp_to_c_tokens(PPToken[] input, Barray!CToken* output, Allocator allocator){
     PPToCConverter converter;
     converter.allocator = allocator;
     converter.input = input;

@@ -11,7 +11,6 @@ import dlib.barray : Barray, make_barray;
 import dlib.table : Table;
 
 import cfront.c_pp_to_c : CToken, CTokenType;
-import cfront.c_pp_token : str_eq;
 import cfront.c_ast;
 
 struct CParser {
@@ -26,10 +25,10 @@ struct CParser {
     Table!(str, long) enum_constants;  // Enum constant values (name -> value)
     Table!(str, CType*) typedef_types; // Typedef aliases (name -> type)
 
-    void error(CToken token, str message) {
+    void error(CToken token, str message){
         ERROR_OCCURRED = true;
         // Show expansion location first (where macro was used), then definition location
-        if (token.expansion_file.length > 0) {
+        if(token.expansion_file.length > 0){
             fprintf(stderr, "%.*s:%d:%d: Parse Error at '%.*s': %.*s\n",
                         cast(int)token.expansion_file.length, token.expansion_file.ptr,
                         token.expansion_line, token.expansion_column,
@@ -47,7 +46,7 @@ struct CParser {
         }
     }
 
-    void error(str message) {
+    void error(str message){
         error(peek(), message);
     }
 
@@ -55,7 +54,7 @@ struct CParser {
     // Top-Level Parsing
     // =========================================================================
 
-    int parse(CTranslationUnit* unit) {
+    int parse(CTranslationUnit* unit){
         auto functions = make_barray!CFunction(allocator);
         auto globals = make_barray!CGlobalVar(allocator);
         auto structs = make_barray!CStructDef(allocator);
@@ -68,12 +67,12 @@ struct CParser {
         scope(exit) func_indices.cleanup();
 
         // Helper to add function, merging forward declarations with definitions
-        void add_function(CFunction func) {
+        void add_function(CFunction func){
             str fname = func.name.lexeme;
-            if (auto idx_ptr = fname in func_indices) {
+            if(auto idx_ptr = fname in func_indices){
                 // Already have an entry for this function
                 size_t idx = *idx_ptr;
-                if (func.is_definition && !functions[idx].is_definition) {
+                if(func.is_definition && !functions[idx].is_definition){
                     // Current is definition, existing is declaration - replace
                     functions[idx] = func;
                 }
@@ -92,16 +91,15 @@ struct CParser {
         enum_constants.data.allocator = allocator;
         typedef_types.data.allocator = allocator;
 
-        while (!at_end) {
+        while(!at_end){
             // Handle #pragma (emitted as # pragma library ( "..." ) tokens)
-            if (check(CTokenType.HASH) && peek_at(1).type == CTokenType.IDENTIFIER &&
-                str_eq(peek_at(1).lexeme, "pragma")) {
+            if(check(CTokenType.HASH) && peek_at(1).type == CTokenType.IDENTIFIER && peek_at(1).lexeme == "pragma"){
                 handle_pragma();
                 continue;
             }
 
             // Skip empty statements (from macros that expand to nothing)
-            if (match(CTokenType.SEMICOLON)) {
+            if(match(CTokenType.SEMICOLON)){
                 continue;
             }
 
@@ -109,37 +107,37 @@ struct CParser {
             // extern: for functions, this is the default; for objects, means defined elsewhere (dlimport)
             bool saw_extern = false;
             bool saw_inline = false;
-            while (true) {
-                if (match(CTokenType.EXTERN)) { saw_extern = true; }
-                else if (match(CTokenType.INLINE)) { saw_inline = true; }
-                else if (match(CTokenType.NORETURN)) { /* skip */ }
-                else if (check(CTokenType.IDENTIFIER) && peek().lexeme == "__forceinline") {
+            while(true){
+                if(match(CTokenType.EXTERN)){ saw_extern = true; }
+                else if(match(CTokenType.INLINE)){ saw_inline = true; }
+                else if(match(CTokenType.NORETURN)){ /* skip */ }
+                else if(check(CTokenType.IDENTIFIER) && peek().lexeme == "__forceinline"){
                     advance();
                     saw_inline = true;
                 }
                 else break;
             }
 
-            if (check(CTokenType.STRUCT)) {
+            if(check(CTokenType.STRUCT)){
                 // Check if this is a struct definition or forward declaration
                 // Look ahead: struct Name { ... means definition
                 //             struct Name ; means forward declaration
                 //             struct Name var... means variable of struct type
-                if (peek_at(1).type == CTokenType.IDENTIFIER &&
-                    peek_at(2).type == CTokenType.LEFT_BRACE) {
+                if(peek_at(1).type == CTokenType.IDENTIFIER &&
+                    peek_at(2).type == CTokenType.LEFT_BRACE){
                     CStructDef sdef;
                     int err = parse_struct_def(&sdef);
-                    if (err) return err;
+                    if(err) return err;
                     structs ~= sdef;
-                } else if (peek_at(1).type == CTokenType.IDENTIFIER &&
-                           peek_at(2).type == CTokenType.SEMICOLON) {
+                } else if(peek_at(1).type == CTokenType.IDENTIFIER &&
+                           peek_at(2).type == CTokenType.SEMICOLON){
                     // Forward declaration: struct Name;
                     advance();  // consume 'struct'
                     CToken struct_name = advance();  // consume name
                     advance();  // consume ';'
 
                     // Create incomplete struct type if not already defined
-                    if ((struct_name.lexeme in struct_types) is null) {
+                    if((struct_name.lexeme in struct_types) is null){
                         auto data = allocator.alloc(CType.sizeof);
                         CType* incomplete = cast(CType*)data.ptr;
                         incomplete.kind = CTypeKind.STRUCT;
@@ -150,44 +148,44 @@ struct CParser {
                 } else {
                     // It's a variable/function with struct type
                     CType* type_ = parse_type();
-                    if (type_ is null) return 1;
+                    if(type_ is null) return 1;
 
                     CToken name = consume(CTokenType.IDENTIFIER, "Expected identifier");
-                    if (ERROR_OCCURRED) return 1;
+                    if(ERROR_OCCURRED) return 1;
 
-                    if (check(CTokenType.LEFT_PAREN)) {
+                    if(check(CTokenType.LEFT_PAREN)){
                         CFunction func;
                         int err = parse_function_rest(type_, name, &func, saw_inline);
-                        if (err) return err;
+                        if(err) return err;
                         add_function(func);
                     } else {
                         // Global variable - use unified init-declarator-list parsing
                         int err = parse_init_declarator_list(&globals, type_, name, saw_extern, current_library);
-                        if (err) return err;
+                        if(err) return err;
                         consume(CTokenType.SEMICOLON, "Expected ';' after variable declaration");
-                        if (ERROR_OCCURRED) return 1;
+                        if(ERROR_OCCURRED) return 1;
                     }
                 }
-            } else if (check(CTokenType.UNION)) {
+            } else if(check(CTokenType.UNION)){
                 // Check if this is a union definition or forward declaration
                 // Look ahead: union Name { ... means definition
                 //             union Name ; means forward declaration
                 //             union Name var... means variable of union type
-                if (peek_at(1).type == CTokenType.IDENTIFIER &&
-                    peek_at(2).type == CTokenType.LEFT_BRACE) {
+                if(peek_at(1).type == CTokenType.IDENTIFIER &&
+                    peek_at(2).type == CTokenType.LEFT_BRACE){
                     CUnionDef udef;
                     int err = parse_union_def(&udef);
-                    if (err) return err;
+                    if(err) return err;
                     unions ~= udef;
-                } else if (peek_at(1).type == CTokenType.IDENTIFIER &&
-                           peek_at(2).type == CTokenType.SEMICOLON) {
+                } else if(peek_at(1).type == CTokenType.IDENTIFIER &&
+                           peek_at(2).type == CTokenType.SEMICOLON){
                     // Forward declaration: union Name;
                     advance();  // consume 'union'
                     CToken union_name = advance();  // consume name
                     advance();  // consume ';'
 
                     // Create incomplete union type if not already defined
-                    if ((union_name.lexeme in union_types) is null) {
+                    if((union_name.lexeme in union_types) is null){
                         auto data = allocator.alloc(CType.sizeof);
                         CType* incomplete = cast(CType*)data.ptr;
                         incomplete.kind = CTypeKind.UNION;
@@ -198,25 +196,25 @@ struct CParser {
                 } else {
                     // It's a variable/function with union type
                     CType* type_ = parse_type();
-                    if (type_ is null) return 1;
+                    if(type_ is null) return 1;
 
                     CToken name = consume(CTokenType.IDENTIFIER, "Expected identifier");
-                    if (ERROR_OCCURRED) return 1;
+                    if(ERROR_OCCURRED) return 1;
 
-                    if (check(CTokenType.LEFT_PAREN)) {
+                    if(check(CTokenType.LEFT_PAREN)){
                         CFunction func;
                         int err = parse_function_rest(type_, name, &func, saw_inline);
-                        if (err) return err;
+                        if(err) return err;
                         add_function(func);
                     } else {
                         // Global variable - use unified init-declarator-list parsing
                         int err = parse_init_declarator_list(&globals, type_, name, saw_extern, current_library);
-                        if (err) return err;
+                        if(err) return err;
                         consume(CTokenType.SEMICOLON, "Expected ';' after variable declaration");
-                        if (ERROR_OCCURRED) return 1;
+                        if(ERROR_OCCURRED) return 1;
                     }
                 }
-            } else if (check(CTokenType.ENUM)) {
+            } else if(check(CTokenType.ENUM)){
                 // Check if this is an enum definition
                 // Look ahead: enum Name { ... means named definition
                 //             enum { ... means anonymous definition
@@ -224,48 +222,48 @@ struct CParser {
                 bool is_anon_enum = peek_at(1).type == CTokenType.LEFT_BRACE;
                 bool is_named_enum = peek_at(1).type == CTokenType.IDENTIFIER &&
                                      peek_at(2).type == CTokenType.LEFT_BRACE;
-                if (is_anon_enum || is_named_enum) {
+                if(is_anon_enum || is_named_enum){
                     CEnumDef edef;
                     int err = parse_enum_def(&edef);
-                    if (err) return err;
+                    if(err) return err;
                     enums ~= edef;
                 } else {
                     // It's a variable/function with enum type
                     CType* type_ = parse_type();
-                    if (type_ is null) return 1;
+                    if(type_ is null) return 1;
 
                     CToken name = consume(CTokenType.IDENTIFIER, "Expected identifier");
-                    if (ERROR_OCCURRED) return 1;
+                    if(ERROR_OCCURRED) return 1;
 
-                    if (check(CTokenType.LEFT_PAREN)) {
+                    if(check(CTokenType.LEFT_PAREN)){
                         CFunction func;
                         int err = parse_function_rest(type_, name, &func, saw_inline);
-                        if (err) return err;
+                        if(err) return err;
                         add_function(func);
                     } else {
                         // Global variable - use unified init-declarator-list parsing
                         int err = parse_init_declarator_list(&globals, type_, name, saw_extern, current_library);
-                        if (err) return err;
+                        if(err) return err;
                         consume(CTokenType.SEMICOLON, "Expected ';' after variable declaration");
-                        if (ERROR_OCCURRED) return 1;
+                        if(ERROR_OCCURRED) return 1;
                     }
                 }
-            } else if (check(CTokenType.TYPEDEF)) {
+            } else if(check(CTokenType.TYPEDEF)){
                 // Parse typedef declaration
                 int err = parse_typedef(&enums);
-                if (err) return err;
-            } else if (match(CTokenType.STATIC_ASSERT)) {
+                if(err) return err;
+            } else if(match(CTokenType.STATIC_ASSERT)){
                 // _Static_assert(expr, "message");
                 int err = parse_static_assert();
-                if (err) return err;
-            } else if (match(CTokenType.STATIC)) {
+                if(err) return err;
+            } else if(match(CTokenType.STATIC)){
                 // Static function or variable
                 // Check for inline/noreturn after static (can appear in any order)
                 bool saw_static_inline = false;
-                while (true) {
-                    if (match(CTokenType.INLINE)) { saw_static_inline = true; }
-                    else if (match(CTokenType.NORETURN)) { /* skip */ }
-                    else if (check(CTokenType.IDENTIFIER) && peek().lexeme == "__forceinline") {
+                while(true){
+                    if(match(CTokenType.INLINE)){ saw_static_inline = true; }
+                    else if(match(CTokenType.NORETURN)){ /* skip */ }
+                    else if(check(CTokenType.IDENTIFIER) && peek().lexeme == "__forceinline"){
                         advance();
                         saw_static_inline = true;
                     }
@@ -274,40 +272,40 @@ struct CParser {
 
                 // Parse the type and name
                 CType* type_ = parse_type();
-                if (type_ is null) {
+                if(type_ is null){
                     // Skip to semicolon or brace on error
                     int brace_depth = 0;
-                    while (!at_end) {
-                        if (check(CTokenType.LEFT_BRACE)) { brace_depth++; advance(); }
-                        else if (check(CTokenType.RIGHT_BRACE)) { brace_depth--; advance(); if (brace_depth == 0) break; }
-                        else if (check(CTokenType.SEMICOLON) && brace_depth == 0) { advance(); break; }
+                    while(!at_end){
+                        if(check(CTokenType.LEFT_BRACE)){ brace_depth++; advance(); }
+                        else if(check(CTokenType.RIGHT_BRACE)){ brace_depth--; advance(); if(brace_depth == 0) break; }
+                        else if(check(CTokenType.SEMICOLON) && brace_depth == 0){ advance(); break; }
                         else advance();
                     }
                     continue;
                 }
 
                 CToken name = consume(CTokenType.IDENTIFIER, "Expected identifier");
-                if (ERROR_OCCURRED) return 1;
+                if(ERROR_OCCURRED) return 1;
 
-                if (check(CTokenType.LEFT_PAREN)) {
+                if(check(CTokenType.LEFT_PAREN)){
                     // Static function - parse it but mark as static
                     CFunction func;
                     int err = parse_function_rest(type_, name, &func, saw_static_inline);
-                    if (err) return err;
+                    if(err) return err;
                     func.is_static = true;
                     add_function(func);
                 } else {
                     // Static variable - skip (internal linkage, not relevant for us)
                     int brace_depth = 0;
-                    while (!at_end) {
-                        if (check(CTokenType.LEFT_BRACE)) { brace_depth++; advance(); }
-                        else if (check(CTokenType.RIGHT_BRACE)) { brace_depth--; advance(); if (brace_depth == 0) break; }
-                        else if (check(CTokenType.SEMICOLON) && brace_depth == 0) { advance(); break; }
+                    while(!at_end){
+                        if(check(CTokenType.LEFT_BRACE)){ brace_depth++; advance(); }
+                        else if(check(CTokenType.RIGHT_BRACE)){ brace_depth--; advance(); if(brace_depth == 0) break; }
+                        else if(check(CTokenType.SEMICOLON) && brace_depth == 0){ advance(); break; }
                         else advance();
                     }
                 }
-            } else if (check(CTokenType.IDENTIFIER) && peek_at(1).type == CTokenType.LEFT_PAREN &&
-                       (peek().lexeme in typedef_types) is null) {
+            } else if(check(CTokenType.IDENTIFIER) && peek_at(1).type == CTokenType.LEFT_PAREN &&
+                       (peek().lexeme in typedef_types) is null){
                 // Unknown identifier (not a typedef) followed by ( - likely a function-like macro invocation
                 // Skip it: identifier(...);
                 advance();  // consume identifier
@@ -316,13 +314,13 @@ struct CParser {
             } else {
                 // Parse type and declarator, then decide if it's a function or global
                 CType* base_type = parse_type();
-                if (base_type is null) return 1;
+                if(base_type is null) return 1;
 
                 // Check for complex declarator starting with '(' (function pointer, pointer-to-array)
-                if (check(CTokenType.LEFT_PAREN)) {
+                if(check(CTokenType.LEFT_PAREN)){
                     // Parse the full declarator using the new infrastructure
                     CDeclarator* decl = parse_declarator(false);
-                    if (decl is null) return 1;
+                    if(decl is null) return 1;
 
                     // Build the final type
                     CType* final_type = apply_declarator_to_type(base_type, decl);
@@ -331,13 +329,13 @@ struct CParser {
                     // Also find the declarator that contains the name to check if it's a function
                     CToken name = decl.name;
                     CDeclarator* name_decl = decl;  // The declarator containing the name
-                    if (name.lexeme.length == 0 && decl.nested !is null) {
+                    if(name.lexeme.length == 0 && decl.nested !is null){
                         // Name is in a nested declarator - find it
                         CDeclarator* inner = decl.nested;
-                        while (inner !is null && inner.name.lexeme.length == 0) {
+                        while(inner !is null && inner.name.lexeme.length == 0){
                             inner = inner.nested;
                         }
-                        if (inner !is null) {
+                        if(inner !is null){
                             name = inner.name;
                             name_decl = inner;
                         }
@@ -346,7 +344,7 @@ struct CParser {
                     // If the declarator containing the name is a function declarator,
                     // then this is a function declaration, not a variable.
                     // e.g., void(*signal(int, void(*)(int)))(int) - signal is in a function-declarator
-                    if (name_decl.is_function) {
+                    if(name_decl.is_function){
                         // Function declaration/definition
                         CFunction func;
                         func.name = name;
@@ -354,7 +352,7 @@ struct CParser {
                         func.return_type = build_function_return_type(base_type, decl, name_decl);
                         // Extract params from the name_decl (the function declarator containing the name)
                         auto params = make_barray!CParam(allocator);
-                        for (size_t i = 0; i < name_decl.param_types.length; i++) {
+                        for(size_t i = 0; i < name_decl.param_types.length; i++){
                             CParam p;
                             p.type = name_decl.param_types[i];
                             // No name available from declarator parsing
@@ -367,18 +365,18 @@ struct CParser {
                         func.library = current_library;
 
                         // Check for function body
-                        if (match(CTokenType.LEFT_BRACE)) {
+                        if(match(CTokenType.LEFT_BRACE)){
                             func.is_definition = true;
                             // Skip function body
                             int brace_depth = 1;
-                            while (!at_end && brace_depth > 0) {
-                                if (check(CTokenType.LEFT_BRACE)) brace_depth++;
-                                else if (check(CTokenType.RIGHT_BRACE)) brace_depth--;
+                            while(!at_end && brace_depth > 0){
+                                if(check(CTokenType.LEFT_BRACE)) brace_depth++;
+                                else if(check(CTokenType.RIGHT_BRACE)) brace_depth--;
                                 advance();
                             }
                         } else {
                             consume(CTokenType.SEMICOLON, "Expected ';' after function declaration");
-                            if (ERROR_OCCURRED) return 1;
+                            if(ERROR_OCCURRED) return 1;
                         }
                         add_function(func);
                     } else {
@@ -391,34 +389,34 @@ struct CParser {
                         gvar.library = current_library;
 
                         // Check for initializer
-                        if (match(CTokenType.EQUAL)) {
+                        if(match(CTokenType.EQUAL)){
                             gvar.initializer = parse_initializer();
-                            if (gvar.initializer is null) return 1;
+                            if(gvar.initializer is null) return 1;
                             // If there's an initializer, this is a definition, not extern
                             gvar.is_extern = false;
                         }
 
                         consume(CTokenType.SEMICOLON, "Expected ';' after variable declaration");
-                        if (ERROR_OCCURRED) return 1;
+                        if(ERROR_OCCURRED) return 1;
 
                         globals ~= gvar;
                     }
                 } else {
                     CToken name = consume(CTokenType.IDENTIFIER, "Expected identifier");
-                    if (ERROR_OCCURRED) return 1;
+                    if(ERROR_OCCURRED) return 1;
 
-                    if (check(CTokenType.LEFT_PAREN)) {
+                    if(check(CTokenType.LEFT_PAREN)){
                         // It's a function
                         CFunction func;
                         int err = parse_function_rest(base_type, name, &func, saw_inline);
-                        if (err) return err;
+                        if(err) return err;
                         add_function(func);
                     } else {
                         // Global variable - use unified init-declarator-list parsing
                         int err = parse_init_declarator_list(&globals, base_type, name, saw_extern, current_library);
-                        if (err) return err;
+                        if(err) return err;
                         consume(CTokenType.SEMICOLON, "Expected ';' after variable declaration");
-                        if (ERROR_OCCURRED) return 1;
+                        if(ERROR_OCCURRED) return 1;
                     }
                 }
             }
@@ -433,18 +431,18 @@ struct CParser {
         return 0;
     }
 
-    void handle_pragma() {
+    void handle_pragma(){
         advance();  // consume #
         advance();  // consume pragma
 
         // Check for library("...")
-        if (check(CTokenType.IDENTIFIER) && str_eq(peek().lexeme, "library")) {
+        if(check(CTokenType.IDENTIFIER) && peek().lexeme == "library"){
             advance();  // consume library
-            if (match(CTokenType.LEFT_PAREN)) {
-                if (check(CTokenType.STRING)) {
+            if(match(CTokenType.LEFT_PAREN)){
+                if(check(CTokenType.STRING)){
                     str lib = peek().lexeme;
                     // Remove quotes from string literal
-                    if (lib.length >= 2 && lib[0] == '"' && lib[$ - 1] == '"') {
+                    if(lib.length >= 2 && lib[0] == '"' && lib[$ - 1] == '"'){
                         current_library = lib[1 .. $ - 1];
                     }
                     advance();  // consume string
@@ -454,7 +452,7 @@ struct CParser {
         }
 
         // Skip to end of pragma (until newline or EOF)
-        while (!at_end && !check(CTokenType.EOF)) {
+        while(!at_end && !check(CTokenType.EOF)){
             // Just advance past any remaining tokens on this line
             // Since we don't have newline tokens in CToken stream, just break
             break;
@@ -464,29 +462,29 @@ struct CParser {
     // (6.7.3.2) struct-or-union-specifier:
     //     struct-or-union identifier_opt { struct-declaration-list }
     //     struct-or-union identifier
-    int parse_struct_def(CStructDef* sdef) {
+    int parse_struct_def(CStructDef* sdef){
         advance();  // consume 'struct'
         CToken name = consume(CTokenType.IDENTIFIER, "Expected struct name");
-        if (ERROR_OCCURRED) return 1;
+        if(ERROR_OCCURRED) return 1;
 
         consume(CTokenType.LEFT_BRACE, "Expected '{' after struct name");
-        if (ERROR_OCCURRED) return 1;
+        if(ERROR_OCCURRED) return 1;
 
         // Parse fields using unified member parsing
         auto fields = make_barray!StructField(allocator);
         size_t total_size = 0;
         int err = parse_member_declaration_list(&fields, &total_size, false);  // is_union=false
-        if (err) return err;
+        if(err) return err;
 
         consume(CTokenType.RIGHT_BRACE, "Expected '}' after struct fields");
-        if (ERROR_OCCURRED) return 1;
+        if(ERROR_OCCURRED) return 1;
 
         consume(CTokenType.SEMICOLON, "Expected ';' after struct definition");
-        if (ERROR_OCCURRED) return 1;
+        if(ERROR_OCCURRED) return 1;
 
         // Check if there's an existing forward-declared type to update
         CType* struct_type;
-        if (auto existing = name.lexeme in struct_types) {
+        if(auto existing = name.lexeme in struct_types){
             // Update existing type in-place so typedefs continue to work
             struct_type = *existing;
             struct_type.fields = fields[];
@@ -505,29 +503,29 @@ struct CParser {
     // (6.7.3.2) struct-or-union-specifier:
     //     struct-or-union identifier_opt { struct-declaration-list }
     //     struct-or-union identifier
-    int parse_union_def(CUnionDef* udef) {
+    int parse_union_def(CUnionDef* udef){
         advance();  // consume 'union'
         CToken name = consume(CTokenType.IDENTIFIER, "Expected union name");
-        if (ERROR_OCCURRED) return 1;
+        if(ERROR_OCCURRED) return 1;
 
         consume(CTokenType.LEFT_BRACE, "Expected '{' after union name");
-        if (ERROR_OCCURRED) return 1;
+        if(ERROR_OCCURRED) return 1;
 
         // Parse fields using unified member parsing
         auto fields = make_barray!StructField(allocator);
         size_t max_size = 0;
         int err = parse_member_declaration_list(&fields, &max_size, true);  // is_union=true
-        if (err) return err;
+        if(err) return err;
 
         consume(CTokenType.RIGHT_BRACE, "Expected '}' after union fields");
-        if (ERROR_OCCURRED) return 1;
+        if(ERROR_OCCURRED) return 1;
 
         consume(CTokenType.SEMICOLON, "Expected ';' after union definition");
-        if (ERROR_OCCURRED) return 1;
+        if(ERROR_OCCURRED) return 1;
 
         // Check if there's an existing forward-declared type to update
         CType* union_type;
-        if (auto existing = name.lexeme in union_types) {
+        if(auto existing = name.lexeme in union_types){
             // Update existing type in-place so typedefs continue to work
             union_type = *existing;
             union_type.fields = fields[];
@@ -551,28 +549,28 @@ struct CParser {
 
     // Parse a constant expression for enum values
     // Supports: integer literals, enum constant references, unary minus, +/-, comparisons, ternary
-    ConstExprResult parse_enum_const_expr() {
+    ConstExprResult parse_enum_const_expr(){
         return parse_enum_const_ternary();
     }
 
     // Ternary operator - lowest precedence
-    ConstExprResult parse_enum_const_ternary() {
+    ConstExprResult parse_enum_const_ternary(){
         auto result = parse_enum_const_or();
-        if (result.err) return result;
+        if(result.err) return result;
 
-        if (check(CTokenType.QUESTION)) {
+        if(check(CTokenType.QUESTION)){
             advance();  // consume ?
             auto if_true = parse_enum_const_expr();  // Recursive for nested ternary
-            if (if_true.err) return if_true;
+            if(if_true.err) return if_true;
 
             consume(CTokenType.COLON, "Expected ':' in ternary expression");
-            if (ERROR_OCCURRED) {
+            if(ERROR_OCCURRED){
                 result.err = true;
                 return result;
             }
 
             auto if_false = parse_enum_const_ternary();
-            if (if_false.err) return if_false;
+            if(if_false.err) return if_false;
 
             result.value = result.value != 0 ? if_true.value : if_false.value;
         }
@@ -580,57 +578,57 @@ struct CParser {
     }
 
     // Bitwise OR - lowest precedence of bitwise ops
-    ConstExprResult parse_enum_const_or() {
+    ConstExprResult parse_enum_const_or(){
         auto result = parse_enum_const_xor();
-        if (result.err) return result;
+        if(result.err) return result;
 
-        while (check(CTokenType.PIPE)) {
+        while(check(CTokenType.PIPE)){
             advance();
             auto right = parse_enum_const_xor();
-            if (right.err) return right;
+            if(right.err) return right;
             result.value = result.value | right.value;
         }
         return result;
     }
 
     // Bitwise XOR
-    ConstExprResult parse_enum_const_xor() {
+    ConstExprResult parse_enum_const_xor(){
         auto result = parse_enum_const_and();
-        if (result.err) return result;
+        if(result.err) return result;
 
-        while (check(CTokenType.CARET)) {
+        while(check(CTokenType.CARET)){
             advance();
             auto right = parse_enum_const_and();
-            if (right.err) return right;
+            if(right.err) return right;
             result.value = result.value ^ right.value;
         }
         return result;
     }
 
     // Bitwise AND
-    ConstExprResult parse_enum_const_and() {
+    ConstExprResult parse_enum_const_and(){
         auto result = parse_enum_const_equality();
-        if (result.err) return result;
+        if(result.err) return result;
 
-        while (check(CTokenType.AMP)) {
+        while(check(CTokenType.AMP)){
             advance();
             auto right = parse_enum_const_equality();
-            if (right.err) return right;
+            if(right.err) return right;
             result.value = result.value & right.value;
         }
         return result;
     }
 
-    ConstExprResult parse_enum_const_equality() {
+    ConstExprResult parse_enum_const_equality(){
         auto result = parse_enum_const_relational();
-        if (result.err) return result;
+        if(result.err) return result;
 
-        while (check(CTokenType.EQUAL_EQUAL) || check(CTokenType.BANG_EQUAL)) {
+        while(check(CTokenType.EQUAL_EQUAL) || check(CTokenType.BANG_EQUAL)){
             bool is_eq = check(CTokenType.EQUAL_EQUAL);
             advance();
             auto right = parse_enum_const_relational();
-            if (right.err) return right;
-            if (is_eq) {
+            if(right.err) return right;
+            if(is_eq){
                 result.value = result.value == right.value ? 1 : 0;
             } else {
                 result.value = result.value != right.value ? 1 : 0;
@@ -639,21 +637,21 @@ struct CParser {
         return result;
     }
 
-    ConstExprResult parse_enum_const_relational() {
+    ConstExprResult parse_enum_const_relational(){
         auto result = parse_enum_const_shift();
-        if (result.err) return result;
+        if(result.err) return result;
 
-        while (check(CTokenType.LESS) || check(CTokenType.GREATER) ||
-               check(CTokenType.LESS_EQUAL) || check(CTokenType.GREATER_EQUAL)) {
+        while(check(CTokenType.LESS) || check(CTokenType.GREATER) ||
+               check(CTokenType.LESS_EQUAL) || check(CTokenType.GREATER_EQUAL)){
             CTokenType op = peek().type;
             advance();
             auto right = parse_enum_const_shift();
-            if (right.err) return right;
-            if (op == CTokenType.LESS) {
+            if(right.err) return right;
+            if(op == CTokenType.LESS){
                 result.value = result.value < right.value ? 1 : 0;
-            } else if (op == CTokenType.GREATER) {
+            } else if(op == CTokenType.GREATER){
                 result.value = result.value > right.value ? 1 : 0;
-            } else if (op == CTokenType.LESS_EQUAL) {
+            } else if(op == CTokenType.LESS_EQUAL){
                 result.value = result.value <= right.value ? 1 : 0;
             } else {
                 result.value = result.value >= right.value ? 1 : 0;
@@ -663,16 +661,16 @@ struct CParser {
     }
 
     // Shift operators
-    ConstExprResult parse_enum_const_shift() {
+    ConstExprResult parse_enum_const_shift(){
         auto result = parse_enum_const_additive();
-        if (result.err) return result;
+        if(result.err) return result;
 
-        while (check(CTokenType.LESS_LESS) || check(CTokenType.GREATER_GREATER)) {
+        while(check(CTokenType.LESS_LESS) || check(CTokenType.GREATER_GREATER)){
             bool is_left = check(CTokenType.LESS_LESS);
             advance();
             auto right = parse_enum_const_additive();
-            if (right.err) return right;
-            if (is_left) {
+            if(right.err) return right;
+            if(is_left){
                 result.value = result.value << right.value;
             } else {
                 result.value = result.value >> right.value;
@@ -681,16 +679,16 @@ struct CParser {
         return result;
     }
 
-    ConstExprResult parse_enum_const_additive() {
+    ConstExprResult parse_enum_const_additive(){
         auto result = parse_enum_const_multiplicative();
-        if (result.err) return result;
+        if(result.err) return result;
 
-        while (check(CTokenType.PLUS) || check(CTokenType.MINUS)) {
+        while(check(CTokenType.PLUS) || check(CTokenType.MINUS)){
             bool is_plus = check(CTokenType.PLUS);
             advance();
             auto right = parse_enum_const_multiplicative();
-            if (right.err) return right;
-            if (is_plus) {
+            if(right.err) return right;
+            if(is_plus){
                 result.value = result.value + right.value;
             } else {
                 result.value = result.value - right.value;
@@ -699,25 +697,25 @@ struct CParser {
         return result;
     }
 
-    ConstExprResult parse_enum_const_multiplicative() {
+    ConstExprResult parse_enum_const_multiplicative(){
         auto result = parse_enum_const_unary();
-        if (result.err) return result;
+        if(result.err) return result;
 
-        while (check(CTokenType.STAR) || check(CTokenType.SLASH) || check(CTokenType.PERCENT)) {
+        while(check(CTokenType.STAR) || check(CTokenType.SLASH) || check(CTokenType.PERCENT)){
             CTokenType op = peek().type;
             advance();
             auto right = parse_enum_const_unary();
-            if (right.err) return right;
-            if (op == CTokenType.STAR) {
+            if(right.err) return right;
+            if(op == CTokenType.STAR){
                 result.value = result.value * right.value;
-            } else if (op == CTokenType.SLASH) {
-                if (right.value != 0) {
+            } else if(op == CTokenType.SLASH){
+                if(right.value != 0){
                     result.value = result.value / right.value;
                 } else {
                     result.value = 0;  // Avoid division by zero
                 }
             } else {
-                if (right.value != 0) {
+                if(right.value != 0){
                     result.value = result.value % right.value;
                 } else {
                     result.value = 0;
@@ -727,44 +725,44 @@ struct CParser {
         return result;
     }
 
-    ConstExprResult parse_enum_const_unary() {
-        if (match(CTokenType.MINUS)) {
+    ConstExprResult parse_enum_const_unary(){
+        if(match(CTokenType.MINUS)){
             auto result = parse_enum_const_primary();
-            if (result.err) return result;
+            if(result.err) return result;
             result.value = -result.value;
             return result;
         }
-        if (match(CTokenType.PLUS)) {
+        if(match(CTokenType.PLUS)){
             return parse_enum_const_primary();
         }
         return parse_enum_const_primary();
     }
 
-    ConstExprResult parse_enum_const_primary() {
+    ConstExprResult parse_enum_const_primary(){
         ConstExprResult result;
         result.err = false;
 
-        if (match(CTokenType.NUMBER)) {
+        if(match(CTokenType.NUMBER)){
             CToken tok = previous();
             long value = 0;
-            foreach (c; tok.lexeme) {
+            foreach(c; tok.lexeme){
                 value = value * 10 + (c - '0');
             }
             result.value = value;
             return result;
         }
 
-        if (match(CTokenType.HEX)) {
+        if(match(CTokenType.HEX)){
             CToken tok = previous();
             long value = 0;
             str lexeme = tok.lexeme;
             // Skip "0x" or "0X" prefix
-            foreach (c; lexeme[2 .. $]) {
-                if (c >= '0' && c <= '9') {
+            foreach(c; lexeme[2 .. $]){
+                if(c >= '0' && c <= '9'){
                     value = value * 16 + (c - '0');
-                } else if (c >= 'a' && c <= 'f') {
+                } else if(c >= 'a' && c <= 'f'){
                     value = value * 16 + (c - 'a' + 10);
-                } else if (c >= 'A' && c <= 'F') {
+                } else if(c >= 'A' && c <= 'F'){
                     value = value * 16 + (c - 'A' + 10);
                 }
             }
@@ -772,14 +770,14 @@ struct CParser {
             return result;
         }
 
-        if (match(CTokenType.CHAR_LITERAL)) {
+        if(match(CTokenType.CHAR_LITERAL)){
             CToken tok = previous();
             str lexeme = tok.lexeme;
             // Lexeme is 'c' or '\x' or '\nnn' (with quotes)
-            if (lexeme.length >= 3 && lexeme[1] == '\\') {
+            if(lexeme.length >= 3 && lexeme[1] == '\\'){
                 // Escape sequence
                 char escape_char = lexeme[2];
-                switch (escape_char) {
+                switch(escape_char){
                     case 'n': result.value = '\n'; break;
                     case 'r': result.value = '\r'; break;
                     case 't': result.value = '\t'; break;
@@ -789,13 +787,13 @@ struct CParser {
                     case '"': result.value = '"'; break;
                     case '0':
                         // Could be \0 or \0nn (octal)
-                        if (lexeme.length == 4) {
+                        if(lexeme.length == 4){
                             result.value = 0;
                         } else {
                             // Octal escape
                             long val = 0;
-                            foreach (c; lexeme[2 .. $ - 1]) {
-                                if (c >= '0' && c <= '7') {
+                            foreach(c; lexeme[2 .. $ - 1]){
+                                if(c >= '0' && c <= '7'){
                                     val = val * 8 + (c - '0');
                                 }
                             }
@@ -804,10 +802,10 @@ struct CParser {
                         break;
                     default:
                         // May be octal \nnn
-                        if (escape_char >= '0' && escape_char <= '7') {
+                        if(escape_char >= '0' && escape_char <= '7'){
                             long val = 0;
-                            foreach (c; lexeme[2 .. $ - 1]) {
-                                if (c >= '0' && c <= '7') {
+                            foreach(c; lexeme[2 .. $ - 1]){
+                                if(c >= '0' && c <= '7'){
                                     val = val * 8 + (c - '0');
                                 }
                             }
@@ -816,22 +814,22 @@ struct CParser {
                             result.value = escape_char;
                         }
                 }
-            } else if (lexeme.length >= 3) {
+            } else if(lexeme.length >= 3){
                 // Simple character 'c'
                 result.value = lexeme[1];
             }
             return result;
         }
 
-        if (match(CTokenType.IDENTIFIER)) {
+        if(match(CTokenType.IDENTIFIER)){
             CToken tok = previous();
             // Look up in already-defined enum constants
-            if (long* val = tok.lexeme in enum_constants) {
+            if(long* val = tok.lexeme in enum_constants){
                 result.value = *val;
                 return result;
             }
             // Check for function-like macro call (unknown macro with parens)
-            if (check(CTokenType.LEFT_PAREN)) {
+            if(check(CTokenType.LEFT_PAREN)){
                 // Skip the function-like macro call, treat as 0
                 skip_balanced_parens();
                 result.value = 0;
@@ -842,17 +840,17 @@ struct CParser {
             return result;
         }
 
-        if (match(CTokenType.LEFT_PAREN)) {
+        if(match(CTokenType.LEFT_PAREN)){
             // Check if this is a cast expression: (type)value
-            if (is_type_specifier(peek())) {
+            if(is_type_specifier(peek())){
                 // It's a cast - parse and ignore the type, then parse the value
                 CType* cast_type = parse_type();
-                if (cast_type is null) {
+                if(cast_type is null){
                     result.err = true;
                     return result;
                 }
                 consume(CTokenType.RIGHT_PAREN, "Expected ')' after cast type");
-                if (ERROR_OCCURRED) {
+                if(ERROR_OCCURRED){
                     result.err = true;
                     return result;
                 }
@@ -861,33 +859,33 @@ struct CParser {
             }
             // Regular parenthesized expression
             result = parse_enum_const_expr();
-            if (result.err) return result;
+            if(result.err) return result;
             consume(CTokenType.RIGHT_PAREN, "Expected ')' after expression");
-            if (ERROR_OCCURRED) {
+            if(ERROR_OCCURRED){
                 result.err = true;
             }
             return result;
         }
 
         // sizeof(type) or sizeof(expr) in constant expression
-        if (match(CTokenType.SIZEOF)) {
+        if(match(CTokenType.SIZEOF)){
             consume(CTokenType.LEFT_PAREN, "Expected '(' after sizeof");
-            if (ERROR_OCCURRED) {
+            if(ERROR_OCCURRED){
                 result.err = true;
                 return result;
             }
 
             // Check if it's sizeof(type) or sizeof(expr)
-            if (is_type_specifier(peek())) {
+            if(is_type_specifier(peek())){
                 // sizeof(type) - use parse_type_name for array types
                 CType* type = parse_type_name();
-                if (type is null) {
+                if(type is null){
                     result.err = true;
                     return result;
                 }
 
                 consume(CTokenType.RIGHT_PAREN, "Expected ')' after type");
-                if (ERROR_OCCURRED) {
+                if(ERROR_OCCURRED){
                     result.err = true;
                     return result;
                 }
@@ -897,13 +895,13 @@ struct CParser {
             } else {
                 // sizeof(expr) - parse expression and infer its type
                 CType* expr_type = parse_sizeof_expr_type();
-                if (expr_type is null) {
+                if(expr_type is null){
                     result.err = true;
                     return result;
                 }
 
                 consume(CTokenType.RIGHT_PAREN, "Expected ')' after sizeof expression");
-                if (ERROR_OCCURRED) {
+                if(ERROR_OCCURRED){
                     result.err = true;
                     return result;
                 }
@@ -913,24 +911,24 @@ struct CParser {
             }
         }
 
-        if (match(CTokenType.ALIGNOF)) {
+        if(match(CTokenType.ALIGNOF)){
             consume(CTokenType.LEFT_PAREN, "Expected '(' after _Alignof");
-            if (ERROR_OCCURRED) {
+            if(ERROR_OCCURRED){
                 result.err = true;
                 return result;
             }
 
             // Check if it's _Alignof(type) or _Alignof(expr) (GNU extension)
-            if (is_type_specifier(peek())) {
+            if(is_type_specifier(peek())){
                 // _Alignof(type)
                 CType* type = parse_type();
-                if (type is null) {
+                if(type is null){
                     result.err = true;
                     return result;
                 }
 
                 consume(CTokenType.RIGHT_PAREN, "Expected ')' after type");
-                if (ERROR_OCCURRED) {
+                if(ERROR_OCCURRED){
                     result.err = true;
                     return result;
                 }
@@ -940,13 +938,13 @@ struct CParser {
             } else {
                 // _Alignof(expr) - GNU extension, parse expression and infer its type
                 CType* expr_type = parse_sizeof_expr_type();
-                if (expr_type is null) {
+                if(expr_type is null){
                     result.err = true;
                     return result;
                 }
 
                 consume(CTokenType.RIGHT_PAREN, "Expected ')' after _Alignof expression");
-                if (ERROR_OCCURRED) {
+                if(ERROR_OCCURRED){
                     result.err = true;
                     return result;
                 }
@@ -963,23 +961,23 @@ struct CParser {
 
     // Parse expression inside sizeof() and return its type
     // Handles patterns like: ((Type*)0)->member, arr[0], etc.
-    CType* parse_sizeof_expr_type() {
+    CType* parse_sizeof_expr_type(){
         return parse_sizeof_cast_or_primary();
     }
 
     // Parse a cast expression or primary expression for sizeof
-    CType* parse_sizeof_cast_or_primary() {
+    CType* parse_sizeof_cast_or_primary(){
         CType* current_type = null;
 
         // Handle leading parentheses
-        if (match(CTokenType.LEFT_PAREN)) {
+        if(match(CTokenType.LEFT_PAREN)){
             // Check if this is a cast: (type)
-            if (is_type_specifier(peek())) {
+            if(is_type_specifier(peek())){
                 CType* cast_type = parse_type();
-                if (cast_type is null) return null;
+                if(cast_type is null) return null;
 
                 consume(CTokenType.RIGHT_PAREN, "Expected ')' after cast type");
-                if (ERROR_OCCURRED) return null;
+                if(ERROR_OCCURRED) return null;
 
                 // After a cast, we have the value being cast - skip it
                 // and the result type is the cast type
@@ -988,24 +986,24 @@ struct CParser {
             } else {
                 // Parenthesized expression - recurse
                 CType* inner = parse_sizeof_cast_or_primary();
-                if (inner is null) return null;
+                if(inner is null) return null;
 
                 // Handle postfix operations inside the parens
                 inner = parse_sizeof_postfix(inner);
-                if (inner is null) return null;
+                if(inner is null) return null;
 
                 consume(CTokenType.RIGHT_PAREN, "Expected ')'");
-                if (ERROR_OCCURRED) return null;
+                if(ERROR_OCCURRED) return null;
 
                 current_type = inner;
             }
         } else {
             // Primary expression (identifier, number, etc.)
-            if (check(CTokenType.IDENTIFIER)) {
+            if(check(CTokenType.IDENTIFIER)){
                 CToken id = advance();
                 // Look up variable type - for now just return int
                 current_type = &TYPE_INT;
-            } else if (check(CTokenType.NUMBER) || check(CTokenType.HEX)) {
+            } else if(check(CTokenType.NUMBER) || check(CTokenType.HEX)){
                 advance();
                 current_type = &TYPE_INT;
             } else {
@@ -1019,80 +1017,80 @@ struct CParser {
     }
 
     // Skip a value expression (for the value being cast)
-    void skip_sizeof_value() {
+    void skip_sizeof_value(){
         // Skip balanced parens or simple tokens until we hit a postfix operator or end
-        if (check(CTokenType.LEFT_PAREN)) {
+        if(check(CTokenType.LEFT_PAREN)){
             skip_balanced_parens();
         } else {
             // Skip simple token (number, identifier, etc.)
-            if (check(CTokenType.IDENTIFIER) || check(CTokenType.NUMBER) || check(CTokenType.HEX)) {
+            if(check(CTokenType.IDENTIFIER) || check(CTokenType.NUMBER) || check(CTokenType.HEX)){
                 advance();
             }
         }
     }
 
     // Parse postfix operations for sizeof expression type
-    CType* parse_sizeof_postfix(CType* current_type) {
-        if (current_type is null) return null;
+    CType* parse_sizeof_postfix(CType* current_type){
+        if(current_type is null) return null;
 
         // Handle postfix operations: ->member, .member, [index]
-        while (true) {
-            if (match(CTokenType.ARROW)) {
+        while(true){
+            if(match(CTokenType.ARROW)){
                 // Dereference pointer and access member
-                if (current_type.kind != CTypeKind.POINTER) {
+                if(current_type.kind != CTypeKind.POINTER){
                     error("Arrow operator requires pointer type");
                     return null;
                 }
                 CType* pointed = current_type.pointed_to;
-                if (pointed is null || (pointed.kind != CTypeKind.STRUCT && pointed.kind != CTypeKind.UNION)) {
+                if(pointed is null || (pointed.kind != CTypeKind.STRUCT && pointed.kind != CTypeKind.UNION)){
                     error("Arrow operator requires pointer to struct/union");
                     return null;
                 }
 
                 CToken member = consume(CTokenType.IDENTIFIER, "Expected member name after ->");
-                if (ERROR_OCCURRED) return null;
+                if(ERROR_OCCURRED) return null;
 
                 // Look up member in struct/union
                 CType* member_type = null;
-                foreach (ref field; pointed.fields) {
-                    if (field.name == member.lexeme) {
+                foreach(ref field; pointed.fields){
+                    if(field.name == member.lexeme){
                         member_type = field.type;
                         break;
                     }
                 }
-                if (member_type is null) {
+                if(member_type is null){
                     error(member, "Unknown struct/union member");
                     return null;
                 }
                 current_type = member_type;
-            } else if (match(CTokenType.DOT)) {
+            } else if(match(CTokenType.DOT)){
                 // Direct member access
-                if (current_type.kind != CTypeKind.STRUCT && current_type.kind != CTypeKind.UNION) {
+                if(current_type.kind != CTypeKind.STRUCT && current_type.kind != CTypeKind.UNION){
                     error("Dot operator requires struct/union type");
                     return null;
                 }
 
                 CToken member = consume(CTokenType.IDENTIFIER, "Expected member name after .");
-                if (ERROR_OCCURRED) return null;
+                if(ERROR_OCCURRED) return null;
 
                 // Look up member in struct/union
                 CType* member_type = null;
-                foreach (ref field; current_type.fields) {
-                    if (field.name == member.lexeme) {
+                foreach(ref field; current_type.fields){
+                    if(field.name == member.lexeme){
                         member_type = field.type;
                         break;
                     }
                 }
-                if (member_type is null) {
+                if(member_type is null){
                     error(member, "Unknown struct/union member");
                     return null;
                 }
                 current_type = member_type;
-            } else if (match(CTokenType.LEFT_BRACKET)) {
+            } else if(match(CTokenType.LEFT_BRACKET)){
                 // Array subscript
-                if (current_type.kind == CTypeKind.POINTER) {
+                if(current_type.kind == CTypeKind.POINTER){
                     current_type = current_type.pointed_to;
-                } else if (current_type.kind == CTypeKind.ARRAY) {
+                } else if(current_type.kind == CTypeKind.ARRAY){
                     current_type = current_type.pointed_to;
                 } else {
                     error("Subscript requires array or pointer type");
@@ -1101,13 +1099,13 @@ struct CParser {
 
                 // Skip the index expression
                 int depth = 1;
-                while (depth > 0 && !at_end) {
-                    if (check(CTokenType.LEFT_BRACKET)) depth++;
-                    else if (check(CTokenType.RIGHT_BRACKET)) depth--;
-                    if (depth > 0) advance();
+                while(depth > 0 && !at_end){
+                    if(check(CTokenType.LEFT_BRACKET)) depth++;
+                    else if(check(CTokenType.RIGHT_BRACKET)) depth--;
+                    if(depth > 0) advance();
                 }
                 consume(CTokenType.RIGHT_BRACKET, "Expected ']'");
-                if (ERROR_OCCURRED) return null;
+                if(ERROR_OCCURRED) return null;
             } else {
                 break;
             }
@@ -1120,35 +1118,35 @@ struct CParser {
     //     enum identifier_opt { enumerator-list }
     //     enum identifier_opt { enumerator-list , }
     //     enum identifier
-    int parse_enum_def(CEnumDef* edef) {
+    int parse_enum_def(CEnumDef* edef){
         advance();  // consume 'enum'
 
         // Name is optional (anonymous enum)
         CToken name;
         bool has_name = false;
-        if (check(CTokenType.IDENTIFIER)) {
+        if(check(CTokenType.IDENTIFIER)){
             name = advance();
             has_name = true;
         }
 
         consume(CTokenType.LEFT_BRACE, "Expected '{' after enum");
-        if (ERROR_OCCURRED) return 1;
+        if(ERROR_OCCURRED) return 1;
 
         // Parse enum constants
         auto constants = make_barray!EnumConstant(allocator);
         long next_value = 0;
 
-        while (!check(CTokenType.RIGHT_BRACE) && !at_end) {
+        while(!check(CTokenType.RIGHT_BRACE) && !at_end){
             // Parse constant name
             CToken const_name = consume(CTokenType.IDENTIFIER, "Expected enum constant name");
-            if (ERROR_OCCURRED) return 1;
+            if(ERROR_OCCURRED) return 1;
 
             // Check for explicit value assignment
             long value = next_value;
-            if (match(CTokenType.EQUAL)) {
+            if(match(CTokenType.EQUAL)){
                 // Parse constant expression (supports literals, enum constants, +/-)
                 auto result = parse_enum_const_expr();
-                if (result.err) return 1;
+                if(result.err) return 1;
                 value = result.value;
             }
 
@@ -1165,10 +1163,10 @@ struct CParser {
             next_value = value + 1;
 
             // Optional comma between constants
-            if (!check(CTokenType.RIGHT_BRACE)) {
-                if (!match(CTokenType.COMMA)) {
+            if(!check(CTokenType.RIGHT_BRACE)){
+                if(!match(CTokenType.COMMA)){
                     // Allow trailing comma or no comma before }
-                    if (!check(CTokenType.RIGHT_BRACE)) {
+                    if(!check(CTokenType.RIGHT_BRACE)){
                         error("Expected ',' or '}' after enum constant");
                         return 1;
                     }
@@ -1177,16 +1175,16 @@ struct CParser {
         }
 
         consume(CTokenType.RIGHT_BRACE, "Expected '}' after enum constants");
-        if (ERROR_OCCURRED) return 1;
+        if(ERROR_OCCURRED) return 1;
 
         consume(CTokenType.SEMICOLON, "Expected ';' after enum definition");
-        if (ERROR_OCCURRED) return 1;
+        if(ERROR_OCCURRED) return 1;
 
         // Create the enum type
         CType* enum_type = make_enum_type(allocator, has_name ? name.lexeme : "");
 
         // Register the enum type if named
-        if (has_name) {
+        if(has_name){
             enum_types[name.lexeme] = enum_type;
         }
 
@@ -1197,31 +1195,31 @@ struct CParser {
     }
 
     // Parse _Static_assert(constant_expr, "message");
-    int parse_static_assert() {
+    int parse_static_assert(){
         consume(CTokenType.LEFT_PAREN, "Expected '(' after _Static_assert");
-        if (ERROR_OCCURRED) return 1;
+        if(ERROR_OCCURRED) return 1;
 
         // Parse constant expression using the enum constant expression parser
         auto result = parse_enum_const_expr();
-        if (result.err) return 1;
+        if(result.err) return 1;
 
         consume(CTokenType.COMMA, "Expected ',' after expression");
-        if (ERROR_OCCURRED) return 1;
+        if(ERROR_OCCURRED) return 1;
 
         CToken message = consume(CTokenType.STRING, "Expected string message");
-        if (ERROR_OCCURRED) return 1;
+        if(ERROR_OCCURRED) return 1;
 
         consume(CTokenType.RIGHT_PAREN, "Expected ')' after message");
-        if (ERROR_OCCURRED) return 1;
+        if(ERROR_OCCURRED) return 1;
 
         consume(CTokenType.SEMICOLON, "Expected ';' after _Static_assert");
-        if (ERROR_OCCURRED) return 1;
+        if(ERROR_OCCURRED) return 1;
 
         // Check the assertion
-        if (result.value == 0) {
+        if(result.value == 0){
             // Strip quotes from message for error output
             str msg = message.lexeme;
-            if (msg.length >= 2 && msg[0] == '"' && msg[$ - 1] == '"') {
+            if(msg.length >= 2 && msg[0] == '"' && msg[$ - 1] == '"'){
                 msg = msg[1 .. $ - 1];
             }
             error(message, msg);
@@ -1237,11 +1235,11 @@ struct CParser {
     //           typedef struct { ... } Name;
     //           typedef struct Name { ... } Alias;
     //           typedef enum { ... } Name;
-    int parse_typedef(Barray!(CEnumDef)* enums_out) {
+    int parse_typedef(Barray!(CEnumDef)* enums_out){
         advance();  // consume 'typedef'
 
         // Check for struct/union/enum definition within typedef
-        if (check(CTokenType.STRUCT)) {
+        if(check(CTokenType.STRUCT)){
             advance();  // consume 'struct'
 
             // Check if there's a name and/or brace
@@ -1249,32 +1247,32 @@ struct CParser {
             bool has_name = false;
             bool has_body = false;
 
-            if (check(CTokenType.IDENTIFIER)) {
+            if(check(CTokenType.IDENTIFIER)){
                 struct_name = advance();
                 has_name = true;
             }
-            if (check(CTokenType.LEFT_BRACE)) {
+            if(check(CTokenType.LEFT_BRACE)){
                 has_body = true;
             }
 
             CType* struct_type;
 
-            if (has_body) {
+            if(has_body){
                 // Parse struct body using unified member parsing
                 consume(CTokenType.LEFT_BRACE, "Expected '{'");
-                if (ERROR_OCCURRED) return 1;
+                if(ERROR_OCCURRED) return 1;
 
                 auto fields = make_barray!StructField(allocator);
                 size_t total_size = 0;
                 int err = parse_member_declaration_list(&fields, &total_size, false);  // is_union=false
-                if (err) return err;
+                if(err) return err;
 
                 consume(CTokenType.RIGHT_BRACE, "Expected '}'");
-                if (ERROR_OCCURRED) return 1;
+                if(ERROR_OCCURRED) return 1;
 
                 // Check if there's an existing forward-declared type to update
-                if (has_name) {
-                    if (auto existing = struct_name.lexeme in struct_types) {
+                if(has_name){
+                    if(auto existing = struct_name.lexeme in struct_types){
                         // Update existing type in-place so typedefs continue to work
                         struct_type = *existing;
                         struct_type.fields = fields[];
@@ -1288,11 +1286,11 @@ struct CParser {
                 }
             } else {
                 // Just referencing existing struct
-                if (!has_name) {
+                if(!has_name){
                     error("Expected struct name or body");
                     return 1;
                 }
-                if (CType** found = struct_name.lexeme in struct_types) {
+                if(CType** found = struct_name.lexeme in struct_types){
                     struct_type = *found;
                 } else {
                     // Create incomplete struct type for forward reference
@@ -1307,50 +1305,50 @@ struct CParser {
             }
 
             // Handle pointer types (e.g., typedef struct X *ptr_t)
-            while (match(CTokenType.STAR)) {
+            while(match(CTokenType.STAR)){
                 struct_type = make_pointer_type(allocator, struct_type);
                 // Skip pointer qualifiers
-                while (match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)) {}
+                while(match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)){}
             }
 
             // Check for function pointer typedef: typedef struct X *(*name)(...)
-            if (check(CTokenType.LEFT_PAREN)) {
+            if(check(CTokenType.LEFT_PAREN)){
                 advance();  // consume '('
 
                 // Skip any calling convention identifiers until we hit '*'
-                while (check(CTokenType.IDENTIFIER)) {
+                while(check(CTokenType.IDENTIFIER)){
                     advance();
                 }
 
-                if (!match(CTokenType.STAR)) {
+                if(!match(CTokenType.STAR)){
                     error("Expected '*' in function pointer typedef");
                     return 1;
                 }
 
                 CToken typedef_name = consume(CTokenType.IDENTIFIER, "Expected typedef name");
-                if (ERROR_OCCURRED) return 1;
+                if(ERROR_OCCURRED) return 1;
 
                 consume(CTokenType.RIGHT_PAREN, "Expected ')' after function pointer name");
-                if (ERROR_OCCURRED) return 1;
+                if(ERROR_OCCURRED) return 1;
 
                 // Now parse the parameter list using unified parameter parsing
                 consume(CTokenType.LEFT_PAREN, "Expected '(' for function parameters");
-                if (ERROR_OCCURRED) return 1;
+                if(ERROR_OCCURRED) return 1;
 
                 auto param_result = parse_parameter_type_list();
-                if (param_result.err) return 1;
+                if(param_result.err) return 1;
 
                 // Extract just the types from params
                 auto param_types = make_barray!(CType*)(allocator);
-                foreach (ref p; param_result.params[]) {
+                foreach(ref p; param_result.params[]){
                     param_types ~= p.type;
                 }
 
                 consume(CTokenType.RIGHT_PAREN, "Expected ')' after parameters");
-                if (ERROR_OCCURRED) return 1;
+                if(ERROR_OCCURRED) return 1;
 
                 consume(CTokenType.SEMICOLON, "Expected ';' after typedef");
-                if (ERROR_OCCURRED) return 1;
+                if(ERROR_OCCURRED) return 1;
 
                 CType* func_type = make_function_type(allocator, struct_type, param_types[], param_result.is_varargs);
                 CType* func_ptr_type = make_pointer_type(allocator, func_type);
@@ -1360,23 +1358,23 @@ struct CParser {
             }
 
             // Skip attribute macros (like SDL_AUDIOCVT_PACKED, __attribute__((packed))) before typedef name
-            while (check(CTokenType.IDENTIFIER)) {
+            while(check(CTokenType.IDENTIFIER)){
                 auto cur_lexeme = peek().lexeme;
                 auto next = peek_at(1).type;
 
                 // Only skip __attribute__(...) or known attribute macros
-                if (cur_lexeme == "__attribute__" && next == CTokenType.LEFT_PAREN) {
+                if(cur_lexeme == "__attribute__" && next == CTokenType.LEFT_PAREN){
                     advance();
                     skip_balanced_parens();
-                } else if (next == CTokenType.IDENTIFIER) {
+                } else if(next == CTokenType.IDENTIFIER){
                     // Check if next token is __attribute__ - if so, current is the typedef name
                     auto next_lexeme = peek_at(1).lexeme;
-                    if (next_lexeme == "__attribute__") {
+                    if(next_lexeme == "__attribute__"){
                         break;  // Current is typedef name, stop skipping
                     }
                     // Skip simple attribute identifier (like SDL_AUDIOCVT_PACKED)
                     advance();
-                } else if (next == CTokenType.LEFT_PAREN) {
+                } else if(next == CTokenType.LEFT_PAREN){
                     // Skip function-like macro attribute
                     advance();
                     skip_balanced_parens();
@@ -1387,53 +1385,53 @@ struct CParser {
 
             // Now get the typedef name
             CToken typedef_name = consume(CTokenType.IDENTIFIER, "Expected typedef name");
-            if (ERROR_OCCURRED) return 1;
+            if(ERROR_OCCURRED) return 1;
 
             // Skip __attribute__((xxx)) after typedef name
-            if (check(CTokenType.IDENTIFIER) && peek().lexeme == "__attribute__") {
+            if(check(CTokenType.IDENTIFIER) && peek().lexeme == "__attribute__"){
                 advance();
                 skip_balanced_parens();
             }
 
             consume(CTokenType.SEMICOLON, "Expected ';' after typedef");
-            if (ERROR_OCCURRED) return 1;
+            if(ERROR_OCCURRED) return 1;
 
             typedef_types[typedef_name.lexeme] = struct_type;
             return 0;
 
-        } else if (check(CTokenType.UNION)) {
+        } else if(check(CTokenType.UNION)){
             advance();  // consume 'union'
 
             CToken union_name;
             bool has_name = false;
             bool has_body = false;
 
-            if (check(CTokenType.IDENTIFIER)) {
+            if(check(CTokenType.IDENTIFIER)){
                 union_name = advance();
                 has_name = true;
             }
-            if (check(CTokenType.LEFT_BRACE)) {
+            if(check(CTokenType.LEFT_BRACE)){
                 has_body = true;
             }
 
             CType* union_type;
 
-            if (has_body) {
+            if(has_body){
                 // Parse union body using unified member parsing
                 consume(CTokenType.LEFT_BRACE, "Expected '{'");
-                if (ERROR_OCCURRED) return 1;
+                if(ERROR_OCCURRED) return 1;
 
                 auto fields = make_barray!StructField(allocator);
                 size_t max_size = 0;
                 int err = parse_member_declaration_list(&fields, &max_size, true);  // is_union=true
-                if (err) return err;
+                if(err) return err;
 
                 consume(CTokenType.RIGHT_BRACE, "Expected '}'");
-                if (ERROR_OCCURRED) return 1;
+                if(ERROR_OCCURRED) return 1;
 
                 // Check if there's an existing forward-declared type to update
-                if (has_name) {
-                    if (auto existing = union_name.lexeme in union_types) {
+                if(has_name){
+                    if(auto existing = union_name.lexeme in union_types){
                         // Update existing type in-place so typedefs continue to work
                         union_type = *existing;
                         union_type.fields = fields[];
@@ -1446,11 +1444,11 @@ struct CParser {
                     union_type = make_union_type(allocator, "", fields[], max_size);
                 }
             } else {
-                if (!has_name) {
+                if(!has_name){
                     error("Expected union name or body");
                     return 1;
                 }
-                if (CType** found = union_name.lexeme in union_types) {
+                if(CType** found = union_name.lexeme in union_types){
                     union_type = *found;
                 } else {
                     // Create incomplete union type for forward reference
@@ -1465,60 +1463,60 @@ struct CParser {
             }
 
             // Handle pointer types (e.g., typedef union X *ptr_t)
-            while (match(CTokenType.STAR)) {
+            while(match(CTokenType.STAR)){
                 union_type = make_pointer_type(allocator, union_type);
                 // Skip pointer qualifiers
-                while (match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)) {}
+                while(match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)){}
             }
 
             CToken typedef_name = consume(CTokenType.IDENTIFIER, "Expected typedef name");
-            if (ERROR_OCCURRED) return 1;
+            if(ERROR_OCCURRED) return 1;
 
             // Skip __attribute__((xxx)) after typedef name
-            if (check(CTokenType.IDENTIFIER) && peek().lexeme == "__attribute__") {
+            if(check(CTokenType.IDENTIFIER) && peek().lexeme == "__attribute__"){
                 advance();
                 skip_balanced_parens();
             }
 
             consume(CTokenType.SEMICOLON, "Expected ';' after typedef");
-            if (ERROR_OCCURRED) return 1;
+            if(ERROR_OCCURRED) return 1;
 
             typedef_types[typedef_name.lexeme] = union_type;
             return 0;
 
-        } else if (check(CTokenType.ENUM)) {
+        } else if(check(CTokenType.ENUM)){
             advance();  // consume 'enum'
 
             CToken enum_name;
             bool has_name = false;
             bool has_body = false;
 
-            if (check(CTokenType.IDENTIFIER)) {
+            if(check(CTokenType.IDENTIFIER)){
                 enum_name = advance();
                 has_name = true;
             }
-            if (check(CTokenType.LEFT_BRACE)) {
+            if(check(CTokenType.LEFT_BRACE)){
                 has_body = true;
             }
 
             CType* enum_type;
 
-            if (has_body) {
+            if(has_body){
                 consume(CTokenType.LEFT_BRACE, "Expected '{'");
-                if (ERROR_OCCURRED) return 1;
+                if(ERROR_OCCURRED) return 1;
 
                 // Parse enum constants
                 auto constants = make_barray!EnumConstant(allocator);
                 long next_value = 0;
 
-                while (!check(CTokenType.RIGHT_BRACE) && !at_end) {
+                while(!check(CTokenType.RIGHT_BRACE) && !at_end){
                     CToken const_name = consume(CTokenType.IDENTIFIER, "Expected enum constant name");
-                    if (ERROR_OCCURRED) return 1;
+                    if(ERROR_OCCURRED) return 1;
 
                     long value = next_value;
-                    if (match(CTokenType.EQUAL)) {
+                    if(match(CTokenType.EQUAL)){
                         auto result = parse_enum_const_expr();
-                        if (result.err) return 1;
+                        if(result.err) return 1;
                         value = result.value;
                     }
 
@@ -1529,9 +1527,9 @@ struct CParser {
                     enum_constants[const_name.lexeme] = value;
                     next_value = value + 1;
 
-                    if (!check(CTokenType.RIGHT_BRACE)) {
-                        if (!match(CTokenType.COMMA)) {
-                            if (!check(CTokenType.RIGHT_BRACE)) {
+                    if(!check(CTokenType.RIGHT_BRACE)){
+                        if(!match(CTokenType.COMMA)){
+                            if(!check(CTokenType.RIGHT_BRACE)){
                                 error("Expected ',' or '}' after enum constant");
                                 return 1;
                             }
@@ -1540,11 +1538,11 @@ struct CParser {
                 }
 
                 consume(CTokenType.RIGHT_BRACE, "Expected '}'");
-                if (ERROR_OCCURRED) return 1;
+                if(ERROR_OCCURRED) return 1;
 
                 enum_type = make_enum_type(allocator, has_name ? enum_name.lexeme : "");
 
-                if (has_name) {
+                if(has_name){
                     enum_types[enum_name.lexeme] = enum_type;
                 }
 
@@ -1555,11 +1553,11 @@ struct CParser {
                 edef.constants = constants[];
                 *enums_out ~= edef;
             } else {
-                if (!has_name) {
+                if(!has_name){
                     error("Expected enum name or body");
                     return 1;
                 }
-                if (CType** found = enum_name.lexeme in enum_types) {
+                if(CType** found = enum_name.lexeme in enum_types){
                     enum_type = *found;
                 } else {
                     error("Unknown enum type");
@@ -1568,10 +1566,10 @@ struct CParser {
             }
 
             CToken typedef_name = consume(CTokenType.IDENTIFIER, "Expected typedef name");
-            if (ERROR_OCCURRED) return 1;
+            if(ERROR_OCCURRED) return 1;
 
             consume(CTokenType.SEMICOLON, "Expected ';' after typedef");
-            if (ERROR_OCCURRED) return 1;
+            if(ERROR_OCCURRED) return 1;
 
             typedef_types[typedef_name.lexeme] = enum_type;
             return 0;
@@ -1583,46 +1581,46 @@ struct CParser {
             // Function pointer with calling conv: typedef <ret_type> (SDLCALL * <name>)(<params>);
 
             CType* base_type = parse_type();
-            if (base_type is null) return 1;
+            if(base_type is null) return 1;
 
             // Check for function pointer syntax: starts with '('
-            if (check(CTokenType.LEFT_PAREN)) {
+            if(check(CTokenType.LEFT_PAREN)){
                 advance();  // consume '('
 
                 // Skip any calling convention identifiers until we hit '*'
-                while (check(CTokenType.IDENTIFIER)) {
+                while(check(CTokenType.IDENTIFIER)){
                     advance();  // skip calling convention like SDLCALL
                 }
 
-                if (!match(CTokenType.STAR)) {
+                if(!match(CTokenType.STAR)){
                     error("Expected '*' in function pointer typedef");
                     return 1;
                 }
 
                 CToken typedef_name = consume(CTokenType.IDENTIFIER, "Expected typedef name");
-                if (ERROR_OCCURRED) return 1;
+                if(ERROR_OCCURRED) return 1;
 
                 consume(CTokenType.RIGHT_PAREN, "Expected ')' after function pointer name");
-                if (ERROR_OCCURRED) return 1;
+                if(ERROR_OCCURRED) return 1;
 
                 // Now parse the parameter list using unified parameter parsing
                 consume(CTokenType.LEFT_PAREN, "Expected '(' for function parameters");
-                if (ERROR_OCCURRED) return 1;
+                if(ERROR_OCCURRED) return 1;
 
                 auto param_result = parse_parameter_type_list();
-                if (param_result.err) return 1;
+                if(param_result.err) return 1;
 
                 // Extract just the types from params
                 auto param_types = make_barray!(CType*)(allocator);
-                foreach (ref p; param_result.params[]) {
+                foreach(ref p; param_result.params[]){
                     param_types ~= p.type;
                 }
 
                 consume(CTokenType.RIGHT_PAREN, "Expected ')' after parameters");
-                if (ERROR_OCCURRED) return 1;
+                if(ERROR_OCCURRED) return 1;
 
                 consume(CTokenType.SEMICOLON, "Expected ';' after typedef");
-                if (ERROR_OCCURRED) return 1;
+                if(ERROR_OCCURRED) return 1;
 
                 // Create function type then wrap in pointer
                 CType* func_type = make_function_type(allocator, base_type, param_types[], param_result.is_varargs);
@@ -1633,76 +1631,76 @@ struct CParser {
             }
 
             CToken typedef_name = consume(CTokenType.IDENTIFIER, "Expected typedef name");
-            if (ERROR_OCCURRED) return 1;
+            if(ERROR_OCCURRED) return 1;
 
             // Handle array typedefs: typedef int array_t[10];
-            if (match(CTokenType.LEFT_BRACKET)) {
+            if(match(CTokenType.LEFT_BRACKET)){
                 auto size_result = parse_enum_const_expr();
-                if (size_result.err) return 1;
-                if (size_result.value <= 0) {
+                if(size_result.err) return 1;
+                if(size_result.value <= 0){
                     error("Array size must be positive");
                     return 1;
                 }
                 consume(CTokenType.RIGHT_BRACKET, "Expected ']'");
-                if (ERROR_OCCURRED) return 1;
+                if(ERROR_OCCURRED) return 1;
                 base_type = make_array_type(allocator, base_type, cast(size_t) size_result.value);
             }
 
             // Skip __attribute__((xxx)) after typedef name
-            if (check(CTokenType.IDENTIFIER) && peek().lexeme == "__attribute__") {
+            if(check(CTokenType.IDENTIFIER) && peek().lexeme == "__attribute__"){
                 advance();
                 skip_balanced_parens();
             }
 
             consume(CTokenType.SEMICOLON, "Expected ';' after typedef");
-            if (ERROR_OCCURRED) return 1;
+            if(ERROR_OCCURRED) return 1;
 
             typedef_types[typedef_name.lexeme] = base_type;
             return 0;
         }
     }
 
-    int parse_function(CFunction* func) {
+    int parse_function(CFunction* func){
         // Parse return type
         CType* ret_type = parse_type();
-        if (ret_type is null) return 1;
+        if(ret_type is null) return 1;
 
         // Parse function name
         CToken name = consume(CTokenType.IDENTIFIER, "Expected function name");
-        if (ERROR_OCCURRED) return 1;
+        if(ERROR_OCCURRED) return 1;
 
         return parse_function_rest(ret_type, name, func);
     }
 
     // Parse function after type and name have been consumed
-    int parse_function_rest(CType* ret_type, CToken name, CFunction* func, bool saw_inline = false) {
+    int parse_function_rest(CType* ret_type, CToken name, CFunction* func, bool saw_inline = false){
         // Parse parameters using unified parameter parsing
         consume(CTokenType.LEFT_PAREN, "Expected '(' after function name");
-        if (ERROR_OCCURRED) return 1;
+        if(ERROR_OCCURRED) return 1;
 
         auto param_result = parse_parameter_type_list();
-        if (param_result.err) return 1;
+        if(param_result.err) return 1;
 
         consume(CTokenType.RIGHT_PAREN, "Expected ')' after parameters");
-        if (ERROR_OCCURRED) return 1;
+        if(ERROR_OCCURRED) return 1;
 
         // Handle asm label for symbol renaming: __asm("symbol_name")
-        if (match(CTokenType.ASM)) {
+        if(match(CTokenType.ASM)){
             consume(CTokenType.LEFT_PAREN, "Expected '(' after asm");
-            if (ERROR_OCCURRED) return 1;
+            if(ERROR_OCCURRED) return 1;
             // Skip string literals (may be multiple concatenated: __asm("_" "name"))
-            while (check(CTokenType.STRING)) {
+            while(check(CTokenType.STRING)){
                 advance();
             }
             consume(CTokenType.RIGHT_PAREN, "Expected ')' after asm label");
-            if (ERROR_OCCURRED) return 1;
+            if(ERROR_OCCURRED) return 1;
         }
 
         // Skip __attribute__((...)) specifiers
-        while (check(CTokenType.IDENTIFIER) && peek().lexeme == "__attribute__") {
+        while(check(CTokenType.IDENTIFIER) && peek().lexeme == "__attribute__"){
             advance();  // consume __attribute__
             // __attribute__ uses double parens: __attribute__((...))
-            if (check(CTokenType.LEFT_PAREN)) {
+            if(check(CTokenType.LEFT_PAREN)){
                 skip_balanced_parens();
             }
         }
@@ -1715,7 +1713,7 @@ struct CParser {
         func.library = current_library;
 
         // Check if declaration or definition
-        if (match(CTokenType.SEMICOLON)) {
+        if(match(CTokenType.SEMICOLON)){
             func.is_definition = false;
             return 0;
         }
@@ -1723,24 +1721,24 @@ struct CParser {
         // Parse function body
         func.is_definition = true;
         consume(CTokenType.LEFT_BRACE, "Expected '{' for function body");
-        if (ERROR_OCCURRED) return 1;
+        if(ERROR_OCCURRED) return 1;
 
         auto body = make_barray!(CStmt*)(allocator);
-        while (!check(CTokenType.RIGHT_BRACE) && !at_end) {
+        while(!check(CTokenType.RIGHT_BRACE) && !at_end){
             CStmt* stmt = parse_statement();
-            if (stmt is null) return 1;
+            if(stmt is null) return 1;
             body ~= stmt;
         }
 
         consume(CTokenType.RIGHT_BRACE, "Expected '}' after function body");
-        if (ERROR_OCCURRED) return 1;
+        if(ERROR_OCCURRED) return 1;
 
         func.body = body[];
         return 0;
     }
 
     // Parse global variable after type and name have been consumed
-    int parse_global_var_rest(CType* var_type, CToken name, CGlobalVar* gvar, bool is_extern, str library) {
+    int parse_global_var_rest(CType* var_type, CToken name, CGlobalVar* gvar, bool is_extern, str library){
         gvar.name = name;
         gvar.var_type = var_type;
         gvar.initializer = null;
@@ -1748,38 +1746,38 @@ struct CParser {
         gvar.library = library;
 
         // Handle array declarations: type name[size]
-        while (check(CTokenType.LEFT_BRACKET)) {
+        while(check(CTokenType.LEFT_BRACKET)){
             advance();  // consume '['
             // Skip array size expression
-            while (!check(CTokenType.RIGHT_BRACKET) && !at_end) {
+            while(!check(CTokenType.RIGHT_BRACKET) && !at_end){
                 advance();
             }
-            if (check(CTokenType.RIGHT_BRACKET)) advance();
+            if(check(CTokenType.RIGHT_BRACKET)) advance();
             // Treat as pointer type for simplicity
             gvar.var_type = make_pointer_type(allocator, gvar.var_type);
         }
 
         // Skip __asm("symbol") renaming
-        if (match(CTokenType.ASM)) {
+        if(match(CTokenType.ASM)){
             consume(CTokenType.LEFT_PAREN, "Expected '(' after __asm");
-            if (ERROR_OCCURRED) return 1;
-            while (check(CTokenType.STRING)) advance();
+            if(ERROR_OCCURRED) return 1;
+            while(check(CTokenType.STRING)) advance();
             consume(CTokenType.RIGHT_PAREN, "Expected ')' after __asm label");
-            if (ERROR_OCCURRED) return 1;
+            if(ERROR_OCCURRED) return 1;
         }
 
         // Skip __attribute__((...))
-        while (check(CTokenType.IDENTIFIER) && peek().lexeme == "__attribute__") {
+        while(check(CTokenType.IDENTIFIER) && peek().lexeme == "__attribute__"){
             advance();
-            if (check(CTokenType.LEFT_PAREN)) {
+            if(check(CTokenType.LEFT_PAREN)){
                 skip_balanced_parens();
             }
         }
 
         // Check for initializer
-        if (match(CTokenType.EQUAL)) {
+        if(match(CTokenType.EQUAL)){
             gvar.initializer = parse_initializer();
-            if (gvar.initializer is null) return 1;
+            if(gvar.initializer is null) return 1;
             // If there's an initializer, this is a definition, not an extern declaration
             gvar.is_extern = false;
         }
@@ -1795,16 +1793,16 @@ struct CParser {
     // (6.7.7.1) declarator: pointer_opt direct-declarator
     // (6.7.7.1) pointer: * type-qualifier-list_opt pointer_opt
     // This function parses the type portion (base type + pointer modifiers)
-    CType* parse_type() {
+    CType* parse_type(){
         CType* base = parse_base_type();
-        if (base is null) return null;
+        if(base is null) return null;
 
         // Handle pointer types
-        while (check(CTokenType.STAR)) {
+        while(check(CTokenType.STAR)){
             advance();
             base = make_pointer_type(allocator, base);
             // Skip pointer qualifiers (const, volatile, restrict)
-            while (match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)) {
+            while(match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)){
                 // Just skip - we don't track pointer constness
             }
         }
@@ -1814,14 +1812,14 @@ struct CParser {
 
     // Parse a type-name for casts, sizeof, compound literals
     // This includes full abstract declarators (pointers, arrays, function pointers)
-    CType* parse_type_name() {
+    CType* parse_type_name(){
         CType* base = parse_base_type();
-        if (base is null) return null;
+        if(base is null) return null;
 
         // Parse abstract declarator (pointers, arrays, function pointers)
         // For abstract declarators, don't consume identifiers
         CDeclarator* decl = parse_abstract_declarator();
-        if (decl !is null) {
+        if(decl !is null){
             base = apply_declarator_to_type(base, decl);
         }
 
@@ -1829,64 +1827,64 @@ struct CParser {
     }
 
     // Parse an abstract declarator (no identifier allowed)
-    CDeclarator* parse_abstract_declarator() {
+    CDeclarator* parse_abstract_declarator(){
         auto data = allocator.alloc(CDeclarator.sizeof);
         CDeclarator* decl = cast(CDeclarator*)data.ptr;
         *decl = CDeclarator.init;
 
         // Parse pointer prefix
-        while (check(CTokenType.STAR)) {
+        while(check(CTokenType.STAR)){
             advance();
             decl.pointer_depth++;
-            while (match(CTokenType.CONST) || match(CTokenType.VOLATILE) ||
-                   match(CTokenType.RESTRICT) || match(CTokenType.ATOMIC)) {}
+            while(match(CTokenType.CONST) || match(CTokenType.VOLATILE) ||
+                   match(CTokenType.RESTRICT) || match(CTokenType.ATOMIC)){}
         }
 
         // Handle parenthesized abstract declarator: (*)[10] or (*)(int)
-        if (check(CTokenType.LEFT_PAREN)) {
+        if(check(CTokenType.LEFT_PAREN)){
             CToken next = peek_at(1);
             // Only parse as nested declarator if it starts with * or (
-            if (next.type == CTokenType.STAR || next.type == CTokenType.LEFT_PAREN) {
+            if(next.type == CTokenType.STAR || next.type == CTokenType.LEFT_PAREN){
                 advance();  // consume '('
                 decl.nested = parse_abstract_declarator();
-                if (decl.nested is null) return null;
+                if(decl.nested is null) return null;
                 consume(CTokenType.RIGHT_PAREN, "Expected ')' after abstract declarator");
-                if (ERROR_OCCURRED) return null;
+                if(ERROR_OCCURRED) return null;
             }
         }
 
         // Handle array suffix: [size]
-        while (check(CTokenType.LEFT_BRACKET)) {
+        while(check(CTokenType.LEFT_BRACKET)){
             advance();  // consume '['
             decl.is_array = true;
-            if (!check(CTokenType.RIGHT_BRACKET)) {
+            if(!check(CTokenType.RIGHT_BRACKET)){
                 auto size_result = parse_enum_const_expr();
-                if (!size_result.err && size_result.value > 0) {
+                if(!size_result.err && size_result.value > 0){
                     decl.array_dim = cast(size_t)size_result.value;
                 }
             }
             consume(CTokenType.RIGHT_BRACKET, "Expected ']'");
-            if (ERROR_OCCURRED) return null;
+            if(ERROR_OCCURRED) return null;
         }
 
         return decl;
     }
 
     // Get base type by unwrapping pointers (for comma-separated declarations)
-    static CType* unwrap_pointers(CType* t) {
-        while (t !is null && t.kind == CTypeKind.POINTER) {
+    static CType* unwrap_pointers(CType* t){
+        while(t !is null && t.kind == CTypeKind.POINTER){
             t = t.pointed_to;
         }
         return t;
     }
 
     // Parse pointer modifiers and build pointer type
-    CType* parse_pointer_modifiers(CType* base) {
-        while (check(CTokenType.STAR)) {
+    CType* parse_pointer_modifiers(CType* base){
+        while(check(CTokenType.STAR)){
             advance();
             base = make_pointer_type(allocator, base);
             // Skip pointer qualifiers
-            while (match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)) {}
+            while(match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)){}
         }
         return base;
     }
@@ -1897,7 +1895,7 @@ struct CParser {
 
     // (6.7.7.1) declarator:
     //     pointer_opt direct-declarator
-    CDeclarator* parse_declarator(bool allow_abstract = false) {
+    CDeclarator* parse_declarator(bool allow_abstract = false){
         auto data = allocator.alloc(CDeclarator.sizeof);
         CDeclarator* decl = cast(CDeclarator*)data.ptr;
         *decl = CDeclarator.init;
@@ -1905,14 +1903,14 @@ struct CParser {
         // (6.7.7.1) pointer:
         //     * attribute-specifier-sequence_opt type-qualifier-list_opt
         //     * attribute-specifier-sequence_opt type-qualifier-list_opt pointer
-        while (check(CTokenType.STAR)) {
+        while(check(CTokenType.STAR)){
             advance();
             decl.pointer_depth++;
             // (6.7.4.1) type-qualifier-list:
             //     type-qualifier | type-qualifier-list type-qualifier
             // (6.7.4.1) type-qualifier: const | restrict | volatile | _Atomic
-            while (match(CTokenType.CONST) || match(CTokenType.VOLATILE) ||
-                   match(CTokenType.RESTRICT) || match(CTokenType.ATOMIC)) {
+            while(match(CTokenType.CONST) || match(CTokenType.VOLATILE) ||
+                   match(CTokenType.RESTRICT) || match(CTokenType.ATOMIC)){
                 // Skip qualifiers - we don't track per-pointer constness
             }
         }
@@ -1932,29 +1930,29 @@ struct CParser {
     //
     // (6.7.7.1) function-declarator:
     //     direct-declarator ( parameter-type-list_opt )
-    CDeclarator* parse_direct_declarator(CDeclarator* decl, bool allow_abstract) {
+    CDeclarator* parse_direct_declarator(CDeclarator* decl, bool allow_abstract){
         // Handle parenthesized declarator: ( declarator )
         // This is for cases like: int (*ptr), void (*func)(int)
-        if (check(CTokenType.LEFT_PAREN)) {
+        if(check(CTokenType.LEFT_PAREN)){
             // Look ahead to distinguish ( declarator ) from ( parameters )
             // A declarator starts with * or identifier or (
             CToken next = peek_at(1);
-            if (next.type == CTokenType.STAR ||
+            if(next.type == CTokenType.STAR ||
                 (next.type == CTokenType.IDENTIFIER && !is_type_start(next)) ||
-                next.type == CTokenType.LEFT_PAREN) {
+                next.type == CTokenType.LEFT_PAREN){
                 advance();  // consume '('
                 decl.nested = parse_declarator(allow_abstract);
-                if (decl.nested is null) return null;
+                if(decl.nested is null) return null;
                 consume(CTokenType.RIGHT_PAREN, "Expected ')' after declarator");
-                if (ERROR_OCCURRED) return null;
+                if(ERROR_OCCURRED) return null;
             }
         }
 
         // Handle identifier (only if we didn't parse a nested declarator)
-        if (decl.nested is null) {
-            if (check(CTokenType.IDENTIFIER)) {
+        if(decl.nested is null){
+            if(check(CTokenType.IDENTIFIER)){
                 decl.name = advance();
-            } else if (!allow_abstract) {
+            } else if(!allow_abstract){
                 error("Expected identifier in declarator");
                 return null;
             }
@@ -1962,17 +1960,17 @@ struct CParser {
         }
 
         // Skip __attribute__((...)) after identifier
-        while (check(CTokenType.IDENTIFIER) && peek().lexeme == "__attribute__") {
+        while(check(CTokenType.IDENTIFIER) && peek().lexeme == "__attribute__"){
             advance();
-            if (check(CTokenType.LEFT_PAREN)) {
+            if(check(CTokenType.LEFT_PAREN)){
                 skip_balanced_parens();
             }
         }
 
         // Handle array and function suffixes (left-to-right)
         // These suffixes apply to the direct-declarator (which may include a nested declarator)
-        while (true) {
-            if (check(CTokenType.LEFT_BRACKET)) {
+        while(true){
+            if(check(CTokenType.LEFT_BRACKET)){
                 // (6.7.7.1) array-declarator:
                 //     direct-declarator [ type-qualifier-list_opt assignment-expression_opt ]
                 advance();  // consume '['
@@ -1980,18 +1978,18 @@ struct CParser {
 
                 // Parse array size if present
                 size_t dim = 0;
-                if (!check(CTokenType.RIGHT_BRACKET)) {
+                if(!check(CTokenType.RIGHT_BRACKET)){
                     auto size_result = parse_enum_const_expr();
-                    if (!size_result.err && size_result.value > 0) {
+                    if(!size_result.err && size_result.value > 0){
                         dim = cast(size_t)size_result.value;
                     }
                 }
                 decl.array_dim = dim;
 
                 consume(CTokenType.RIGHT_BRACKET, "Expected ']' after array size");
-                if (ERROR_OCCURRED) return null;
+                if(ERROR_OCCURRED) return null;
 
-            } else if (check(CTokenType.LEFT_PAREN)) {
+            } else if(check(CTokenType.LEFT_PAREN)){
                 // (6.7.7.1) function-declarator:
                 //     direct-declarator ( parameter-type-list_opt )
                 // This applies whether or not we have a nested declarator
@@ -2001,17 +1999,17 @@ struct CParser {
                 // Parse the parameter list
                 advance();  // consume '('
                 auto param_result = parse_parameter_type_list();
-                if (param_result.err) return null;
+                if(param_result.err) return null;
                 decl.is_varargs = param_result.is_varargs;
                 // Store param types
                 auto param_types = make_barray!(CType*)(allocator);
-                foreach (ref p; param_result.params[]) {
+                foreach(ref p; param_result.params[]){
                     param_types ~= p.type;
                 }
                 decl.param_types = param_types[];
 
                 consume(CTokenType.RIGHT_PAREN, "Expected ')' after parameters");
-                if (ERROR_OCCURRED) return null;
+                if(ERROR_OCCURRED) return null;
 
             } else {
                 break;
@@ -2022,13 +2020,13 @@ struct CParser {
     }
 
     // Helper: Check if a token starts a type
-    bool is_type_start(CToken tok) {
-        if (tok.type == CTokenType.IDENTIFIER) {
+    bool is_type_start(CToken tok){
+        if(tok.type == CTokenType.IDENTIFIER){
             // Check if it's a typedef name
             return (tok.lexeme in typedef_types) !is null;
         }
         // Check for type keywords
-        switch (tok.type) {
+        switch(tok.type){
             case CTokenType.VOID:
             case CTokenType.CHAR:
             case CTokenType.SHORT:
@@ -2060,13 +2058,13 @@ struct CParser {
     //   base: The base type specifier (e.g., void)
     //   decl: The full declarator
     //   name_decl: The declarator that contains the identifier (has is_function=true for the params)
-    CType* build_function_return_type(CType* base, CDeclarator* decl, CDeclarator* name_decl) {
-        if (decl is null || base is null) return base;
-        if (decl is name_decl) {
+    CType* build_function_return_type(CType* base, CDeclarator* decl, CDeclarator* name_decl){
+        if(decl is null || base is null) return base;
+        if(decl is name_decl){
             // We've reached the function declarator containing the name
             // Apply only the pointers, not the function part (that's the function's params, not return type)
             CType* result = base;
-            for (int i = 0; i < decl.pointer_depth; i++) {
+            for(int i = 0; i < decl.pointer_depth; i++){
                 result = make_pointer_type(allocator, result);
             }
             // Don't apply is_function here - that's the function we're declaring
@@ -2077,13 +2075,13 @@ struct CParser {
         CType* result = base;
 
         // Apply pointers
-        for (int i = 0; i < decl.pointer_depth; i++) {
+        for(int i = 0; i < decl.pointer_depth; i++){
             result = make_pointer_type(allocator, result);
         }
 
         // Apply array suffix
-        if (decl.is_array) {
-            if (decl.array_dim > 0) {
+        if(decl.is_array){
+            if(decl.array_dim > 0){
                 result = make_array_type(allocator, result, decl.array_dim);
             } else {
                 result = make_pointer_type(allocator, result);
@@ -2091,12 +2089,12 @@ struct CParser {
         }
 
         // Apply function suffix
-        if (decl.is_function) {
+        if(decl.is_function){
             result = make_function_type(allocator, result, decl.param_types, decl.is_varargs);
         }
 
         // Recurse into nested declarator
-        if (decl.nested !is null) {
+        if(decl.nested !is null){
             result = build_function_return_type(result, decl.nested, name_decl);
         }
 
@@ -2115,21 +2113,21 @@ struct CParser {
     //   - Outer declarator: is_function=true, params=void, pointer_depth=0
     //   - Nested declarator: pointer_depth=1, is_array=true, array_dim=10, name=funcs
     //   Build: int -> int(void) -> int(*)(void) -> int(*[10])(void)
-    CType* apply_declarator_to_type(CType* base, CDeclarator* decl) {
-        if (decl is null || base is null) return base;
+    CType* apply_declarator_to_type(CType* base, CDeclarator* decl){
+        if(decl is null || base is null) return base;
 
         CType* result = base;
 
         // Step 1: Apply this level's pointers first
         // These pointers are "closest" to the base type in the type hierarchy
-        for (int i = 0; i < decl.pointer_depth; i++) {
+        for(int i = 0; i < decl.pointer_depth; i++){
             result = make_pointer_type(allocator, result);
         }
 
         // Step 2: Apply suffixes (array, function)
         // These have higher precedence than the nested declarator's modifiers
-        if (decl.is_array) {
-            if (decl.array_dim > 0) {
+        if(decl.is_array){
+            if(decl.array_dim > 0){
                 result = make_array_type(allocator, result, decl.array_dim);
             } else {
                 // Unsized array - treat as pointer (e.g., int x[])
@@ -2137,13 +2135,13 @@ struct CParser {
             }
         }
 
-        if (decl.is_function) {
+        if(decl.is_function){
             result = make_function_type(allocator, result, decl.param_types, decl.is_varargs);
         }
 
         // Step 3: Recurse into nested declarator
         // The nested declarator's modifiers wrap around everything we've built so far
-        if (decl.nested !is null) {
+        if(decl.nested !is null){
             result = apply_declarator_to_type(result, decl.nested);
         }
 
@@ -2162,17 +2160,17 @@ struct CParser {
     // Returns the total size (accumulated offset for structs, max size for unions).
     // For structs: is_union=false, offset accumulates
     // For unions: is_union=true, all offsets are 0, returns max field size
-    int parse_member_declaration_list(Barray!StructField* fields, size_t* total_size, bool is_union) {
+    int parse_member_declaration_list(Barray!StructField* fields, size_t* total_size, bool is_union){
         size_t offset = 0;
         size_t max_size = 0;
 
-        while (!check(CTokenType.RIGHT_BRACE) && !at_end) {
+        while(!check(CTokenType.RIGHT_BRACE) && !at_end){
             size_t field_size = 0;
             int err = parse_member_declaration(fields, is_union ? 0 : offset, &field_size, is_union);
-            if (err) return err;
+            if(err) return err;
 
-            if (is_union) {
-                if (field_size > max_size) max_size = field_size;
+            if(is_union){
+                if(field_size > max_size) max_size = field_size;
             } else {
                 offset += field_size;
             }
@@ -2189,12 +2187,12 @@ struct CParser {
     // Parses a single member declaration line (which may declare multiple fields via comma).
     // base_offset: starting offset for fields in this declaration
     // total_field_size: output - total size of all fields declared
-    int parse_member_declaration(Barray!StructField* fields, size_t base_offset, size_t* total_field_size, bool is_union) {
+    int parse_member_declaration(Barray!StructField* fields, size_t base_offset, size_t* total_field_size, bool is_union){
         *total_field_size = 0;
 
         // Check for inline struct/union: struct { ... } field_name; or struct { ... };
-        if ((check(CTokenType.UNION) || check(CTokenType.STRUCT)) &&
-            peek_at(1).type == CTokenType.LEFT_BRACE) {
+        if((check(CTokenType.UNION) || check(CTokenType.STRUCT)) &&
+            peek_at(1).type == CTokenType.LEFT_BRACE){
             bool is_inline_union = check(CTokenType.UNION);
             advance();  // consume union/struct
             advance();  // consume {
@@ -2203,17 +2201,17 @@ struct CParser {
             auto inline_fields = make_barray!StructField(allocator);
             size_t inline_size = 0;
             int err = parse_member_declaration_list(&inline_fields, &inline_size, is_inline_union);
-            if (err) return err;
+            if(err) return err;
 
             consume(CTokenType.RIGHT_BRACE, "Expected '}' after inline struct/union");
-            if (ERROR_OCCURRED) return 1;
+            if(ERROR_OCCURRED) return 1;
 
             // Check for field name after the struct body: struct { ... } field_name;
-            if (check(CTokenType.IDENTIFIER)) {
+            if(check(CTokenType.IDENTIFIER)){
                 CToken field_name = advance();
                 // Create anonymous struct/union type for this field
                 CType* inline_type;
-                if (is_inline_union) {
+                if(is_inline_union){
                     inline_type = make_union_type(allocator, "", inline_fields[], inline_size);
                 } else {
                     inline_type = make_struct_type(allocator, "", inline_fields[], inline_size);
@@ -2226,7 +2224,7 @@ struct CParser {
                 *total_field_size = inline_size;
             } else {
                 // True anonymous struct/union - add fields directly to parent
-                foreach (ref f; inline_fields[]) {
+                foreach(ref f; inline_fields[]){
                     StructField field;
                     field.name = f.name;
                     field.type = f.type;
@@ -2236,33 +2234,33 @@ struct CParser {
                 *total_field_size = inline_size;
             }
             consume(CTokenType.SEMICOLON, "Expected ';' after inline struct/union");
-            if (ERROR_OCCURRED) return 1;
+            if(ERROR_OCCURRED) return 1;
             return 0;
         }
 
         // Check for anonymous enum field: enum { ... } field_name;
-        if (check(CTokenType.ENUM) && peek_at(1).type == CTokenType.LEFT_BRACE) {
+        if(check(CTokenType.ENUM) && peek_at(1).type == CTokenType.LEFT_BRACE){
             advance();  // consume 'enum'
             advance();  // consume '{'
             // Parse and register enum values
             long enum_val = 0;
-            while (!check(CTokenType.RIGHT_BRACE) && !at_end) {
+            while(!check(CTokenType.RIGHT_BRACE) && !at_end){
                 CToken ename = consume(CTokenType.IDENTIFIER, "Expected enum constant name");
-                if (ERROR_OCCURRED) return 1;
-                if (match(CTokenType.EQUAL)) {
+                if(ERROR_OCCURRED) return 1;
+                if(match(CTokenType.EQUAL)){
                     auto result = parse_enum_const_expr();
-                    if (result.err) return 1;
+                    if(result.err) return 1;
                     enum_val = result.value;
                 }
                 enum_constants[ename.lexeme] = enum_val;
                 enum_val++;
-                if (!match(CTokenType.COMMA)) break;
+                if(!match(CTokenType.COMMA)) break;
             }
             consume(CTokenType.RIGHT_BRACE, "Expected '}'");
-            if (ERROR_OCCURRED) return 1;
+            if(ERROR_OCCURRED) return 1;
             // Now parse the field name
             CToken field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
-            if (ERROR_OCCURRED) return 1;
+            if(ERROR_OCCURRED) return 1;
             StructField field;
             field.name = field_name.lexeme;
             field.type = &TYPE_INT;  // enum is int
@@ -2270,16 +2268,16 @@ struct CParser {
             *fields ~= field;
             *total_field_size = TYPE_INT.size_of();
             consume(CTokenType.SEMICOLON, "Expected ';'");
-            if (ERROR_OCCURRED) return 1;
+            if(ERROR_OCCURRED) return 1;
             return 0;
         }
 
         // (6.7.3.2) specifier-qualifier-list - parse the base type
         CType* base_type = parse_type();
-        if (base_type is null) return 1;
+        if(base_type is null) return 1;
 
         // Check for function pointer field: type (CONV * name) (params)
-        if (check(CTokenType.LEFT_PAREN)) {
+        if(check(CTokenType.LEFT_PAREN)){
             return parse_function_pointer_member(fields, base_offset, total_field_size, base_type);
         }
 
@@ -2298,10 +2296,10 @@ struct CParser {
             //     declarator_opt : constant-expression
 
             // Check for anonymous bit field (e.g., unsigned int :24;)
-            if (check(CTokenType.COLON)) {
+            if(check(CTokenType.COLON)){
                 advance();  // consume :
                 auto width_result = parse_enum_const_expr();
-                if (width_result.err) return 1;
+                if(width_result.err) return 1;
                 // Skip anonymous bit fields - they're just padding
                 first_declarator = false;
                 continue;
@@ -2310,7 +2308,7 @@ struct CParser {
             // For the first declarator, use the type as-is (it already has pointers consumed)
             // For subsequent declarators, start from pure base type and parse pointer modifiers
             CType* decl_type;
-            if (first_declarator) {
+            if(first_declarator){
                 decl_type = base_type;
                 first_declarator = false;
             } else {
@@ -2319,26 +2317,26 @@ struct CParser {
 
             // Regular field - parse name
             CToken field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
-            if (ERROR_OCCURRED) return 1;
+            if(ERROR_OCCURRED) return 1;
 
             // Handle arrays (including multi-dimensional)
-            while (match(CTokenType.LEFT_BRACKET)) {
+            while(match(CTokenType.LEFT_BRACKET)){
                 auto size_result = parse_enum_const_expr();
-                if (size_result.err) return 1;
-                if (size_result.value <= 0) {
+                if(size_result.err) return 1;
+                if(size_result.value <= 0){
                     error("Array size must be positive");
                     return 1;
                 }
                 consume(CTokenType.RIGHT_BRACKET, "Expected ']' after array size");
-                if (ERROR_OCCURRED) return 1;
+                if(ERROR_OCCURRED) return 1;
                 decl_type = make_array_type(allocator, decl_type, cast(size_t) size_result.value);
             }
 
             // Handle bit fields (e.g., unsigned int field:2;)
-            if (match(CTokenType.COLON)) {
+            if(match(CTokenType.COLON)){
                 // Just skip the bit width - we'll use the full type size
                 auto width_result = parse_enum_const_expr();
-                if (width_result.err) return 1;
+                if(width_result.err) return 1;
                 // Bit field - just use the underlying type (imprecise but ok for now)
             }
 
@@ -2350,40 +2348,40 @@ struct CParser {
             *fields ~= field;
 
             size_t field_size = decl_type.size_of();
-            if (!is_union) {
+            if(!is_union){
                 current_offset += field_size;
             }
             *total_field_size += field_size;
 
-        } while (match(CTokenType.COMMA));
+        } while(match(CTokenType.COMMA));
 
         consume(CTokenType.SEMICOLON, "Expected ';' after field declaration");
-        if (ERROR_OCCURRED) return 1;
+        if(ERROR_OCCURRED) return 1;
         return 0;
     }
 
     // Helper for parsing function pointer members: type (CONV * name) (params)
-    int parse_function_pointer_member(Barray!StructField* fields, size_t offset, size_t* field_size, CType* return_type) {
+    int parse_function_pointer_member(Barray!StructField* fields, size_t offset, size_t* field_size, CType* return_type){
         advance();  // consume '('
         // Skip calling convention identifiers until we hit '*'
-        while (check(CTokenType.IDENTIFIER)) {
+        while(check(CTokenType.IDENTIFIER)){
             advance();
         }
-        if (!match(CTokenType.STAR)) {
+        if(!match(CTokenType.STAR)){
             error("Expected '*' in function pointer field");
             return 1;
         }
         // Skip pointer qualifiers after * (e.g., (*const funcptr))
-        while (match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)) {}
+        while(match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)){}
 
         CToken field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
-        if (ERROR_OCCURRED) return 1;
+        if(ERROR_OCCURRED) return 1;
 
         consume(CTokenType.RIGHT_PAREN, "Expected ')' after field name");
-        if (ERROR_OCCURRED) return 1;
+        if(ERROR_OCCURRED) return 1;
 
         // Skip the parameter list
-        if (check(CTokenType.LEFT_PAREN)) {
+        if(check(CTokenType.LEFT_PAREN)){
             skip_balanced_parens();
         }
 
@@ -2391,7 +2389,7 @@ struct CParser {
         CType* fptr_type = make_pointer_type(allocator, &TYPE_VOID);
 
         consume(CTokenType.SEMICOLON, "Expected ';' after function pointer field");
-        if (ERROR_OCCURRED) return 1;
+        if(ERROR_OCCURRED) return 1;
 
         // Add function pointer field
         StructField field;
@@ -2422,16 +2420,16 @@ struct CParser {
     //
     // Parses a complete parameter list (everything inside the parentheses).
     // Caller should have already consumed the opening '('.
-    ParameterListResult parse_parameter_type_list() {
+    ParameterListResult parse_parameter_type_list(){
         ParameterListResult result;
         result.params = make_barray!CParam(allocator);
         result.is_varargs = false;
         result.err = false;
 
-        if (!check(CTokenType.RIGHT_PAREN)) {
+        if(!check(CTokenType.RIGHT_PAREN)){
             do {
                 // (6.7.7.1) parameter-type-list can start with ...
-                if (check(CTokenType.ELLIPSIS)) {
+                if(check(CTokenType.ELLIPSIS)){
                     advance();
                     result.is_varargs = true;
                     break;
@@ -2439,11 +2437,11 @@ struct CParser {
 
                 // (6.7.7.1) parameter-declaration
                 int perr = parse_parameter_declaration(&result.params);
-                if (perr) {
+                if(perr){
                     result.err = true;
                     return result;
                 }
-            } while (match(CTokenType.COMMA));
+            } while(match(CTokenType.COMMA));
         }
 
         return result;
@@ -2455,13 +2453,13 @@ struct CParser {
     //
     // Parses a single parameter and adds it to the params array.
     // Returns 0 on success, 1 on error.
-    int parse_parameter_declaration(Barray!CParam* params) {
-        // Check for (void) - means no parameters
-        if (check(CTokenType.VOID)) {
+    int parse_parameter_declaration(Barray!CParam* params){
+        // Check for(void) - means no parameters
+        if(check(CTokenType.VOID)){
             CToken void_tok = advance();
-            if (check(CTokenType.RIGHT_PAREN) || check(CTokenType.COMMA)) {
+            if(check(CTokenType.RIGHT_PAREN) || check(CTokenType.COMMA)){
                 // Just "void" alone - means no parameters if at end, or error if followed by comma
-                if (check(CTokenType.COMMA)) {
+                if(check(CTokenType.COMMA)){
                     error("'void' parameter must be the only parameter");
                     return 1;
                 }
@@ -2473,21 +2471,21 @@ struct CParser {
             param.type = &TYPE_VOID;
 
             // Handle pointers
-            while (match(CTokenType.STAR)) {
+            while(match(CTokenType.STAR)){
                 param.type = make_pointer_type(allocator, param.type);
-                while (match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)) {}
+                while(match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)){}
             }
 
             // Check for function pointer parameter: void (*name)(params)
-            if (check(CTokenType.LEFT_PAREN)) {
+            if(check(CTokenType.LEFT_PAREN)){
                 advance();  // consume '('
-                if (match(CTokenType.STAR)) {
-                    if (check(CTokenType.IDENTIFIER)) {
+                if(match(CTokenType.STAR)){
+                    if(check(CTokenType.IDENTIFIER)){
                         param.name = advance();
                     }
                     consume(CTokenType.RIGHT_PAREN, "Expected ')' after function pointer");
-                    if (ERROR_OCCURRED) return 1;
-                    if (check(CTokenType.LEFT_PAREN)) {
+                    if(ERROR_OCCURRED) return 1;
+                    if(check(CTokenType.LEFT_PAREN)){
                         skip_balanced_parens();
                     }
                     param.type = make_pointer_type(allocator, &TYPE_VOID);
@@ -2500,7 +2498,7 @@ struct CParser {
             }
 
             // Parameter name is optional
-            if (check(CTokenType.IDENTIFIER)) {
+            if(check(CTokenType.IDENTIFIER)){
                 param.name = advance();
             }
             *params ~= param;
@@ -2510,20 +2508,20 @@ struct CParser {
         // Regular parameter
         CParam param;
         param.type = parse_type();
-        if (param.type is null) return 1;
+        if(param.type is null) return 1;
 
         // Check for function pointer parameter: type (*name)(params) or type (*)(params)
-        if (check(CTokenType.LEFT_PAREN)) {
+        if(check(CTokenType.LEFT_PAREN)){
             advance();  // consume '('
-            if (match(CTokenType.STAR)) {
+            if(match(CTokenType.STAR)){
                 // Function pointer parameter - name is optional
-                if (check(CTokenType.IDENTIFIER)) {
+                if(check(CTokenType.IDENTIFIER)){
                     param.name = advance();
                 }
                 consume(CTokenType.RIGHT_PAREN, "Expected ')' after function pointer");
-                if (ERROR_OCCURRED) return 1;
+                if(ERROR_OCCURRED) return 1;
                 // Skip the parameter list
-                if (check(CTokenType.LEFT_PAREN)) {
+                if(check(CTokenType.LEFT_PAREN)){
                     skip_balanced_parens();
                 }
                 // Treat as void* for simplicity
@@ -2537,21 +2535,21 @@ struct CParser {
         }
 
         // Skip const/volatile qualifiers between type and name
-        while (match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)) {}
+        while(match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)){}
 
         // Parameter name is optional in declarations
-        if (check(CTokenType.IDENTIFIER)) {
+        if(check(CTokenType.IDENTIFIER)){
             param.name = advance();
         }
 
         // Handle array parameters: type name[size] -> converted to pointer
-        if (check(CTokenType.LEFT_BRACKET)) {
-            while (check(CTokenType.LEFT_BRACKET)) {
+        if(check(CTokenType.LEFT_BRACKET)){
+            while(check(CTokenType.LEFT_BRACKET)){
                 advance();  // consume '['
-                while (!check(CTokenType.RIGHT_BRACKET) && !at_end) {
+                while(!check(CTokenType.RIGHT_BRACKET) && !at_end){
                     advance();
                 }
-                if (check(CTokenType.RIGHT_BRACKET)) advance();
+                if(check(CTokenType.RIGHT_BRACKET)) advance();
             }
             param.type = make_pointer_type(allocator, param.type);
         }
@@ -2575,7 +2573,7 @@ struct CParser {
     // is_extern: true if 'extern' keyword was present (declaration only, object defined elsewhere)
     // library: from #pragma library, specifies which library contains the extern object
     int parse_init_declarator_list(Barray!CGlobalVar* globals, CType* first_type, CToken first_name,
-                                   bool is_extern = false, str library = null) {
+                                   bool is_extern = false, str library = null){
         // Get base type by unwrapping pointers (for subsequent declarators)
         CType* base_type = unwrap_pointers(first_type);
 
@@ -2585,19 +2583,19 @@ struct CParser {
         // Parse the first variable
         CGlobalVar gvar;
         int err = parse_global_var_rest(first_type, first_name, &gvar, is_extern, library);
-        if (err) return err;
+        if(err) return err;
         *globals ~= gvar;
 
         // Parse remaining comma-separated declarators
-        while (match(CTokenType.COMMA)) {
+        while(match(CTokenType.COMMA)){
             // Each declarator can have its own pointer modifiers
             CType* decl_type = parse_pointer_modifiers(base_type);
             CToken next_name = consume(CTokenType.IDENTIFIER, "Expected variable name");
-            if (ERROR_OCCURRED) return 1;
+            if(ERROR_OCCURRED) return 1;
 
             CGlobalVar gvar2;
             err = parse_global_var_rest(decl_type, next_name, &gvar2, is_extern, library);
-            if (err) return err;
+            if(err) return err;
             *globals ~= gvar2;
         }
 
@@ -2613,31 +2611,31 @@ struct CParser {
     //     typedef-name | typeof-specifier
     //
     // (6.7.4.1) type-qualifier: const | restrict | volatile | _Atomic
-    CType* parse_base_type() {
+    CType* parse_base_type(){
         bool is_unsigned = false;
         bool is_const = false;
 
         // Handle qualifiers and modifiers
-        while (true) {
-            if (match(CTokenType.CONST)) {
+        while(true){
+            if(match(CTokenType.CONST)){
                 is_const = true;
-            } else if (match(CTokenType.VOLATILE)) {
+            } else if(match(CTokenType.VOLATILE)){
                 // Skip volatile - we don't track it
-            } else if (match(CTokenType.RESTRICT)) {
+            } else if(match(CTokenType.RESTRICT)){
                 // Skip restrict - we don't track it
-            } else if (match(CTokenType.ATOMIC)) {
+            } else if(match(CTokenType.ATOMIC)){
                 // Skip _Atomic - handle both _Atomic T and _Atomic(T)
-                if (match(CTokenType.LEFT_PAREN)) {
+                if(match(CTokenType.LEFT_PAREN)){
                     // _Atomic(T) - parse full type T (may include pointers) and consume closing paren
                     CType* atomic_type = parse_type();
                     consume(CTokenType.RIGHT_PAREN, "Expected ')' after _Atomic type");
-                    if (ERROR_OCCURRED) return null;
+                    if(ERROR_OCCURRED) return null;
                     return atomic_type;  // Return the inner type
                 }
                 // Otherwise just _Atomic as qualifier, continue parsing
-            } else if (match(CTokenType.UNSIGNED)) {
+            } else if(match(CTokenType.UNSIGNED)){
                 is_unsigned = true;
-            } else if (match(CTokenType.SIGNED)) {
+            } else if(match(CTokenType.SIGNED)){
                 is_unsigned = false;
             } else {
                 break;
@@ -2646,121 +2644,121 @@ struct CParser {
 
         CType* result;
 
-        if (match(CTokenType.VOID)) {
+        if(match(CTokenType.VOID)){
             result = &TYPE_VOID;
-        } else if (match(CTokenType.CHAR)) {
+        } else if(match(CTokenType.CHAR)){
             result = is_unsigned ? &TYPE_UCHAR : &TYPE_CHAR;
-        } else if (match(CTokenType.SHORT)) {
+        } else if(match(CTokenType.SHORT)){
             // Handle trailing modifiers (e.g., 'short unsigned int')
-            while (match(CTokenType.UNSIGNED)) is_unsigned = true;
-            while (match(CTokenType.SIGNED)) is_unsigned = false;
+            while(match(CTokenType.UNSIGNED)) is_unsigned = true;
+            while(match(CTokenType.SIGNED)) is_unsigned = false;
             match(CTokenType.INT);  // optional trailing int
             // Allocate new type for short
             auto data = allocator.alloc(CType.sizeof);
             result = cast(CType*)data.ptr;
             result.kind = CTypeKind.SHORT;
             result.is_unsigned = is_unsigned;
-        } else if (match(CTokenType.INT)) {
+        } else if(match(CTokenType.INT)){
             // Handle trailing modifiers (e.g., 'int unsigned')
-            while (match(CTokenType.UNSIGNED)) is_unsigned = true;
-            while (match(CTokenType.SIGNED)) is_unsigned = false;
+            while(match(CTokenType.UNSIGNED)) is_unsigned = true;
+            while(match(CTokenType.SIGNED)) is_unsigned = false;
             result = is_unsigned ? &TYPE_UINT : &TYPE_INT;
-        } else if (match(CTokenType.LONG)) {
+        } else if(match(CTokenType.LONG)){
             // Check for 'long long' or 'long double'
             // Also handle trailing unsigned/signed and int (e.g., 'long unsigned int')
-            if (match(CTokenType.LONG)) {
+            if(match(CTokenType.LONG)){
                 // long long - same as long on 64-bit
                 // Consume trailing unsigned/signed/int
-                while (match(CTokenType.UNSIGNED)) is_unsigned = true;
-                while (match(CTokenType.SIGNED)) is_unsigned = false;
+                while(match(CTokenType.UNSIGNED)) is_unsigned = true;
+                while(match(CTokenType.SIGNED)) is_unsigned = false;
                 match(CTokenType.INT);  // optional trailing int
                 result = is_unsigned ? &TYPE_ULONG : &TYPE_LONG;
-            } else if (match(CTokenType.DOUBLE)) {
+            } else if(match(CTokenType.DOUBLE)){
                 // long double - treat as double for simplicity
                 result = &TYPE_DOUBLE;
             } else {
                 // Consume trailing unsigned/signed/int (e.g., 'long unsigned int')
-                while (match(CTokenType.UNSIGNED)) is_unsigned = true;
-                while (match(CTokenType.SIGNED)) is_unsigned = false;
+                while(match(CTokenType.UNSIGNED)) is_unsigned = true;
+                while(match(CTokenType.SIGNED)) is_unsigned = false;
                 match(CTokenType.INT);  // optional trailing int
                 result = is_unsigned ? &TYPE_ULONG : &TYPE_LONG;
             }
-        } else if (match(CTokenType.FLOAT)) {
+        } else if(match(CTokenType.FLOAT)){
             result = &TYPE_FLOAT;
-        } else if (match(CTokenType.DOUBLE)) {
+        } else if(match(CTokenType.DOUBLE)){
             result = &TYPE_DOUBLE;
-        } else if (match(CTokenType.FLOAT16)) {
+        } else if(match(CTokenType.FLOAT16)){
             // _Float16 - treat as float for now
             result = &TYPE_FLOAT;
-        } else if (match(CTokenType.BOOL)) {
+        } else if(match(CTokenType.BOOL)){
             // _Bool - treat as unsigned char for now
             result = &TYPE_UCHAR;
-        } else if (match(CTokenType.INT128)) {
+        } else if(match(CTokenType.INT128)){
             result = &TYPE_INT128;
-        } else if (match(CTokenType.UINT128)) {
+        } else if(match(CTokenType.UINT128)){
             result = &TYPE_UINT128;
-        } else if (match(CTokenType.COMPLEX)) {
+        } else if(match(CTokenType.COMPLEX)){
             // _Complex - stub as double for parsing, codegen will error if used
             // Skip the following type specifier (double, float, etc.)
-            if (match(CTokenType.DOUBLE) || match(CTokenType.FLOAT) || match(CTokenType.LONG)) {
+            if(match(CTokenType.DOUBLE) || match(CTokenType.FLOAT) || match(CTokenType.LONG)){
                 // Consumed
             }
             result = &TYPE_DOUBLE;  // Stub
-        } else if (match(CTokenType.DECIMAL32)) {
+        } else if(match(CTokenType.DECIMAL32)){
             result = &TYPE_FLOAT;  // Stub
-        } else if (match(CTokenType.DECIMAL64)) {
+        } else if(match(CTokenType.DECIMAL64)){
             result = &TYPE_DOUBLE;  // Stub
-        } else if (match(CTokenType.DECIMAL128)) {
+        } else if(match(CTokenType.DECIMAL128)){
             result = &TYPE_DOUBLE;  // Stub
-        } else if (match(CTokenType.STRUCT)) {
+        } else if(match(CTokenType.STRUCT)){
             // struct Name or struct { ... }
             bool has_name = check(CTokenType.IDENTIFIER);
             CToken struct_name;
-            if (has_name) {
+            if(has_name){
                 struct_name = advance();
             }
 
             // Check for inline definition
-            if (check(CTokenType.LEFT_BRACE)) {
+            if(check(CTokenType.LEFT_BRACE)){
                 advance();  // consume '{'
                 auto fields = make_barray!StructField(allocator);
                 size_t total_size = 0;
 
-                while (!check(CTokenType.RIGHT_BRACE) && !at_end) {
+                while(!check(CTokenType.RIGHT_BRACE) && !at_end){
                     CType* field_type = parse_type();
-                    if (field_type is null) return null;
+                    if(field_type is null) return null;
 
                     // Handle comma-separated declarators (e.g., int x:1, y:2;)
                     CType* base_type = field_type;
                     do {
                         // Check for anonymous bit field
-                        if (check(CTokenType.COLON)) {
+                        if(check(CTokenType.COLON)){
                             advance();  // consume :
                             auto width_result = parse_enum_const_expr();
-                            if (width_result.err) return null;
+                            if(width_result.err) return null;
                             // Skip anonymous bit fields - they're just padding
                         } else {
                             CToken field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
-                            if (ERROR_OCCURRED) return null;
+                            if(ERROR_OCCURRED) return null;
 
                             CType* decl_type = base_type;
 
-                            if (match(CTokenType.LEFT_BRACKET)) {
+                            if(match(CTokenType.LEFT_BRACKET)){
                                 auto size_result = parse_enum_const_expr();
-                                if (size_result.err) return null;
-                                if (size_result.value <= 0) {
+                                if(size_result.err) return null;
+                                if(size_result.value <= 0){
                                     error("Array size must be positive");
                                     return null;
                                 }
                                 consume(CTokenType.RIGHT_BRACKET, "Expected ']'");
-                                if (ERROR_OCCURRED) return null;
+                                if(ERROR_OCCURRED) return null;
                                 decl_type = make_array_type(allocator, decl_type, cast(size_t) size_result.value);
                             }
 
                             // Handle bit fields
-                            if (match(CTokenType.COLON)) {
+                            if(match(CTokenType.COLON)){
                                 auto width_result = parse_enum_const_expr();
-                                if (width_result.err) return null;
+                                if(width_result.err) return null;
                             }
 
                             StructField field;
@@ -2770,18 +2768,18 @@ struct CParser {
                             fields ~= field;
                             total_size += decl_type.size_of();
                         }
-                    } while (match(CTokenType.COMMA));
+                    } while(match(CTokenType.COMMA));
 
                     consume(CTokenType.SEMICOLON, "Expected ';' after field");
-                    if (ERROR_OCCURRED) return null;
+                    if(ERROR_OCCURRED) return null;
                 }
 
                 consume(CTokenType.RIGHT_BRACE, "Expected '}'");
-                if (ERROR_OCCURRED) return null;
+                if(ERROR_OCCURRED) return null;
 
                 // Check if there's an existing forward-declared type to update
-                if (has_name) {
-                    if (auto existing = struct_name.lexeme in struct_types) {
+                if(has_name){
+                    if(auto existing = struct_name.lexeme in struct_types){
                         // Update existing type in-place so typedefs continue to work
                         result = *existing;
                         result.fields = fields[];
@@ -2795,12 +2793,12 @@ struct CParser {
                 }
             } else {
                 // Just a reference - need name
-                if (!has_name) {
+                if(!has_name){
                     error("Expected struct name or body");
                     return null;
                 }
                 // Look up struct in defined structs
-                if (CType** found = struct_name.lexeme in struct_types) {
+                if(CType** found = struct_name.lexeme in struct_types){
                     result = *found;
                 } else {
                     // Create incomplete struct type for forward reference
@@ -2813,55 +2811,55 @@ struct CParser {
                     result = incomplete;
                 }
             }
-        } else if (match(CTokenType.UNION)) {
+        } else if(match(CTokenType.UNION)){
             // union Name or union { ... }
             bool has_name = check(CTokenType.IDENTIFIER);
             CToken union_name;
-            if (has_name) {
+            if(has_name){
                 union_name = advance();
             }
 
             // Check for inline definition
-            if (check(CTokenType.LEFT_BRACE)) {
+            if(check(CTokenType.LEFT_BRACE)){
                 advance();  // consume '{'
                 auto fields = make_barray!StructField(allocator);
                 size_t max_size = 0;
 
-                while (!check(CTokenType.RIGHT_BRACE) && !at_end) {
+                while(!check(CTokenType.RIGHT_BRACE) && !at_end){
                     CType* field_type = parse_type();
-                    if (field_type is null) return null;
+                    if(field_type is null) return null;
 
                     // Handle comma-separated declarators (e.g., int x:1, y:2;)
                     CType* base_type = field_type;
                     do {
                         // Check for anonymous bit field
-                        if (check(CTokenType.COLON)) {
+                        if(check(CTokenType.COLON)){
                             advance();  // consume :
                             auto width_result = parse_enum_const_expr();
-                            if (width_result.err) return null;
+                            if(width_result.err) return null;
                             // Skip anonymous bit fields - they're just padding
                         } else {
                             CToken field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
-                            if (ERROR_OCCURRED) return null;
+                            if(ERROR_OCCURRED) return null;
 
                             CType* decl_type = base_type;
 
-                            if (match(CTokenType.LEFT_BRACKET)) {
+                            if(match(CTokenType.LEFT_BRACKET)){
                                 auto size_result = parse_enum_const_expr();
-                                if (size_result.err) return null;
-                                if (size_result.value <= 0) {
+                                if(size_result.err) return null;
+                                if(size_result.value <= 0){
                                     error("Array size must be positive");
                                     return null;
                                 }
                                 consume(CTokenType.RIGHT_BRACKET, "Expected ']'");
-                                if (ERROR_OCCURRED) return null;
+                                if(ERROR_OCCURRED) return null;
                                 decl_type = make_array_type(allocator, decl_type, cast(size_t) size_result.value);
                             }
 
                             // Handle bit fields
-                            if (match(CTokenType.COLON)) {
+                            if(match(CTokenType.COLON)){
                                 auto width_result = parse_enum_const_expr();
-                                if (width_result.err) return null;
+                                if(width_result.err) return null;
                             }
 
                             StructField field;
@@ -2870,20 +2868,20 @@ struct CParser {
                             field.offset = 0;  // All union fields at offset 0
                             fields ~= field;
                             size_t field_size = decl_type.size_of();
-                            if (field_size > max_size) max_size = field_size;
+                            if(field_size > max_size) max_size = field_size;
                         }
-                    } while (match(CTokenType.COMMA));
+                    } while(match(CTokenType.COMMA));
 
                     consume(CTokenType.SEMICOLON, "Expected ';' after field");
-                    if (ERROR_OCCURRED) return null;
+                    if(ERROR_OCCURRED) return null;
                 }
 
                 consume(CTokenType.RIGHT_BRACE, "Expected '}'");
-                if (ERROR_OCCURRED) return null;
+                if(ERROR_OCCURRED) return null;
 
                 // Check if there's an existing forward-declared type to update
-                if (has_name) {
-                    if (auto existing = union_name.lexeme in union_types) {
+                if(has_name){
+                    if(auto existing = union_name.lexeme in union_types){
                         // Update existing type in-place so typedefs continue to work
                         result = *existing;
                         result.fields = fields[];
@@ -2897,12 +2895,12 @@ struct CParser {
                 }
             } else {
                 // Just a reference - need name
-                if (!has_name) {
+                if(!has_name){
                     error("Expected union name or body");
                     return null;
                 }
                 // Look up union in defined unions
-                if (CType** found = union_name.lexeme in union_types) {
+                if(CType** found = union_name.lexeme in union_types){
                     result = *found;
                 } else {
                     // Create incomplete union type for forward reference
@@ -2915,23 +2913,23 @@ struct CParser {
                     result = incomplete;
                 }
             }
-        } else if (match(CTokenType.ENUM)) {
+        } else if(match(CTokenType.ENUM)){
             // enum Name
             CToken name = consume(CTokenType.IDENTIFIER, "Expected enum name");
             // Look up enum in defined enums
-            if (CType** found = name.lexeme in enum_types) {
+            if(CType** found = name.lexeme in enum_types){
                 result = *found;
             } else {
                 error("Unknown enum type");
                 return null;
             }
-        } else if (is_unsigned) {
+        } else if(is_unsigned){
             // 'unsigned' by itself means 'unsigned int'
             result = &TYPE_UINT;
-        } else if (check(CTokenType.IDENTIFIER)) {
+        } else if(check(CTokenType.IDENTIFIER)){
             // Check for typedef name
             CToken name = peek();
-            if (CType** found = name.lexeme in typedef_types) {
+            if(CType** found = name.lexeme in typedef_types){
                 advance();  // consume the typedef name
                 result = *found;
             } else {
@@ -2944,11 +2942,11 @@ struct CParser {
         }
 
         // Handle 'long int', 'long long', etc.
-        if (result.kind == CTypeKind.LONG || result.kind == CTypeKind.SHORT) {
+        if(result.kind == CTypeKind.LONG || result.kind == CTypeKind.SHORT){
             match(CTokenType.INT);  // Optional 'int' after long/short
         }
 
-        if (is_const && result !is &TYPE_VOID) {
+        if(is_const && result !is &TYPE_VOID){
             // Need to allocate a new type with const flag
             auto data = allocator.alloc(CType.sizeof);
             auto new_type = cast(CType*)data.ptr;
@@ -2967,28 +2965,28 @@ struct CParser {
     // (6.8.1) statement:
     //     labeled-statement | compound-statement | expression-statement
     //     selection-statement | iteration-statement | jump-statement
-    CStmt* parse_statement() {
-        if (match(CTokenType.SEMICOLON)) {
+    CStmt* parse_statement(){
+        if(match(CTokenType.SEMICOLON)){
             return CEmptyStmt.get();
         }
-        if (match(CTokenType.RETURN)) return parse_return();
-        if (match(CTokenType.IF)) return parse_if();
-        if (match(CTokenType.WHILE)) return parse_while();
-        if (match(CTokenType.DO)) return parse_do_while();
-        if (match(CTokenType.FOR)) return parse_for();
-        if (match(CTokenType.LEFT_BRACE)) return parse_block();
-        if (match(CTokenType.BREAK)) return parse_break();
-        if (match(CTokenType.CONTINUE)) return parse_continue();
-        if (match(CTokenType.SWITCH)) return parse_switch();
-        if (match(CTokenType.GOTO)) return parse_goto();
+        if(match(CTokenType.RETURN)) return parse_return();
+        if(match(CTokenType.IF)) return parse_if();
+        if(match(CTokenType.WHILE)) return parse_while();
+        if(match(CTokenType.DO)) return parse_do_while();
+        if(match(CTokenType.FOR)) return parse_for();
+        if(match(CTokenType.LEFT_BRACE)) return parse_block();
+        if(match(CTokenType.BREAK)) return parse_break();
+        if(match(CTokenType.CONTINUE)) return parse_continue();
+        if(match(CTokenType.SWITCH)) return parse_switch();
+        if(match(CTokenType.GOTO)) return parse_goto();
 
         // Check for label: identifier followed by colon
-        if (check(CTokenType.IDENTIFIER) && peek_at(1).type == CTokenType.COLON) {
+        if(check(CTokenType.IDENTIFIER) && peek_at(1).type == CTokenType.COLON){
             return parse_label();
         }
 
         // Check for variable declaration (starts with type)
-        if (is_type_specifier(peek())) {
+        if(is_type_specifier(peek())){
             return parse_var_decl();
         }
 
@@ -2996,20 +2994,20 @@ struct CParser {
         return parse_expr_stmt();
     }
 
-    bool is_type_specifier(CToken tok) {
-        with (CTokenType) {
-            if (tok.type == VOID || tok.type == CHAR || tok.type == SHORT ||
+    bool is_type_specifier(CToken tok){
+        with (CTokenType){
+            if(tok.type == VOID || tok.type == CHAR || tok.type == SHORT ||
                 tok.type == INT || tok.type == LONG || tok.type == FLOAT ||
                 tok.type == DOUBLE || tok.type == UNSIGNED ||
                 tok.type == SIGNED || tok.type == CONST || tok.type == VOLATILE ||
                 tok.type == RESTRICT || tok.type == ATOMIC || tok.type == STRUCT ||
                 tok.type == UNION || tok.type == ENUM || tok.type == BOOL ||
                 tok.type == COMPLEX || tok.type == DECIMAL32 || tok.type == DECIMAL64 ||
-                tok.type == DECIMAL128) {
+                tok.type == DECIMAL128){
                 return true;
             }
             // Check for typedef names
-            if (tok.type == IDENTIFIER) {
+            if(tok.type == IDENTIFIER){
                 return (tok.lexeme in typedef_types) !is null;
             }
             return false;
@@ -3018,211 +3016,211 @@ struct CParser {
 
     // (6.8.7.1) return statement:
     //     return expression_opt ;
-    CStmt* parse_return() {
+    CStmt* parse_return(){
         CToken keyword = previous();
         CExpr* value = null;
 
-        if (!check(CTokenType.SEMICOLON)) {
+        if(!check(CTokenType.SEMICOLON)){
             value = parse_expression();
-            if (value is null) return null;
+            if(value is null) return null;
         }
 
         consume(CTokenType.SEMICOLON, "Expected ';' after return");
-        if (ERROR_OCCURRED) return null;
+        if(ERROR_OCCURRED) return null;
 
         return CReturnStmt.make(allocator, value, keyword);
     }
 
     // (6.8.5.1) if statement:
-    //     if ( expression ) statement
-    //     if ( expression ) statement else statement
-    CStmt* parse_if() {
+    //     if( expression ) statement
+    //     if( expression ) statement else statement
+    CStmt* parse_if(){
         CToken keyword = previous();
 
         consume(CTokenType.LEFT_PAREN, "Expected '(' after 'if'");
-        if (ERROR_OCCURRED) return null;
+        if(ERROR_OCCURRED) return null;
 
         CExpr* condition = parse_expression();
-        if (condition is null) return null;
+        if(condition is null) return null;
 
         consume(CTokenType.RIGHT_PAREN, "Expected ')' after if condition");
-        if (ERROR_OCCURRED) return null;
+        if(ERROR_OCCURRED) return null;
 
         CStmt* then_branch = parse_statement();
-        if (then_branch is null) return null;
+        if(then_branch is null) return null;
 
         CStmt* else_branch = null;
-        if (match(CTokenType.ELSE)) {
+        if(match(CTokenType.ELSE)){
             else_branch = parse_statement();
-            if (else_branch is null) return null;
+            if(else_branch is null) return null;
         }
 
         return CIfStmt.make(allocator, condition, then_branch, else_branch, keyword);
     }
 
     // (6.8.6.1) while statement:
-    //     while ( expression ) statement
-    CStmt* parse_while() {
+    //     while( expression ) statement
+    CStmt* parse_while(){
         CToken keyword = previous();
 
         consume(CTokenType.LEFT_PAREN, "Expected '(' after 'while'");
-        if (ERROR_OCCURRED) return null;
+        if(ERROR_OCCURRED) return null;
 
         CExpr* condition = parse_expression();
-        if (condition is null) return null;
+        if(condition is null) return null;
 
         consume(CTokenType.RIGHT_PAREN, "Expected ')' after while condition");
-        if (ERROR_OCCURRED) return null;
+        if(ERROR_OCCURRED) return null;
 
         CStmt* body = parse_statement();
-        if (body is null) return null;
+        if(body is null) return null;
 
         return CWhileStmt.make(allocator, condition, body, keyword);
     }
 
     // (6.8.6.1) do-while statement:
-    //     do statement while ( expression ) ;
-    CStmt* parse_do_while() {
+    //     do statement while( expression ) ;
+    CStmt* parse_do_while(){
         CToken keyword = previous();
 
         CStmt* body = parse_statement();
-        if (body is null) return null;
+        if(body is null) return null;
 
         consume(CTokenType.WHILE, "Expected 'while' after do body");
-        if (ERROR_OCCURRED) return null;
+        if(ERROR_OCCURRED) return null;
 
         consume(CTokenType.LEFT_PAREN, "Expected '(' after 'while'");
-        if (ERROR_OCCURRED) return null;
+        if(ERROR_OCCURRED) return null;
 
         CExpr* condition = parse_expression();
-        if (condition is null) return null;
+        if(condition is null) return null;
 
         consume(CTokenType.RIGHT_PAREN, "Expected ')' after do-while condition");
-        if (ERROR_OCCURRED) return null;
+        if(ERROR_OCCURRED) return null;
 
         consume(CTokenType.SEMICOLON, "Expected ';' after do-while");
-        if (ERROR_OCCURRED) return null;
+        if(ERROR_OCCURRED) return null;
 
         return CDoWhileStmt.make(allocator, body, condition, keyword);
     }
 
     // (6.8.6.1) for statement:
-    //     for ( expression_opt ; expression_opt ; expression_opt ) statement
-    //     for ( declaration expression_opt ; expression_opt ) statement
-    CStmt* parse_for() {
+    //     for( expression_opt ; expression_opt ; expression_opt ) statement
+    //     for( declaration expression_opt ; expression_opt ) statement
+    CStmt* parse_for(){
         CToken keyword = previous();
 
         consume(CTokenType.LEFT_PAREN, "Expected '(' after 'for'");
-        if (ERROR_OCCURRED) return null;
+        if(ERROR_OCCURRED) return null;
 
         // Initializer
         CStmt* init = null;
-        if (!check(CTokenType.SEMICOLON)) {
-            if (is_type_specifier(peek())) {
+        if(!check(CTokenType.SEMICOLON)){
+            if(is_type_specifier(peek())){
                 init = parse_var_decl();
             } else {
                 init = parse_expr_stmt();
             }
-            if (init is null) return null;
+            if(init is null) return null;
         } else {
             advance();  // consume ';'
         }
 
         // Condition
         CExpr* condition = null;
-        if (!check(CTokenType.SEMICOLON)) {
+        if(!check(CTokenType.SEMICOLON)){
             condition = parse_expression();
-            if (condition is null) return null;
+            if(condition is null) return null;
         }
         consume(CTokenType.SEMICOLON, "Expected ';' after for condition");
-        if (ERROR_OCCURRED) return null;
+        if(ERROR_OCCURRED) return null;
 
         // Increment
         CExpr* increment = null;
-        if (!check(CTokenType.RIGHT_PAREN)) {
+        if(!check(CTokenType.RIGHT_PAREN)){
             increment = parse_expression();
-            if (increment is null) return null;
+            if(increment is null) return null;
         }
 
         consume(CTokenType.RIGHT_PAREN, "Expected ')' after for clauses");
-        if (ERROR_OCCURRED) return null;
+        if(ERROR_OCCURRED) return null;
 
         CStmt* body = parse_statement();
-        if (body is null) return null;
+        if(body is null) return null;
 
         return CForStmt.make(allocator, init, condition, increment, body, keyword);
     }
 
     // (6.8.3) compound-statement:
     //     { block-item-list_opt }
-    CStmt* parse_block() {
+    CStmt* parse_block(){
         CToken brace = previous();
         auto statements = make_barray!(CStmt*)(allocator);
 
-        while (!check(CTokenType.RIGHT_BRACE) && !at_end) {
+        while(!check(CTokenType.RIGHT_BRACE) && !at_end){
             CStmt* stmt = parse_statement();
-            if (stmt is null) return null;
+            if(stmt is null) return null;
             statements ~= stmt;
         }
 
         consume(CTokenType.RIGHT_BRACE, "Expected '}' after block");
-        if (ERROR_OCCURRED) return null;
+        if(ERROR_OCCURRED) return null;
 
         return CBlock.make(allocator, statements[], brace);
     }
 
     // (6.8.7.1) break statement
-    CStmt* parse_break() {
+    CStmt* parse_break(){
         CToken keyword = previous();
         consume(CTokenType.SEMICOLON, "Expected ';' after 'break'");
-        if (ERROR_OCCURRED) return null;
+        if(ERROR_OCCURRED) return null;
         return CBreakStmt.make(allocator, keyword);
     }
 
     // (6.8.7.1) continue statement
-    CStmt* parse_continue() {
+    CStmt* parse_continue(){
         CToken keyword = previous();
         consume(CTokenType.SEMICOLON, "Expected ';' after 'continue'");
-        if (ERROR_OCCURRED) return null;
+        if(ERROR_OCCURRED) return null;
         return CContinueStmt.make(allocator, keyword);
     }
 
     // (6.8.5.1) switch statement:
-    //     switch ( expression ) { switch-body }
+    //     switch( expression ){ switch-body }
     // switch-body contains case/default labels followed by statements
-    CStmt* parse_switch() {
+    CStmt* parse_switch(){
         CToken keyword = previous();
 
         consume(CTokenType.LEFT_PAREN, "Expected '(' after 'switch'");
-        if (ERROR_OCCURRED) return null;
+        if(ERROR_OCCURRED) return null;
 
         CExpr* condition = parse_expression();
-        if (condition is null) return null;
+        if(condition is null) return null;
 
         consume(CTokenType.RIGHT_PAREN, "Expected ')' after switch condition");
-        if (ERROR_OCCURRED) return null;
+        if(ERROR_OCCURRED) return null;
 
         consume(CTokenType.LEFT_BRACE, "Expected '{' for switch body");
-        if (ERROR_OCCURRED) return null;
+        if(ERROR_OCCURRED) return null;
 
         auto cases = make_barray!CSwitchCase(allocator);
 
-        while (!check(CTokenType.RIGHT_BRACE) && !at_end) {
+        while(!check(CTokenType.RIGHT_BRACE) && !at_end){
             // Parse case/default labels
-            if (match(CTokenType.CASE)) {
+            if(match(CTokenType.CASE)){
                 // Parse case constant expression
                 CExpr* case_val = parse_expression();
-                if (case_val is null) return null;
+                if(case_val is null) return null;
 
                 consume(CTokenType.COLON, "Expected ':' after case value");
-                if (ERROR_OCCURRED) return null;
+                if(ERROR_OCCURRED) return null;
 
                 // Parse statements until next case/default/}
                 auto stmts = make_barray!(CStmt*)(allocator);
-                while (!check(CTokenType.CASE) && !check(CTokenType.DEFAULT) &&
-                       !check(CTokenType.RIGHT_BRACE) && !at_end) {
+                while(!check(CTokenType.CASE) && !check(CTokenType.DEFAULT) &&
+                       !check(CTokenType.RIGHT_BRACE) && !at_end){
                     CStmt* stmt = parse_statement();
-                    if (stmt is null) return null;
+                    if(stmt is null) return null;
                     stmts ~= stmt;
                 }
 
@@ -3231,16 +3229,16 @@ struct CParser {
                 c.statements = stmts[];
                 c.is_default = false;
                 cases ~= c;
-            } else if (match(CTokenType.DEFAULT)) {
+            } else if(match(CTokenType.DEFAULT)){
                 consume(CTokenType.COLON, "Expected ':' after 'default'");
-                if (ERROR_OCCURRED) return null;
+                if(ERROR_OCCURRED) return null;
 
                 // Parse statements until next case/default/}
                 auto stmts = make_barray!(CStmt*)(allocator);
-                while (!check(CTokenType.CASE) && !check(CTokenType.DEFAULT) &&
-                       !check(CTokenType.RIGHT_BRACE) && !at_end) {
+                while(!check(CTokenType.CASE) && !check(CTokenType.DEFAULT) &&
+                       !check(CTokenType.RIGHT_BRACE) && !at_end){
                     CStmt* stmt = parse_statement();
-                    if (stmt is null) return null;
+                    if(stmt is null) return null;
                     stmts ~= stmt;
                 }
 
@@ -3256,33 +3254,33 @@ struct CParser {
         }
 
         consume(CTokenType.RIGHT_BRACE, "Expected '}' after switch body");
-        if (ERROR_OCCURRED) return null;
+        if(ERROR_OCCURRED) return null;
 
         return CSwitchStmt.make(allocator, condition, cases[], keyword);
     }
 
     // (6.8.7.1) goto statement:
     //     goto identifier ;
-    CStmt* parse_goto() {
+    CStmt* parse_goto(){
         CToken keyword = previous();
 
         CToken label = consume(CTokenType.IDENTIFIER, "Expected label after 'goto'");
-        if (ERROR_OCCURRED) return null;
+        if(ERROR_OCCURRED) return null;
 
         consume(CTokenType.SEMICOLON, "Expected ';' after goto label");
-        if (ERROR_OCCURRED) return null;
+        if(ERROR_OCCURRED) return null;
 
         return CGotoStmt.make(allocator, label, keyword);
     }
 
     // (6.8.2) labeled-statement:
     //     identifier : statement
-    CStmt* parse_label() {
+    CStmt* parse_label(){
         CToken label = advance();  // consume identifier
         advance();  // consume ':'
 
         CStmt* stmt = parse_statement();
-        if (stmt is null) return null;
+        if(stmt is null) return null;
 
         return CLabelStmt.make(allocator, label, stmt, label);
     }
@@ -3292,10 +3290,10 @@ struct CParser {
     // (6.7.1) init-declarator-list:
     //     init-declarator
     //     init-declarator-list , init-declarator
-    CStmt* parse_var_decl() {
+    CStmt* parse_var_decl(){
         CToken type_tok = peek();
         CType* base_type = parse_base_type();
-        if (base_type is null) return null;
+        if(base_type is null) return null;
 
         auto decls = make_barray!(CStmt*)(allocator);
 
@@ -3304,39 +3302,39 @@ struct CParser {
             CType* var_type = parse_pointer_modifiers(base_type);
 
             CToken name = consume(CTokenType.IDENTIFIER, "Expected variable name");
-            if (ERROR_OCCURRED) return null;
+            if(ERROR_OCCURRED) return null;
 
             // Check for array declaration: int arr[10] or int arr[SIZE]
-            if (match(CTokenType.LEFT_BRACKET)) {
+            if(match(CTokenType.LEFT_BRACKET)){
                 auto size_result = parse_enum_const_expr();
-                if (size_result.err) return null;
-                if (size_result.value <= 0) {
+                if(size_result.err) return null;
+                if(size_result.value <= 0){
                     error("Array size must be positive");
                     return null;
                 }
 
                 consume(CTokenType.RIGHT_BRACKET, "Expected ']' after array size");
-                if (ERROR_OCCURRED) return null;
+                if(ERROR_OCCURRED) return null;
 
                 // Create array type
                 var_type = make_array_type(allocator, var_type, cast(size_t) size_result.value);
             }
 
             CExpr* initializer = null;
-            if (match(CTokenType.EQUAL)) {
+            if(match(CTokenType.EQUAL)){
                 initializer = parse_initializer();
-                if (initializer is null) return null;
+                if(initializer is null) return null;
             }
 
             decls ~= CVarDecl.make(allocator, var_type, name, initializer, type_tok);
 
-        } while (match(CTokenType.COMMA));
+        } while(match(CTokenType.COMMA));
 
         consume(CTokenType.SEMICOLON, "Expected ';' after variable declaration");
-        if (ERROR_OCCURRED) return null;
+        if(ERROR_OCCURRED) return null;
 
         // If only one declaration, return it directly
-        if (decls[].length == 1) {
+        if(decls[].length == 1){
             return decls[0];
         }
 
@@ -3348,8 +3346,8 @@ struct CParser {
     //     assignment-expression
     //     { initializer-list }
     //     { initializer-list , }
-    CExpr* parse_initializer() {
-        if (check(CTokenType.LEFT_BRACE)) {
+    CExpr* parse_initializer(){
+        if(check(CTokenType.LEFT_BRACE)){
             return parse_init_list();
         }
         return parse_assignment();
@@ -3361,11 +3359,11 @@ struct CParser {
     //     [ constant-expression ]
     //     . identifier
     // Returns empty slice if no designation present
-    CDesignator[] parse_designation() {
+    CDesignator[] parse_designation(){
         auto designators = make_barray!CDesignator(allocator);
 
-        while (true) {
-            if (check(CTokenType.DOT) && peek_at(1).type == CTokenType.IDENTIFIER) {
+        while(true){
+            if(check(CTokenType.DOT) && peek_at(1).type == CTokenType.IDENTIFIER){
                 // Field designator: .identifier
                 advance();  // consume '.'
                 CToken name = advance();  // consume identifier
@@ -3374,13 +3372,13 @@ struct CParser {
                 d.field_name = name.lexeme;
                 d.token = name;
                 designators ~= d;
-            } else if (check(CTokenType.LEFT_BRACKET)) {
+            } else if(check(CTokenType.LEFT_BRACKET)){
                 // Array designator: [constant-expression]
                 CToken bracket = advance();  // consume '['
                 auto result = parse_enum_const_expr();
-                if (result.err) return null;
+                if(result.err) return null;
                 consume(CTokenType.RIGHT_BRACKET, "Expected ']' after designator index");
-                if (ERROR_OCCURRED) return null;
+                if(ERROR_OCCURRED) return null;
 
                 CDesignator d;
                 d.kind = CDesignatorKind.INDEX;
@@ -3393,9 +3391,9 @@ struct CParser {
         }
 
         // If we parsed designators, expect '='
-        if (designators[].length > 0) {
+        if(designators[].length > 0){
             consume(CTokenType.EQUAL, "Expected '=' after designator");
-            if (ERROR_OCCURRED) return null;
+            if(ERROR_OCCURRED) return null;
         }
 
         return designators[];
@@ -3408,42 +3406,42 @@ struct CParser {
     // (6.7.11) initializer-list:
     //     designation_opt initializer
     //     initializer-list , designation_opt initializer
-    CExpr* parse_init_list() {
+    CExpr* parse_init_list(){
         CToken brace = advance();  // consume '{'
         auto elements = make_barray!CInitElement(allocator);
 
         // Handle empty initializer {}
-        if (!check(CTokenType.RIGHT_BRACE)) {
+        if(!check(CTokenType.RIGHT_BRACE)){
             do {
                 CInitElement elem;
 
                 // Parse optional designation
                 elem.designators = parse_designation();
-                if (ERROR_OCCURRED) return null;
+                if(ERROR_OCCURRED) return null;
 
                 // Parse initializer (recursive for nested braces)
                 elem.value = parse_initializer();
-                if (elem.value is null) return null;
+                if(elem.value is null) return null;
 
                 elements ~= elem;
-            } while (match(CTokenType.COMMA) && !check(CTokenType.RIGHT_BRACE));
+            } while(match(CTokenType.COMMA) && !check(CTokenType.RIGHT_BRACE));
         }
 
         consume(CTokenType.RIGHT_BRACE, "Expected '}' after initializer list");
-        if (ERROR_OCCURRED) return null;
+        if(ERROR_OCCURRED) return null;
 
         return CInitList.make(allocator, elements[], brace);
     }
 
     // (6.8.4) expression-statement:
     //     expression_opt ;
-    CStmt* parse_expr_stmt() {
+    CStmt* parse_expr_stmt(){
         CToken tok = peek();
         CExpr* expr = parse_expression();
-        if (expr is null) return null;
+        if(expr is null) return null;
 
         consume(CTokenType.SEMICOLON, "Expected ';' after expression");
-        if (ERROR_OCCURRED) return null;
+        if(ERROR_OCCURRED) return null;
 
         return CExprStmt.make(allocator, expr, tok);
     }
@@ -3455,14 +3453,14 @@ struct CParser {
     // (6.5.18) expression:
     //     assignment-expression
     //     expression , assignment-expression
-    CExpr* parse_expression() {
+    CExpr* parse_expression(){
         CExpr* expr = parse_assignment();
-        if (expr is null) return null;
+        if(expr is null) return null;
 
-        while (check(CTokenType.COMMA)) {
+        while(check(CTokenType.COMMA)){
             CToken op = advance();
             CExpr* right = parse_assignment();
-            if (right is null) return null;
+            if(right is null) return null;
             expr = CBinary.make(allocator, expr, op.type, right, op);
         }
 
@@ -3473,19 +3471,19 @@ struct CParser {
     //     conditional-expression
     //     unary-expression assignment-operator assignment-expression
     // assignment-operator: = *= /= %= += -= <<= >>= &= ^= |=
-    CExpr* parse_assignment() {
+    CExpr* parse_assignment(){
         CExpr* expr = parse_ternary();
-        if (expr is null) return null;
+        if(expr is null) return null;
 
-        if (check(CTokenType.EQUAL) || check(CTokenType.PLUS_EQUAL) ||
+        if(check(CTokenType.EQUAL) || check(CTokenType.PLUS_EQUAL) ||
             check(CTokenType.MINUS_EQUAL) || check(CTokenType.STAR_EQUAL) ||
             check(CTokenType.SLASH_EQUAL) || check(CTokenType.PERCENT_EQUAL) ||
             check(CTokenType.AMP_EQUAL) || check(CTokenType.PIPE_EQUAL) ||
             check(CTokenType.CARET_EQUAL) || check(CTokenType.LESS_LESS_EQUAL) ||
-            check(CTokenType.GREATER_GREATER_EQUAL)) {
+            check(CTokenType.GREATER_GREATER_EQUAL)){
             CToken op_tok = advance();
             CExpr* value = parse_assignment();  // Right associative
-            if (value is null) return null;
+            if(value is null) return null;
             return CAssign.make(allocator, expr, op_tok.type, value, op_tok);
         }
 
@@ -3495,11 +3493,11 @@ struct CParser {
     // (6.5.16) conditional-expression:
     //     logical-OR-expression
     //     logical-OR-expression ? expression : conditional-expression
-    CExpr* parse_ternary() {
+    CExpr* parse_ternary(){
         CExpr* condition = parse_logical_or();
-        if (condition is null) return null;
+        if(condition is null) return null;
 
-        if (!check(CTokenType.QUESTION)) {
+        if(!check(CTokenType.QUESTION)){
             return condition;
         }
 
@@ -3507,9 +3505,9 @@ struct CParser {
 
         // After '?', parse full expression (allows comma operator)
         CExpr* if_true = parse_expression();
-        if (if_true is null) return null;
+        if(if_true is null) return null;
 
-        if (!check(CTokenType.COLON)) {
+        if(!check(CTokenType.COLON)){
             error("Expected ':' in ternary expression");
             return null;
         }
@@ -3517,7 +3515,7 @@ struct CParser {
 
         // After ':', parse conditional-expression (right-associative)
         CExpr* if_false = parse_ternary();
-        if (if_false is null) return null;
+        if(if_false is null) return null;
 
         return CTernary.make(allocator, condition, if_true, if_false, question_tok);
     }
@@ -3525,14 +3523,14 @@ struct CParser {
     // (6.5.15) logical-OR-expression:
     //     logical-AND-expression
     //     logical-OR-expression || logical-AND-expression
-    CExpr* parse_logical_or() {
+    CExpr* parse_logical_or(){
         CExpr* expr = parse_logical_and();
-        if (expr is null) return null;
+        if(expr is null) return null;
 
-        while (check(CTokenType.PIPE_PIPE)) {
+        while(check(CTokenType.PIPE_PIPE)){
             CToken op = advance();
             CExpr* right = parse_logical_and();
-            if (right is null) return null;
+            if(right is null) return null;
             expr = CBinary.make(allocator, expr, op.type, right, op);
         }
 
@@ -3542,14 +3540,14 @@ struct CParser {
     // (6.5.14) logical-AND-expression:
     //     inclusive-OR-expression
     //     logical-AND-expression && inclusive-OR-expression
-    CExpr* parse_logical_and() {
+    CExpr* parse_logical_and(){
         CExpr* expr = parse_bitwise_or();
-        if (expr is null) return null;
+        if(expr is null) return null;
 
-        while (check(CTokenType.AMP_AMP)) {
+        while(check(CTokenType.AMP_AMP)){
             CToken op = advance();
             CExpr* right = parse_bitwise_or();
-            if (right is null) return null;
+            if(right is null) return null;
             expr = CBinary.make(allocator, expr, op.type, right, op);
         }
 
@@ -3559,14 +3557,14 @@ struct CParser {
     // (6.5.13) inclusive-OR-expression:
     //     exclusive-OR-expression
     //     inclusive-OR-expression | exclusive-OR-expression
-    CExpr* parse_bitwise_or() {
+    CExpr* parse_bitwise_or(){
         CExpr* expr = parse_bitwise_xor();
-        if (expr is null) return null;
+        if(expr is null) return null;
 
-        while (check(CTokenType.PIPE) && !check_next(CTokenType.PIPE)) {
+        while(check(CTokenType.PIPE) && !check_next(CTokenType.PIPE)){
             CToken op = advance();
             CExpr* right = parse_bitwise_xor();
-            if (right is null) return null;
+            if(right is null) return null;
             expr = CBinary.make(allocator, expr, op.type, right, op);
         }
 
@@ -3576,14 +3574,14 @@ struct CParser {
     // (6.5.12) exclusive-OR-expression:
     //     AND-expression
     //     exclusive-OR-expression ^ AND-expression
-    CExpr* parse_bitwise_xor() {
+    CExpr* parse_bitwise_xor(){
         CExpr* expr = parse_bitwise_and();
-        if (expr is null) return null;
+        if(expr is null) return null;
 
-        while (check(CTokenType.CARET)) {
+        while(check(CTokenType.CARET)){
             CToken op = advance();
             CExpr* right = parse_bitwise_and();
-            if (right is null) return null;
+            if(right is null) return null;
             expr = CBinary.make(allocator, expr, op.type, right, op);
         }
 
@@ -3593,14 +3591,14 @@ struct CParser {
     // (6.5.11) AND-expression:
     //     equality-expression
     //     AND-expression & equality-expression
-    CExpr* parse_bitwise_and() {
+    CExpr* parse_bitwise_and(){
         CExpr* expr = parse_equality();
-        if (expr is null) return null;
+        if(expr is null) return null;
 
-        while (check(CTokenType.AMP) && !check_next(CTokenType.AMP)) {
+        while(check(CTokenType.AMP) && !check_next(CTokenType.AMP)){
             CToken op = advance();
             CExpr* right = parse_equality();
-            if (right is null) return null;
+            if(right is null) return null;
             expr = CBinary.make(allocator, expr, op.type, right, op);
         }
 
@@ -3611,14 +3609,14 @@ struct CParser {
     //     relational-expression
     //     equality-expression == relational-expression
     //     equality-expression != relational-expression
-    CExpr* parse_equality() {
+    CExpr* parse_equality(){
         CExpr* expr = parse_comparison();
-        if (expr is null) return null;
+        if(expr is null) return null;
 
-        while (check(CTokenType.EQUAL_EQUAL) || check(CTokenType.BANG_EQUAL)) {
+        while(check(CTokenType.EQUAL_EQUAL) || check(CTokenType.BANG_EQUAL)){
             CToken op = advance();
             CExpr* right = parse_comparison();
-            if (right is null) return null;
+            if(right is null) return null;
             expr = CBinary.make(allocator, expr, op.type, right, op);
         }
 
@@ -3631,15 +3629,15 @@ struct CParser {
     //     relational-expression > shift-expression
     //     relational-expression <= shift-expression
     //     relational-expression >= shift-expression
-    CExpr* parse_comparison() {
+    CExpr* parse_comparison(){
         CExpr* expr = parse_shift();
-        if (expr is null) return null;
+        if(expr is null) return null;
 
-        while (check(CTokenType.LESS) || check(CTokenType.LESS_EQUAL) ||
-               check(CTokenType.GREATER) || check(CTokenType.GREATER_EQUAL)) {
+        while(check(CTokenType.LESS) || check(CTokenType.LESS_EQUAL) ||
+               check(CTokenType.GREATER) || check(CTokenType.GREATER_EQUAL)){
             CToken op = advance();
             CExpr* right = parse_shift();
-            if (right is null) return null;
+            if(right is null) return null;
             expr = CBinary.make(allocator, expr, op.type, right, op);
         }
 
@@ -3650,14 +3648,14 @@ struct CParser {
     //     additive-expression
     //     shift-expression << additive-expression
     //     shift-expression >> additive-expression
-    CExpr* parse_shift() {
+    CExpr* parse_shift(){
         CExpr* expr = parse_additive();
-        if (expr is null) return null;
+        if(expr is null) return null;
 
-        while (check(CTokenType.LESS_LESS) || check(CTokenType.GREATER_GREATER)) {
+        while(check(CTokenType.LESS_LESS) || check(CTokenType.GREATER_GREATER)){
             CToken op = advance();
             CExpr* right = parse_additive();
-            if (right is null) return null;
+            if(right is null) return null;
             expr = CBinary.make(allocator, expr, op.type, right, op);
         }
 
@@ -3668,14 +3666,14 @@ struct CParser {
     //     multiplicative-expression
     //     additive-expression + multiplicative-expression
     //     additive-expression - multiplicative-expression
-    CExpr* parse_additive() {
+    CExpr* parse_additive(){
         CExpr* expr = parse_multiplicative();
-        if (expr is null) return null;
+        if(expr is null) return null;
 
-        while (check(CTokenType.PLUS) || check(CTokenType.MINUS)) {
+        while(check(CTokenType.PLUS) || check(CTokenType.MINUS)){
             CToken op = advance();
             CExpr* right = parse_multiplicative();
-            if (right is null) return null;
+            if(right is null) return null;
             expr = CBinary.make(allocator, expr, op.type, right, op);
         }
 
@@ -3687,14 +3685,14 @@ struct CParser {
     //     multiplicative-expression * cast-expression
     //     multiplicative-expression / cast-expression
     //     multiplicative-expression % cast-expression
-    CExpr* parse_multiplicative() {
+    CExpr* parse_multiplicative(){
         CExpr* expr = parse_unary();
-        if (expr is null) return null;
+        if(expr is null) return null;
 
-        while (check(CTokenType.STAR) || check(CTokenType.SLASH) || check(CTokenType.PERCENT)) {
+        while(check(CTokenType.STAR) || check(CTokenType.SLASH) || check(CTokenType.PERCENT)){
             CToken op = advance();
             CExpr* right = parse_unary();
-            if (right is null) return null;
+            if(right is null) return null;
             expr = CBinary.make(allocator, expr, op.type, right, op);
         }
 
@@ -3714,26 +3712,26 @@ struct CParser {
     //
     // (6.5.4.1) unary-operator: one of
     //     & * + - ~ !
-    CExpr* parse_unary() {
+    CExpr* parse_unary(){
         // Prefix operators
-        if (check(CTokenType.BANG) || check(CTokenType.MINUS) ||
+        if(check(CTokenType.BANG) || check(CTokenType.MINUS) ||
             check(CTokenType.TILDE) || check(CTokenType.STAR) ||
             check(CTokenType.AMP) || check(CTokenType.PLUS_PLUS) ||
-            check(CTokenType.MINUS_MINUS)) {
+            check(CTokenType.MINUS_MINUS) || check(CTokenType.PLUS)){
             CToken op = advance();
             CExpr* operand = parse_unary();
-            if (operand is null) return null;
+            if(operand is null) return null;
             return CUnary.make(allocator, op.type, operand, true, op);
         }
 
         // sizeof operator: sizeof(type) or sizeof expr
-        if (match(CTokenType.SIZEOF)) {
+        if(match(CTokenType.SIZEOF)){
             CToken op = previous();
 
             // Check for sizeof(type) - requires parens
-            if (check(CTokenType.LEFT_PAREN)) {
+            if(check(CTokenType.LEFT_PAREN)){
                 // Peek ahead to see if it's a type
-                if (peek_at(1).type == CTokenType.VOID ||
+                if(peek_at(1).type == CTokenType.VOID ||
                     peek_at(1).type == CTokenType.CHAR ||
                     peek_at(1).type == CTokenType.SHORT ||
                     peek_at(1).type == CTokenType.INT ||
@@ -3746,13 +3744,13 @@ struct CParser {
                     peek_at(1).type == CTokenType.UNION ||
                     peek_at(1).type == CTokenType.ENUM ||
                     (peek_at(1).type == CTokenType.IDENTIFIER &&
-                     (peek_at(1).lexeme in typedef_types) !is null)) {
+                     (peek_at(1).lexeme in typedef_types) !is null)){
                     // sizeof(type) - use parse_type_name for array types like sizeof(int[10])
                     advance();  // consume '('
                     CType* type = parse_type_name();
-                    if (type is null) return null;
+                    if(type is null) return null;
                     consume(CTokenType.RIGHT_PAREN, "Expected ')' after type");
-                    if (ERROR_OCCURRED) return null;
+                    if(ERROR_OCCURRED) return null;
                     size_t size = type.size_of();
                     return CSizeof.make(allocator, type, size, op);
                 }
@@ -3760,20 +3758,20 @@ struct CParser {
 
             // sizeof expr (unary operator on expression)
             CExpr* expr = parse_unary();
-            if (expr is null) return null;
+            if(expr is null) return null;
             return CSizeof.make_expr(allocator, expr, op);
         }
 
         // _Alignof operator: _Alignof(type) or _Alignof(expr) (GNU extension)
-        if (match(CTokenType.ALIGNOF)) {
+        if(match(CTokenType.ALIGNOF)){
             CToken op = previous();
 
             // _Alignof always requires parens
             consume(CTokenType.LEFT_PAREN, "Expected '(' after _Alignof");
-            if (ERROR_OCCURRED) return null;
+            if(ERROR_OCCURRED) return null;
 
             // Check if it's _Alignof(type) or _Alignof(expr)
-            if (peek().type == CTokenType.VOID ||
+            if(peek().type == CTokenType.VOID ||
                 peek().type == CTokenType.CHAR ||
                 peek().type == CTokenType.SHORT ||
                 peek().type == CTokenType.INT ||
@@ -3786,32 +3784,32 @@ struct CParser {
                 peek().type == CTokenType.UNION ||
                 peek().type == CTokenType.ENUM ||
                 (peek().type == CTokenType.IDENTIFIER &&
-                 (peek().lexeme in typedef_types) !is null)) {
+                 (peek().lexeme in typedef_types) !is null)){
                 // _Alignof(type) - use parse_type_name for array types
                 CType* type = parse_type_name();
-                if (type is null) return null;
+                if(type is null) return null;
                 consume(CTokenType.RIGHT_PAREN, "Expected ')' after type");
-                if (ERROR_OCCURRED) return null;
+                if(ERROR_OCCURRED) return null;
                 size_t alignment = type.align_of();
                 return CAlignof.make(allocator, type, alignment, op);
             } else {
                 // _Alignof(expr) - GNU extension
                 CExpr* expr = parse_expression();
-                if (expr is null) return null;
+                if(expr is null) return null;
                 consume(CTokenType.RIGHT_PAREN, "Expected ')' after expression");
-                if (ERROR_OCCURRED) return null;
+                if(ERROR_OCCURRED) return null;
                 return CAlignof.make_expr(allocator, expr, op);
             }
         }
 
         // _Countof operator: _Countof(type) or _Countof expr
-        if (match(CTokenType.COUNTOF)) {
+        if(match(CTokenType.COUNTOF)){
             CToken op = previous();
 
             // Check for _Countof(type) - requires parens
-            if (check(CTokenType.LEFT_PAREN)) {
+            if(check(CTokenType.LEFT_PAREN)){
                 // Peek ahead to see if it's a type
-                if (peek_at(1).type == CTokenType.VOID ||
+                if(peek_at(1).type == CTokenType.VOID ||
                     peek_at(1).type == CTokenType.CHAR ||
                     peek_at(1).type == CTokenType.SHORT ||
                     peek_at(1).type == CTokenType.INT ||
@@ -3824,15 +3822,15 @@ struct CParser {
                     peek_at(1).type == CTokenType.UNION ||
                     peek_at(1).type == CTokenType.ENUM ||
                     (peek_at(1).type == CTokenType.IDENTIFIER &&
-                     (peek_at(1).lexeme in typedef_types) !is null)) {
+                     (peek_at(1).lexeme in typedef_types) !is null)){
                     // _Countof(type) - type must be an array type
                     advance();  // consume '('
                     CType* type = parse_type_name();
-                    if (type is null) return null;
+                    if(type is null) return null;
                     consume(CTokenType.RIGHT_PAREN, "Expected ')' after type");
-                    if (ERROR_OCCURRED) return null;
+                    if(ERROR_OCCURRED) return null;
 
-                    if (!type.is_array()) {
+                    if(!type.is_array()){
                         error("_Countof requires an array type");
                         return null;
                     }
@@ -3842,7 +3840,7 @@ struct CParser {
 
             // _Countof expr (unary operator on expression)
             CExpr* expr = parse_unary();
-            if (expr is null) return null;
+            if(expr is null) return null;
             // Count will be computed during codegen based on expression's type
             return CCountof.make_expr(allocator, expr, 0, op);
         }
@@ -3862,36 +3860,36 @@ struct CParser {
     //
     // (6.5.3.6) compound-literal:  (NOT IMPLEMENTED)
     //     ( storage-class-specifiers_opt type-name ) braced-initializer
-    CExpr* parse_postfix() {
+    CExpr* parse_postfix(){
         CExpr* expr = parse_primary();
-        if (expr is null) return null;
+        if(expr is null) return null;
 
-        while (true) {
-            if (match(CTokenType.LEFT_PAREN)) {
+        while(true){
+            if(match(CTokenType.LEFT_PAREN)){
                 // Function call
                 expr = finish_call(expr);
-                if (expr is null) return null;
-            } else if (match(CTokenType.LEFT_BRACKET)) {
+                if(expr is null) return null;
+            } else if(match(CTokenType.LEFT_BRACKET)){
                 // Array subscript
                 CToken bracket = previous();
                 CExpr* index = parse_expression();
-                if (index is null) return null;
+                if(index is null) return null;
                 consume(CTokenType.RIGHT_BRACKET, "Expected ']' after subscript");
-                if (ERROR_OCCURRED) return null;
+                if(ERROR_OCCURRED) return null;
                 expr = CSubscript.make(allocator, expr, index, bracket);
-            } else if (match(CTokenType.DOT)) {
+            } else if(match(CTokenType.DOT)){
                 // Member access: expr.member
                 CToken dot = previous();
                 CToken member = consume(CTokenType.IDENTIFIER, "Expected member name after '.'");
-                if (ERROR_OCCURRED) return null;
+                if(ERROR_OCCURRED) return null;
                 expr = CMemberAccess.make(allocator, expr, member, false, dot);
-            } else if (match(CTokenType.ARROW)) {
+            } else if(match(CTokenType.ARROW)){
                 // Pointer member access: expr->member
                 CToken arrow = previous();
                 CToken member = consume(CTokenType.IDENTIFIER, "Expected member name after '->'");
-                if (ERROR_OCCURRED) return null;
+                if(ERROR_OCCURRED) return null;
                 expr = CMemberAccess.make(allocator, expr, member, true, arrow);
-            } else if (match(CTokenType.PLUS_PLUS) || match(CTokenType.MINUS_MINUS)) {
+            } else if(match(CTokenType.PLUS_PLUS) || match(CTokenType.MINUS_MINUS)){
                 // Postfix increment/decrement
                 CToken op = previous();
                 expr = CUnary.make(allocator, op.type, expr, false, op);
@@ -3906,21 +3904,21 @@ struct CParser {
     // (6.5.3.1) argument-expression-list:
     //     assignment-expression
     //     argument-expression-list , assignment-expression
-    CExpr* finish_call(CExpr* callee) {
+    CExpr* finish_call(CExpr* callee){
         CToken paren = previous();
         auto args = make_barray!(CExpr*)(allocator);
 
-        if (!check(CTokenType.RIGHT_PAREN)) {
+        if(!check(CTokenType.RIGHT_PAREN)){
             do {
                 // Use parse_assignment, not parse_expression, to avoid comma operator
                 CExpr* arg = parse_assignment();
-                if (arg is null) return null;
+                if(arg is null) return null;
                 args ~= arg;
-            } while (match(CTokenType.COMMA));
+            } while(match(CTokenType.COMMA));
         }
 
         consume(CTokenType.RIGHT_PAREN, "Expected ')' after arguments");
-        if (ERROR_OCCURRED) return null;
+        if(ERROR_OCCURRED) return null;
 
         return CCall.make(allocator, callee, args[], paren);
     }
@@ -3931,90 +3929,90 @@ struct CParser {
     //     string-literal
     //     ( expression )
     //     generic-selection  (NOT IMPLEMENTED)
-    CExpr* parse_primary() {
+    CExpr* parse_primary(){
         CToken tok = peek();
 
-        if (match(CTokenType.NUMBER) || match(CTokenType.HEX)) {
+        if(match(CTokenType.NUMBER) || match(CTokenType.HEX)){
             return CLiteral.make(allocator, previous(), &TYPE_INT);
         }
 
-        if (match(CTokenType.STRING)) {
+        if(match(CTokenType.STRING)){
             // String literal is a char*
             return CLiteral.make(allocator, previous(), make_pointer_type(allocator, &TYPE_CHAR));
         }
 
-        if (match(CTokenType.CHAR_LITERAL)) {
+        if(match(CTokenType.CHAR_LITERAL)){
             return CLiteral.make(allocator, previous(), &TYPE_CHAR);
         }
 
         // C23 true/false keywords
-        if (match(CTokenType.TRUE_KW)) {
+        if(match(CTokenType.TRUE_KW)){
             return CLiteral.make_int(allocator, 1, previous());
         }
-        if (match(CTokenType.FALSE_KW)) {
+        if(match(CTokenType.FALSE_KW)){
             return CLiteral.make_int(allocator, 0, previous());
         }
 
         // C11 _Generic selection
-        if (match(CTokenType.GENERIC)) {
+        if(match(CTokenType.GENERIC)){
             CToken gen_tok = previous();
             consume(CTokenType.LEFT_PAREN, "Expected '(' after _Generic");
-            if (ERROR_OCCURRED) return null;
+            if(ERROR_OCCURRED) return null;
 
             CExpr* ctrl = parse_assignment();
-            if (ctrl is null) return null;
+            if(ctrl is null) return null;
             consume(CTokenType.COMMA, "Expected ',' after controlling expression");
-            if (ERROR_OCCURRED) return null;
+            if(ERROR_OCCURRED) return null;
 
             auto assocs = make_barray!CGenericAssoc(allocator);
 
-            while (!check(CTokenType.RIGHT_PAREN) && !at_end) {
+            while(!check(CTokenType.RIGHT_PAREN) && !at_end){
                 CGenericAssoc assoc;
-                if (match(CTokenType.DEFAULT)) {
+                if(match(CTokenType.DEFAULT)){
                     assoc.type = null;  // default case
                 } else {
                     assoc.type = parse_type();
-                    if (assoc.type is null) return null;
+                    if(assoc.type is null) return null;
                 }
                 consume(CTokenType.COLON, "Expected ':' in generic association");
-                if (ERROR_OCCURRED) return null;
+                if(ERROR_OCCURRED) return null;
                 assoc.result = parse_assignment();
-                if (assoc.result is null) return null;
+                if(assoc.result is null) return null;
                 assocs ~= assoc;
 
-                if (!match(CTokenType.COMMA)) break;
+                if(!match(CTokenType.COMMA)) break;
             }
             consume(CTokenType.RIGHT_PAREN, "Expected ')' after _Generic");
-            if (ERROR_OCCURRED) return null;
+            if(ERROR_OCCURRED) return null;
             return CGeneric.make(allocator, ctrl, assocs[], gen_tok);
         }
 
-        if (check(CTokenType.IDENTIFIER)) {
+        if(check(CTokenType.IDENTIFIER)){
             // Check for __builtin_va_arg(ap, type)
-            if (peek().lexeme == "__builtin_va_arg") {
+            if(peek().lexeme == "__builtin_va_arg"){
                 CToken va_tok = advance();
                 consume(CTokenType.LEFT_PAREN, "Expected '(' after __builtin_va_arg");
-                if (ERROR_OCCURRED) return null;
+                if(ERROR_OCCURRED) return null;
                 CExpr* va_list_expr = parse_assignment();
-                if (va_list_expr is null) return null;
+                if(va_list_expr is null) return null;
                 consume(CTokenType.COMMA, "Expected ',' after va_list in __builtin_va_arg");
-                if (ERROR_OCCURRED) return null;
+                if(ERROR_OCCURRED) return null;
                 CType* arg_type = parse_type();
-                if (arg_type is null) return null;
+                if(arg_type is null) return null;
                 consume(CTokenType.RIGHT_PAREN, "Expected ')' after type in __builtin_va_arg");
-                if (ERROR_OCCURRED) return null;
+                if(ERROR_OCCURRED) return null;
                 return CVaArg.make(allocator, va_list_expr, arg_type, va_tok);
             }
             // __builtin_va_start and __builtin_va_end - just parse and ignore
-            if (peek().lexeme == "__builtin_va_start" || peek().lexeme == "__builtin_va_end") {
+            if(peek().lexeme == "__builtin_va_start" || peek().lexeme == "__builtin_va_end"){
                 CToken va_tok = advance();
                 consume(CTokenType.LEFT_PAREN, "Expected '('");
-                if (ERROR_OCCURRED) return null;
+                if(ERROR_OCCURRED) return null;
                 // Skip arguments
                 int depth = 1;
-                while (depth > 0 && !at_end) {
-                    if (match(CTokenType.LEFT_PAREN)) depth++;
-                    else if (match(CTokenType.RIGHT_PAREN)) depth--;
+                while(depth > 0 && !at_end){
+                    if(match(CTokenType.LEFT_PAREN)) depth++;
+                    else if(match(CTokenType.RIGHT_PAREN)) depth--;
                     else advance();
                 }
                 // Return a dummy literal 0
@@ -4023,32 +4021,32 @@ struct CParser {
             return CIdentifier.make(allocator, advance());
         }
 
-        if (match(CTokenType.LEFT_PAREN)) {
+        if(match(CTokenType.LEFT_PAREN)){
             // Check if this is a cast expression: (type)value or compound literal: (type){...}
-            if (is_type_specifier(peek())) {
+            if(is_type_specifier(peek())){
                 // It's a cast or compound literal - use parse_type_name for full abstract declarators
                 CType* cast_type = parse_type_name();
-                if (cast_type is null) return null;
+                if(cast_type is null) return null;
                 consume(CTokenType.RIGHT_PAREN, "Expected ')' after cast type");
-                if (ERROR_OCCURRED) return null;
+                if(ERROR_OCCURRED) return null;
 
                 // Check for compound literal: (type){...}
-                if (check(CTokenType.LEFT_BRACE)) {
+                if(check(CTokenType.LEFT_BRACE)){
                     CExpr* init_expr = parse_initializer();
-                    if (init_expr is null) return null;
+                    if(init_expr is null) return null;
                     return CCompoundLiteral.make(allocator, cast_type, init_expr, tok);
                 }
 
                 // Parse the value being cast
                 CExpr* operand = parse_unary();
-                if (operand is null) return null;
+                if(operand is null) return null;
                 return CCast.make(allocator, cast_type, operand, tok);
             }
             // Regular parenthesized expression
             CExpr* expr = parse_expression();
-            if (expr is null) return null;
+            if(expr is null) return null;
             consume(CTokenType.RIGHT_PAREN, "Expected ')' after expression");
-            if (ERROR_OCCURRED) return null;
+            if(ERROR_OCCURRED) return null;
             return CGrouping.make(allocator, expr, tok);
         }
 
@@ -4060,73 +4058,73 @@ struct CParser {
     // Utility Methods
     // =========================================================================
 
-    CToken consume(CTokenType type, str message) {
-        if (check(type)) return advance();
+    CToken consume(CTokenType type, str message){
+        if(check(type)) return advance();
         error(peek(), message);
         return peek();
     }
 
-    bool match(CTokenType type) {
-        if (check(type)) {
+    bool match(CTokenType type){
+        if(check(type)){
             advance();
             return true;
         }
         return false;
     }
 
-    bool check(CTokenType type) {
-        if (at_end) return false;
+    bool check(CTokenType type){
+        if(at_end) return false;
         return peek().type == type;
     }
 
-    bool check_next(CTokenType type) {
-        if (current + 1 >= tokens.length) return false;
+    bool check_next(CTokenType type){
+        if(current + 1 >= tokens.length) return false;
         return tokens[current + 1].type == type;
     }
 
-    CToken advance() {
-        if (!at_end) current++;
+    CToken advance(){
+        if(!at_end) current++;
         return previous();
     }
 
-    bool at_end() {
+    bool at_end(){
         return peek().type == CTokenType.EOF;
     }
 
     // Skip balanced parentheses including nested ones
-    void skip_balanced_parens() {
-        if (!check(CTokenType.LEFT_PAREN)) return;
+    void skip_balanced_parens(){
+        if(!check(CTokenType.LEFT_PAREN)) return;
         advance();  // consume '('
         int depth = 1;
-        while (depth > 0 && !at_end) {
-            if (check(CTokenType.LEFT_PAREN)) depth++;
-            else if (check(CTokenType.RIGHT_PAREN)) depth--;
+        while(depth > 0 && !at_end){
+            if(check(CTokenType.LEFT_PAREN)) depth++;
+            else if(check(CTokenType.RIGHT_PAREN)) depth--;
             advance();
         }
     }
 
-    void skip_balanced_braces() {
-        if (!check(CTokenType.LEFT_BRACE)) return;
+    void skip_balanced_braces(){
+        if(!check(CTokenType.LEFT_BRACE)) return;
         advance();  // consume '{'
         int depth = 1;
-        while (depth > 0 && !at_end) {
-            if (check(CTokenType.LEFT_BRACE)) depth++;
-            else if (check(CTokenType.RIGHT_BRACE)) depth--;
+        while(depth > 0 && !at_end){
+            if(check(CTokenType.LEFT_BRACE)) depth++;
+            else if(check(CTokenType.RIGHT_BRACE)) depth--;
             advance();
         }
     }
 
-    CToken peek() {
+    CToken peek(){
         return tokens[current];
     }
 
-    CToken peek_at(int offset) {
-        if (current + offset >= tokens.length)
+    CToken peek_at(int offset){
+        if(current + offset >= tokens.length)
             return tokens[$ - 1];  // Return EOF
         return tokens[current + offset];
     }
 
-    CToken previous() {
+    CToken previous(){
         return tokens[current - 1];
     }
 }
