@@ -34,6 +34,39 @@ The number of argument registers is configurable via `N_REG_ARGS` in `dvm_regs.d
 | 8 | R7 | RARG8 |
 | 9+ | Stack | - |
 
+### Scratch Registers
+
+Scratch registers (R8-R14) have aliases for clarity. These registers are preserved across native calls but may be clobbered by DVM-to-DVM calls (caller-saved).
+
+| Register | Alias |
+|----------|-------|
+| R8 | RS0 |
+| R9 | RS1 |
+| R10 | RS2 |
+| R11 | RS3 |
+| R12 | RS4 |
+| R13 | RS5 |
+| R14 | RS6 |
+
+Use scratch registers for local variables that need to persist across function calls:
+
+```
+function example 2
+    ; Copy args to scratch registers if needed across calls
+    move rs0 rarg1
+    move rs1 rarg2
+
+    ; Make a call - rs0, rs1 survive (for native calls)
+    move rarg1 "hello"
+    call function io.puts
+
+    ; rs0, rs1 still have our values
+    move rarg1 rs0
+    call function io.puts
+    ret
+end
+```
+
 ## Scalar Argument Passing
 
 ### Caller Responsibilities
