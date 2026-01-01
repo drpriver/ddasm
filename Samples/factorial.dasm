@@ -32,8 +32,7 @@ function start 0
     move rarg2 1
     call function factorial
     move rarg1 "%d\n"
-    move rarg2 rout1
+    push rout1
     call function io.printf 2
-    # call function Printf2
     halt
 end

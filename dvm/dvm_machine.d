@@ -91,26 +91,29 @@ struct Machine {
     int
     call_native_varargs(Function* func, size_t n_total){with(RegisterNames){
         uintptr_t[16] args = void;
-        // Copy from RARG registers
-        size_t n_from_regs = n_total < N_REG_ARGS ? n_total : N_REG_ARGS;
-        for (size_t i = 0; i < n_from_regs; i++) {
+        size_t n_fixed = func.n_args;
+        size_t n_variadic = n_total > n_fixed ? n_total - n_fixed : 0;
+
+        // Fixed args come from RARG registers
+        size_t n_fixed_from_regs = n_fixed < N_REG_ARGS ? n_fixed : N_REG_ARGS;
+        for (size_t i = 0; i < n_fixed_from_regs; i++) {
             args[i] = registers[RARG1 + i];
         }
-        // Copy remaining from stack if any
-        if (n_total > N_REG_ARGS) {
-            size_t n_from_stack = n_total - N_REG_ARGS;
-            uintptr_t* stack_args = cast(uintptr_t*)(registers[RSP] - n_from_stack * uintptr_t.sizeof);
-            for (size_t i = 0; i < n_from_stack; i++) {
-                args[N_REG_ARGS + i] = stack_args[i];
+
+        // Variadic args come from DVM stack (always on stack per our convention)
+        if (n_variadic > 0) {
+            uintptr_t* stack_args = cast(uintptr_t*)(registers[RSP] - n_variadic * uintptr_t.sizeof);
+            for (size_t i = 0; i < n_variadic; i++) {
+                args[n_fixed + i] = stack_args[i];
             }
-            // Pop stack args
-            registers[RSP] -= n_from_stack * uintptr_t.sizeof;
+            // Caller cleanup - don't pop here
         }
+
         import dvm.varargs_trampoline: call_varargs;
         registers[ROUT1] = call_varargs(
             cast(void*)func.native_function_,
             args.ptr,
-            func.n_args,    // n_fixed from declaration
+            n_fixed,
             n_total
         );
         return 0;
@@ -118,72 +121,27 @@ struct Machine {
 
     int
     call_native(Function* func){with(RegisterNames){
-        if(func.n_ret){
-            switch(func.n_args){
-                case 0:
-                    registers[ROUT1] = func.native_function_r();
-                    return 0;
-                case 1:
-                    registers[ROUT1] = func.native_function_ra(registers[RARG1]);
-                    return 0;
-                case 2:
-                    registers[ROUT1] = func.native_function_raa(registers[RARG1], registers[RARG2]);
-                    return 0;
-                case 3:
-                    registers[ROUT1] = func.native_function_raaa(registers[RARG1], registers[RARG2], registers[RARG3]);
-                    return 0;
-                case 4:
-                    registers[ROUT1] = func.native_function_raaaa(registers[RARG1], registers[RARG2], registers[RARG3], registers[RARG4]);
-                    return 0;
-                case 5:
-                    registers[ROUT1] = func.native_function_raaaaa(registers[RARG1], registers[RARG2], registers[RARG3], registers[RARG4], registers[RARG5]);
-                    return 0;
-                case 6:
-                    registers[ROUT1] = func.native_function_raaaaaa(registers[RARG1], registers[RARG2], registers[RARG3], registers[RARG4], registers[RARG5], registers[RARG6]);
-                    return 0;
-                case 7:
-                    registers[ROUT1] = func.native_function_raaaaaaa(registers[RARG1], registers[RARG2], registers[RARG3], registers[RARG4], registers[RARG5], registers[RARG6], registers[RARG7]);
-                    return 0;
-                case 8:
-                    registers[ROUT1] = func.native_function_raaaaaaaa(registers[RARG1], registers[RARG2], registers[RARG3], registers[RARG4], registers[RARG5], registers[RARG6], registers[RARG7], registers[RARG8]);
-                    return 0;
-                default:
-                    return 1;
-            }
+        import dvm.native_trampoline: call_native_trampoline;
+
+        // Gather arguments from DVM registers
+        uintptr_t[16] args = void;
+        size_t n_args = func.n_args;
+        for (size_t i = 0; i < n_args && i < N_REG_ARGS; i++) {
+            args[i] = registers[RARG1 + i];
         }
-        else {
-            switch(func.n_args){
-                case 0:
-                    func.native_function_();
-                    return 0;
-                case 1:
-                    func.native_function_a(registers[RARG1]);
-                    return 0;
-                case 2:
-                    func.native_function_aa(registers[RARG1], registers[RARG2]);
-                    return 0;
-                case 3:
-                    func.native_function_aaa(registers[RARG1], registers[RARG2], registers[RARG3]);
-                    return 0;
-                case 4:
-                    func.native_function_aaaa(registers[RARG1], registers[RARG2], registers[RARG3], registers[RARG4]);
-                    return 0;
-                case 5:
-                    func.native_function_aaaaa(registers[RARG1], registers[RARG2], registers[RARG3], registers[RARG4], registers[RARG5]);
-                    return 0;
-                case 6:
-                    func.native_function_aaaaaa(registers[RARG1], registers[RARG2], registers[RARG3], registers[RARG4], registers[RARG5], registers[RARG6]);
-                    return 0;
-                case 7:
-                    func.native_function_aaaaaaa(registers[RARG1], registers[RARG2], registers[RARG3], registers[RARG4], registers[RARG5], registers[RARG6], registers[RARG7]);
-                    return 0;
-                case 8:
-                    func.native_function_aaaaaaaa(registers[RARG1], registers[RARG2], registers[RARG3], registers[RARG4], registers[RARG5], registers[RARG6], registers[RARG7], registers[RARG8]);
-                    return 0;
-                default:
-                    return 1;
-            }
+
+        // Call via trampoline
+        uintptr_t result = call_native_trampoline(
+            cast(void*)func.native_function_,
+            args.ptr,
+            n_args
+        );
+
+        // Store result if function returns a value
+        if (func.n_ret) {
+            registers[ROUT1] = result;
         }
+        return 0;
     }}
 
     int

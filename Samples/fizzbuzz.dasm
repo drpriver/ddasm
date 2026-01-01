@@ -1,5 +1,13 @@
+dlimport LibC
+  "libc.so.6"
+  "libSystem.B.dylib"
+   atoi 1 1
+   puts 1 1 
+   printf 1 1 varargs
+end
+
+
 import io
-import misc
 function start 0
     move rbp rsp
     move rs0 rsp
@@ -14,7 +22,7 @@ function start 0
     call function io.getline 3
 
     move rarg1 rs0
-    call function misc.atoi 1
+    call function LibC.atoi 1
 
     label validate
 
@@ -23,14 +31,14 @@ function start 0
     cmp rs1 1
     jump ge label notsmall
     move rarg1 "Too Small!"
-    call function io.puts 1
+    call function LibC.puts 1
     halt
 
     label notsmall
     cmp rs1 100000
     jump le label notbig
     move rarg1 "Too big!"
-    call function io.puts 1
+    call function LibC.puts 1
     halt
 
     label notbig
@@ -55,31 +63,33 @@ function fizzbuzz 1
         move    rarg1 ""
         cmov eq rarg1 "\e[91mfizz"
         cmov eq rs3 1
-        call function io.printf 1
+        call function LibC.printf 1
 
         div     rjunk rs1 rs0 5
         cmp     rs1 0
         move    rarg1 ""
         cmov eq rarg1 "\e[92mbuzz"
         cmov eq rs3 1
-        call function io.printf 1
+        call function LibC.printf 1
         cmp     rs3 1
         jump eq label skip_number
 
         move    rarg1 "\e[94m%u"
-        move    rarg2 rs0
-        call function io.printf 2
+        # varargs use the stack
+        push    rs0
+        call function LibC.printf 2
+        pop     rs0
 
     label skip_number
         move    rarg1 " "
-        call function io.printf 1
+        call function LibC.printf 1
 
         add     rs0 rs0 1
         cmp     rs0 rarg8
         jump ne label begin_loop
 
         move rarg1 "\e[39m" # reset
-        call function io.puts 1
+        call function LibC.puts 1
         ret
 end
 
@@ -96,24 +106,25 @@ function recursive_fizzbuzz 1
     move    rarg1 ""
     cmov eq rarg1 "\e[91mfizz"
     cmov eq rs3 1
-    call function io.printf 1
+    call function LibC.printf 1
 
     div     rjunk rs1 rs0 5
     cmp     rs1 0
     move    rarg1 ""
     cmov eq rarg1 "\e[92mbuzz"
     cmov eq rs3 1
-    call function io.printf 1
+    call function LibC.printf 1
     cmp     rs3 1
     jump eq label skip_number2
 
     move    rarg1 "\e[94m%u"
-    move    rarg2 rs0
-    call function io.printf 2
+    push rs0
+    call function LibC.printf 2
+    pop rs0
 
 label skip_number2
     move    rarg1 " "
-    call function io.printf 1
+    call function LibC.printf 1
     pop rarg2
     pop rarg1
     add rarg2 rarg2 1
@@ -121,7 +132,7 @@ label skip_number2
 
     label end
     move rarg1 "\e[39m" # reset
-    call function io.puts 1
+    call function LibC.puts 1
     bt
     ret
 end

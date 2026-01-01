@@ -35,8 +35,10 @@ import cfront.c_pp_to_c : CToken, CTokenType;
 import cfront.c_ast;
 
 struct RegisterAllocator {
-    int alloced;
-    int local_max = 0;
+    // Start allocating from R8 onwards to avoid RARG1-8 (R0-R7)
+    enum REG_START = 8;  // N_REG_ARGS
+    int alloced = REG_START;
+    int local_max = REG_START;
 
     int allocate(){
         int result = alloced++;
@@ -44,7 +46,7 @@ struct RegisterAllocator {
         return result;
     }
 
-    void reset(){ alloced = 0; }
+    void reset(){ alloced = REG_START; }
     void reset_to(int r){ alloced = r; }
 }
 

@@ -1,44 +1,62 @@
 import io
 function start 0
+    # being lazy here and not popping any of our varargs
     move rarg1 "0x%.2llx\n"
 
     move rs0 0xff
     and rarg2 rs0 0x0f
+    push rarg2
+    # 0x0f
     call function io.printf 2
 
     or rarg2 rarg2 0xf0
+    push rarg2
+    # 0xff
     call function io.printf 2
 
     logical_and rarg2 rarg2 0xf0
+    push rarg2
+    # 0x1
     call function io.printf 2
 
     move rarg2 0
     move rs0 1
     logical_or rarg2 rarg2 rs0
+    push rarg2
+    # 0x1
     call function io.printf 2
 
     move rarg2 0
     logical_or rarg2 rarg2 rarg2
+    push rarg2
+    # 0x00
     call function io.printf 2
 
     move rarg2 -500
     mul rarg2 rarg2 rarg2
+    push rarg2
+    # 250,000 aka 0x3d090
     call function io.printf 2
 
     move rarg2 -1
     shl rarg2 rarg2 16
     shr rarg2 rarg2 56
+    push rarg2
+    # 0xff
     call function io.printf 2
 
     move rarg2 0b1010
     move rarg3 0b0011
     xor rarg2 rarg2 rarg3
+    push rarg2
+    # 0x09
     call function io.printf 2
-    move rs3 function io.printf
 
+    move rs3 function io.printf
     xor rs4 rs3 function io.puts
     xor rs0 rs4 function io.puts
-    call rs0
+    # 0x09
+    call rs0 2
 
     halt
 end
