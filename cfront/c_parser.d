@@ -879,8 +879,8 @@ struct CParser {
 
             // Check if it's sizeof(type) or sizeof(expr)
             if (is_type_specifier(peek())) {
-                // sizeof(type)
-                CType* type = parse_type();
+                // sizeof(type) - use parse_type_name for array types
+                CType* type = parse_type_name();
                 if (type is null) {
                     result.err = true;
                     return result;
@@ -1810,6 +1810,66 @@ struct CParser {
         }
 
         return base;
+    }
+
+    // Parse a type-name for casts, sizeof, compound literals
+    // This includes full abstract declarators (pointers, arrays, function pointers)
+    CType* parse_type_name() {
+        CType* base = parse_base_type();
+        if (base is null) return null;
+
+        // Parse abstract declarator (pointers, arrays, function pointers)
+        // For abstract declarators, don't consume identifiers
+        CDeclarator* decl = parse_abstract_declarator();
+        if (decl !is null) {
+            base = apply_declarator_to_type(base, decl);
+        }
+
+        return base;
+    }
+
+    // Parse an abstract declarator (no identifier allowed)
+    CDeclarator* parse_abstract_declarator() {
+        auto data = allocator.alloc(CDeclarator.sizeof);
+        CDeclarator* decl = cast(CDeclarator*)data.ptr;
+        *decl = CDeclarator.init;
+
+        // Parse pointer prefix
+        while (check(CTokenType.STAR)) {
+            advance();
+            decl.pointer_depth++;
+            while (match(CTokenType.CONST) || match(CTokenType.VOLATILE) ||
+                   match(CTokenType.RESTRICT) || match(CTokenType.ATOMIC)) {}
+        }
+
+        // Handle parenthesized abstract declarator: (*)[10] or (*)(int)
+        if (check(CTokenType.LEFT_PAREN)) {
+            CToken next = peek_at(1);
+            // Only parse as nested declarator if it starts with * or (
+            if (next.type == CTokenType.STAR || next.type == CTokenType.LEFT_PAREN) {
+                advance();  // consume '('
+                decl.nested = parse_abstract_declarator();
+                if (decl.nested is null) return null;
+                consume(CTokenType.RIGHT_PAREN, "Expected ')' after abstract declarator");
+                if (ERROR_OCCURRED) return null;
+            }
+        }
+
+        // Handle array suffix: [size]
+        while (check(CTokenType.LEFT_BRACKET)) {
+            advance();  // consume '['
+            decl.is_array = true;
+            if (!check(CTokenType.RIGHT_BRACKET)) {
+                auto size_result = parse_enum_const_expr();
+                if (!size_result.err && size_result.value > 0) {
+                    decl.array_dim = cast(size_t)size_result.value;
+                }
+            }
+            consume(CTokenType.RIGHT_BRACKET, "Expected ']'");
+            if (ERROR_OCCURRED) return null;
+        }
+
+        return decl;
     }
 
     // Get base type by unwrapping pointers (for comma-separated declarations)
@@ -3687,9 +3747,9 @@ struct CParser {
                     peek_at(1).type == CTokenType.ENUM ||
                     (peek_at(1).type == CTokenType.IDENTIFIER &&
                      (peek_at(1).lexeme in typedef_types) !is null)) {
-                    // sizeof(type)
+                    // sizeof(type) - use parse_type_name for array types like sizeof(int[10])
                     advance();  // consume '('
-                    CType* type = parse_type();
+                    CType* type = parse_type_name();
                     if (type is null) return null;
                     consume(CTokenType.RIGHT_PAREN, "Expected ')' after type");
                     if (ERROR_OCCURRED) return null;
@@ -3727,8 +3787,8 @@ struct CParser {
                 peek().type == CTokenType.ENUM ||
                 (peek().type == CTokenType.IDENTIFIER &&
                  (peek().lexeme in typedef_types) !is null)) {
-                // _Alignof(type)
-                CType* type = parse_type();
+                // _Alignof(type) - use parse_type_name for array types
+                CType* type = parse_type_name();
                 if (type is null) return null;
                 consume(CTokenType.RIGHT_PAREN, "Expected ')' after type");
                 if (ERROR_OCCURRED) return null;
@@ -3955,8 +4015,8 @@ struct CParser {
         if (match(CTokenType.LEFT_PAREN)) {
             // Check if this is a cast expression: (type)value or compound literal: (type){...}
             if (is_type_specifier(peek())) {
-                // It's a cast or compound literal
-                CType* cast_type = parse_type();
+                // It's a cast or compound literal - use parse_type_name for full abstract declarators
+                CType* cast_type = parse_type_name();
                 if (cast_type is null) return null;
                 consume(CTokenType.RIGHT_PAREN, "Expected ')' after cast type");
                 if (ERROR_OCCURRED) return null;

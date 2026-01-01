@@ -29,7 +29,7 @@ clean:
 	$(RM) $(wildcard Bin/*)
 
 .PHONY: tests
-tests:
+tests: ddasm c2dasm
 	bash Tests/run_tests.sh
 
 .DEFAULT_GOAL:= all

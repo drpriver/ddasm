@@ -62,6 +62,7 @@ struct CAnalyzer {
     Table!(str, bool) structs;     // Struct variables (always need stack)
     Barray!(str) all_vars;         // All local variable names
     Allocator allocator;
+    int compound_literal_slots;    // Total slots needed for compound literals
 
     void analyze_function(CFunction* func) {
         addr_taken.data.allocator = allocator;
@@ -72,6 +73,7 @@ struct CAnalyzer {
         arrays.cleanup();
         structs.cleanup();
         all_vars.clear();
+        compound_literal_slots = 0;
 
         foreach (stmt; func.body) {
             analyze_stmt(stmt);
@@ -79,8 +81,8 @@ struct CAnalyzer {
     }
 
     bool should_use_stack() {
-        // Use stack if any address is taken, any arrays, structs, or more than 4 variables
-        return addr_taken.count > 0 || arrays.count > 0 || structs.count > 0 || all_vars[].length > 4;
+        // Use stack if any address is taken, any arrays, structs, compound literals, or more than 4 variables
+        return addr_taken.count > 0 || arrays.count > 0 || structs.count > 0 || compound_literal_slots > 0 || all_vars[].length > 4;
     }
 
     void analyze_stmt(CStmt* stmt) {
@@ -197,11 +199,23 @@ struct CAnalyzer {
             case GROUPING:
                 break;  // Already ungrouped
             case CAST:
+                analyze_expr((cast(CCast*)expr).operand);
+                break;
             case MEMBER_ACCESS:
+                analyze_expr((cast(CMemberAccess*)expr).object);
+                break;
             case SIZEOF:
+                if (auto se = cast(CSizeof*)expr)
+                    if (se.sizeof_expr) analyze_expr(se.sizeof_expr);
+                break;
             case ALIGNOF:
+                break;
             case COUNTOF:
+                if (auto ce = cast(CCountof*)expr)
+                    if (ce.countof_expr) analyze_expr(ce.countof_expr);
+                break;
             case VA_ARG:
+                analyze_expr((cast(CVaArg*)expr).va_list_expr);
                 break;
             case GENERIC:
                 auto e = cast(CGeneric*)expr;
@@ -222,6 +236,9 @@ struct CAnalyzer {
                 break;
             case COMPOUND_LITERAL:
                 auto e = cast(CCompoundLiteral*)expr;
+                // Count slots needed for this compound literal
+                size_t size = e.literal_type.size_of();
+                compound_literal_slots += cast(int)((size + 7) / 8);
                 analyze_expr(e.initializer);
                 break;
         }
@@ -917,6 +934,8 @@ struct CDasmWriter {
             }
             // Count local variables, accounting for array sizes
             num_stack_slots += count_var_slots(func.body);
+            // Count compound literal slots
+            num_stack_slots += analyzer.compound_literal_slots;
         }
 
         // For large struct returns, caller passes hidden pointer as first arg
@@ -1920,15 +1939,14 @@ struct CDasmWriter {
 
     int gen_compound_literal(CCompoundLiteral* expr, int target) {
         // Compound literal: (type){...}
-        // Allocate stack space and initialize, return address
+        // Use pre-allocated stack space and initialize, return address
         CType* lit_type = expr.literal_type;
         size_t size = lit_type.size_of();
         size_t num_slots = (size + 7) / 8;
 
-        // Allocate stack space
+        // Use next available stack slot (space was pre-allocated in function prologue)
         int slot = stack_offset;
         stack_offset += cast(int)num_slots;
-        sb.writef("    add rsp rsp %\n", P(num_slots));
 
         int before = regallocator.alloced;
         int addr_reg = regallocator.allocate();
@@ -1943,25 +1961,26 @@ struct CDasmWriter {
         if (init_expr !is null) {
             if (CInitList* init_list = init_expr.as_init_list()) {
                 if (lit_type.is_struct_or_union()) {
-                    // Initialize struct fields
+                    // Initialize struct fields (with flattening for array fields)
                     auto fields = lit_type.fields;
                     size_t num_elems = init_list.elements.length;
                     size_t field_idx = 0;
+                    size_t array_elem_idx = 0;  // For flattening into array fields
 
                     for (size_t i = 0; i < num_elems; i++) {
                         auto elem = init_list.elements[i];
                         size_t offset;
-                        size_t field_size;
+                        size_t write_size;
 
                         // Handle designators
                         if (elem.designators.length > 0) {
                             if (elem.designators[0].kind == CDesignatorKind.FIELD) {
                                 str fname = elem.designators[0].field_name;
                                 bool found = false;
-                                foreach (f; fields) {
+                                foreach (fi, f; fields) {
                                     if (f.name == fname) {
-                                        offset = f.offset;
-                                        field_size = f.type.size_of();
+                                        field_idx = fi;
+                                        array_elem_idx = 0;
                                         found = true;
                                         break;
                                     }
@@ -1970,12 +1989,36 @@ struct CDasmWriter {
                             } else {
                                 continue;  // Skip non-field designators in struct
                             }
+                        }
+
+                        // Check if we've exhausted all fields
+                        if (field_idx >= fields.length) break;
+
+                        auto field = &fields[field_idx];
+
+                        // Check if field is an array and value is scalar (flattening)
+                        if (field.type.is_array() && elem.value.as_init_list() is null) {
+                            // Flatten scalar into array field
+                            size_t elem_size = field.type.element_size();
+                            size_t array_size = field.type.array_size;
+
+                            if (array_elem_idx >= array_size) {
+                                // Array is full, move to next field
+                                field_idx++;
+                                array_elem_idx = 0;
+                                if (field_idx >= fields.length) break;
+                                field = &fields[field_idx];
+                            }
+
+                            offset = field.offset + array_elem_idx * elem_size;
+                            write_size = elem_size;
+                            array_elem_idx++;
                         } else {
-                            // Positional
-                            if (field_idx >= fields.length) break;
-                            offset = fields[field_idx].offset;
-                            field_size = fields[field_idx].type.size_of();
+                            // Regular field or nested init_list
+                            offset = field.offset;
+                            write_size = field.type.size_of();
                             field_idx++;
+                            array_elem_idx = 0;
                         }
 
                         int err = gen_expression(elem.value, val_reg);
@@ -1986,7 +2029,7 @@ struct CDasmWriter {
                         if (offset % 8 != 0) {
                             sb.writef("    add r% r% %\n", addr_reg, addr_reg, offset % 8);
                         }
-                        sb.writef("    % r% r%\n", write_instr_for_size(field_size), addr_reg, val_reg);
+                        sb.writef("    % r% r%\n", write_instr_for_size(write_size), addr_reg, val_reg);
                     }
                 } else if (lit_type.is_array()) {
                     // Initialize array elements
@@ -2436,6 +2479,12 @@ struct CDasmWriter {
                 if (target == TARGET_IS_NOTHING) return 0;
                 // Just compute the address without dereferencing
                 return gen_subscript_address(sub, target);
+            }
+
+            // Address of compound literal: &(type){...}
+            // gen_compound_literal already returns the address
+            if (expr.operand.as_compound_literal() !is null) {
+                return gen_expression(expr.operand, target);
             }
 
             error(expr.expr.token, "Invalid operand for address-of");
