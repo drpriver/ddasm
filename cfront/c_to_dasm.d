@@ -2175,9 +2175,12 @@ struct CDasmWriter {
         size_t left_elem_size = left_is_ptr ? left_type.element_size() : 0;
         size_t right_elem_size = right_is_ptr ? right_type.element_size() : 0;
 
-        // Check for literal RHS optimization
+        // Check for literal RHS optimization (skip for && and || which need short-circuit)
         CExpr* right = expr.right;
         if (CLiteral* lit = right.as_literal()) {
+            // Short-circuit operators can't use literal optimization
+            if (expr.op == CTokenType.AMP_AMP || expr.op == CTokenType.PIPE_PIPE)
+                goto general_case;
             str rhs = lit.value.lexeme;
 
             // Convert char literals to numeric value
@@ -2277,6 +2280,7 @@ struct CDasmWriter {
             return 0;
         }
 
+    general_case:
         // General case: evaluate RHS to register
         int rhs = regallocator.allocate();
         err = gen_expression(right, rhs);
@@ -2370,20 +2374,20 @@ struct CDasmWriter {
                 sb.writef("    cmov ge r% 1\n", target);
                 break;
             case AMP_AMP:
-                // Short-circuit AND
+                // Short-circuit AND (lhs may equal target, so compare before overwriting)
                 int after = labelallocator.allocate();
-                sb.writef("    move r% 0\n", target);
                 sb.writef("    cmp r% 0\n", lhs);
+                sb.writef("    move r% 0\n", target);
                 sb.writef("    jump eq label L%\n", after);
                 sb.writef("    cmp r% 0\n", rhs);
                 sb.writef("    cmov ne r% 1\n", target);
                 sb.writef("  label L%\n", after);
                 break;
             case PIPE_PIPE:
-                // Short-circuit OR
+                // Short-circuit OR (lhs may equal target, so compare before overwriting)
                 int after2 = labelallocator.allocate();
-                sb.writef("    move r% 1\n", target);
                 sb.writef("    cmp r% 0\n", lhs);
+                sb.writef("    move r% 1\n", target);
                 sb.writef("    jump ne label L%\n", after2);
                 sb.writef("    cmp r% 0\n", rhs);
                 sb.writef("    cmov eq r% 0\n", target);
