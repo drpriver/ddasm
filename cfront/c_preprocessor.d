@@ -266,12 +266,9 @@ struct CPreprocessor {
             return get_file_macro(tok);
         if(name == "__LINE__")
             return get_line_macro(tok);
-        foreach(ref item; macros.items){
-            if(item.key == name){
-                assert(item.value is *(name in macros));
-                if(item.value.is_undefined) return PPMacroDef(is_null:true);
-                return item.value;
-            }
+        if(auto value = name in macros){
+            if(value.is_undefined) return PPMacroDef(is_null:true);
+            return *value;
         }
         return PPMacroDef(is_null:true);
     }
