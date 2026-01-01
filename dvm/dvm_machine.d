@@ -90,7 +90,6 @@ struct Machine {
 
     int
     call_native_varargs(Function* func, size_t n_total){with(RegisterNames){
-        enum N_REG_ARGS = 5;
         uintptr_t[16] args = void;
         // Copy from RARG registers
         size_t n_from_regs = n_total < N_REG_ARGS ? n_total : N_REG_ARGS;
@@ -142,6 +141,12 @@ struct Machine {
                 case 6:
                     registers[ROUT1] = func.native_function_raaaaaa(registers[RARG1], registers[RARG2], registers[RARG3], registers[RARG4], registers[RARG5], registers[RARG6]);
                     return 0;
+                case 7:
+                    registers[ROUT1] = func.native_function_raaaaaaa(registers[RARG1], registers[RARG2], registers[RARG3], registers[RARG4], registers[RARG5], registers[RARG6], registers[RARG7]);
+                    return 0;
+                case 8:
+                    registers[ROUT1] = func.native_function_raaaaaaaa(registers[RARG1], registers[RARG2], registers[RARG3], registers[RARG4], registers[RARG5], registers[RARG6], registers[RARG7], registers[RARG8]);
+                    return 0;
                 default:
                     return 1;
             }
@@ -168,6 +173,12 @@ struct Machine {
                     return 0;
                 case 6:
                     func.native_function_aaaaaa(registers[RARG1], registers[RARG2], registers[RARG3], registers[RARG4], registers[RARG5], registers[RARG6]);
+                    return 0;
+                case 7:
+                    func.native_function_aaaaaaa(registers[RARG1], registers[RARG2], registers[RARG3], registers[RARG4], registers[RARG5], registers[RARG6], registers[RARG7]);
+                    return 0;
+                case 8:
+                    func.native_function_aaaaaaaa(registers[RARG1], registers[RARG2], registers[RARG3], registers[RARG4], registers[RARG5], registers[RARG6], registers[RARG7], registers[RARG8]);
                     return 0;
                 default:
                     return 1;

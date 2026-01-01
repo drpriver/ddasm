@@ -34,6 +34,8 @@ struct Function {
         void function(uintptr_t, uintptr_t, uintptr_t, uintptr_t) native_function_aaaa;
         void function(uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t) native_function_aaaaa;
         void function(uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t) native_function_aaaaaa;
+        void function(uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t) native_function_aaaaaaa;
+        void function(uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t) native_function_aaaaaaaa;
         uintptr_t function() native_function_r;
         uintptr_t function(uintptr_t) native_function_ra;
         uintptr_t function(uintptr_t, uintptr_t) native_function_raa;
@@ -41,6 +43,8 @@ struct Function {
         uintptr_t function(uintptr_t, uintptr_t, uintptr_t, uintptr_t) native_function_raaaa;
         uintptr_t function(uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t) native_function_raaaaa;
         uintptr_t function(uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t) native_function_raaaaaa;
+        uintptr_t function(uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t) native_function_raaaaaaa;
+        uintptr_t function(uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t) native_function_raaaaaaaa;
     }
     FunctionType type;
     ubyte n_args;
