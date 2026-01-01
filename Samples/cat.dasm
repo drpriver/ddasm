@@ -1,30 +1,30 @@
 import io
 function cat 0
-    move r0 rarg1
-    move r1 rarg2
+    move rs0 rarg1
+    move rs1 rarg2
     move rbp rsp
 
     # alloca(32768)
-    move r2 rsp
+    move rs2 rsp
     add rsp rsp 32768
 
     move rarg2 1
-    move rarg1 r2
+    move rarg1 rs2
     label loop
         move rarg3 32768
-        move rarg4 r0
+        move rarg4 rs0
         call function io.fread
-        move r3 rout1
+        move rs3 rout1
 
-        move rarg3 r3
-        move rarg4 r1
+        move rarg3 rs3
+        move rarg4 rs1
         call function io.fwrite
 
-        cmp r3 32768
+        cmp rs3 32768
         jump ne label done
         move rip label loop
     label done
-    move rarg1 r1
+    move rarg1 rs1
     call function io.fflush
     move rsp rbp
     ret
@@ -32,9 +32,9 @@ end
 
 function start 0
     call function io.stdin
-    move r0 rout1
+    move rs0 rout1
     call function io.stdout
-    move rarg1 r0
+    move rarg1 rs0
     move rarg2 rout1
     call function cat
     halt

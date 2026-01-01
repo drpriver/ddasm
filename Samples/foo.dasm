@@ -1,39 +1,39 @@
 import io
 function test 0
-    push r0
-    push r1
-    push r2
-    push r3
-    push r4
-    push r5
-    push r6
-    push r7
-    push r8
-    push r9
-    move r0 rsp
+    push rs0
+    push rs1
+    push rs2
+    push rs3
+    push rs4
+    push rs5
+    push rs6
+    push rs7
+    push rs8
+    push rs9
+    move rs0 rsp
     add rsp rsp 8
-    add r1 r0 0
-    write r1 3
+    add rs1 rs0 0
+    write rs1 3
     add rsp rsp 8
-    add r1 r0 8
-    add r2 r0 0
-    read r2 r2
-    write r1 r2
-    add r1 r0 8
-    read rout1 r1
+    add rs1 rs0 8
+    add rs2 rs0 0
+    read rs2 rs2
+    write rs1 rs2
+    add rs1 rs0 8
+    read rout1 rs1
     move rip label endfunction
   label endfunction
-    move rsp r0
-    pop r9
-    pop r8
-    pop r7
-    pop r6
-    pop r5
-    pop r4
-    pop r3
-    pop r2
-    pop r1
-    pop r0
+    move rsp rs0
+    pop rs9
+    pop rs8
+    pop rs7
+    pop rs6
+    pop rs5
+    pop rs4
+    pop rs3
+    pop rs2
+    pop rs1
+    pop rs0
     ret
 end
 

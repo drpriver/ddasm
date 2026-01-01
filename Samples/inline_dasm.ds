@@ -4,8 +4,8 @@ function start(){
     label s
     dasm '
         call function foo
-        read r0 var x
-        cmp r0 10
+        read rs0 var x
+        cmp rs0 10
         cmov ne rip label Ls
     '
 }

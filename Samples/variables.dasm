@@ -2,16 +2,16 @@
 # Variables are statically allocated regions of memory which you can read and
 # write to. Be careful, doing
 #
-#   move r0 var foo
+#   move rs0 var foo
 #
 # does not move the value stored in foo, it moves the address of foo.
-# Use read r0 var foo instead.
+# Use read rs0 var foo instead.
 
 # Writing has a similar issue if the variable is storing the pointer. You'll
 # first need to read the address into a register and then do the write.
 #
-#   read r0 var foo
-#   write r0 2
+#   read rs0 var foo
+#   write rs0 2
 #
 import io
 var foo 3
@@ -33,13 +33,13 @@ function foobar 0
     call function io.printf 2
     # add 1 to foo every time we call this function to show it works
     add rarg2 rarg2 1
-    move r0 var foo
-    write r0 rarg2
+    move rs0 var foo
+    write rs0 rarg2
     read rarg1 var hello
     call function io.puts
     add rarg1 rarg1 6
-    move r0 var hello
-    write r0 rarg1
+    move rs0 var hello
+    write rs0 rarg1
     ret
 end
 
@@ -51,14 +51,14 @@ function func2 0
     move rarg1 "eq"
     cmov ne rarg1 "ne"
     call function io.puts
-    move r0 var yes
-    write r0 function foobar
+    move rs0 var yes
+    write rs0 function foobar
     ret
 end
 var local 0
 function weird 0
-    move r0 var local
-    write r0 label whoa
+    move rs0 var local
+    write rs0 label whoa
     move rarg1 "weird"
     call function io.puts
     ret
@@ -77,26 +77,26 @@ function start 0
     call function foobar
     call function foobar
     call function func2
-    cmp r0 r0
+    cmp rs0 rs0
     call function func2
-    read r0 var yes
-    call r0
-    read r0 var bar
-    read r0 r0
-    call r0
+    read rs0 var yes
+    call rs0
+    read rs0 var bar
+    read rs0 rs0
+    call rs0
     call function weird
     push label after
     read rip var local # rip = *&local
     label after
     move rarg1 "Hello"
     call function io.puts
-    read r0 var arr
-    read r0 r0
-    call r0
-    read r0 var arr
-    add r0 r0 PTRSIZE
-    read r0 r0
-    read r0 r0
-    call r0
+    read rs0 var arr
+    read rs0 rs0
+    call rs0
+    read rs0 var arr
+    add rs0 rs0 PTRSIZE
+    read rs0 rs0
+    read rs0 rs0
+    call rs0
     halt
 end

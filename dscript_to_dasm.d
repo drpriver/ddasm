@@ -45,8 +45,9 @@ compile_to_dasm(const ubyte[] source, Box!(char[])* progtext){
 }
 
 struct RegisterAllocator {
-    int alloced;
-    int local_max = 0;
+    // Start allocation from N_REG_ARGS to avoid overlap with rarg1-8 (r0-r7)
+    int alloced = N_REG_ARGS;
+    int local_max = N_REG_ARGS;
     enum {LOCAL_MAX = 100};
     int allocate(){
         int result = alloced++;
@@ -58,7 +59,7 @@ struct RegisterAllocator {
         return result;
     }
     void reset(){
-        alloced = 0;
+        alloced = N_REG_ARGS;  // Reset to N_REG_ARGS, not 0
         // fprintf(stderr, "%d: reset: alloced: %d\n", __LINE__, alloced);
     }
     void reset_to(int r){
@@ -1064,11 +1065,10 @@ struct DasmWriter{
             analysis.vars.cleanup();
         }
         sb.writef("function % %\n", stmt.name.lexeme, stmt.params.length);
-        int rarg = 10;
-        foreach(p; stmt.params){
+        foreach(i, p; stmt.params){
             int r = regallocator.allocate();
             reglocals[p.lexeme] = r;
-            sb.writef("    move r% r%\n", r, rarg++);
+            sb.writef("    move r% rarg%\n", r, 1 + i);
         }
         if(analysis.vars[].length > 4)
             analysis.vars_on_stack = true;

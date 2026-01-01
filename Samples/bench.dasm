@@ -1,3 +1,5 @@
+# Note: this program is to stress the vm
+# and can take around a minute to run.
 import io
 function start 0
     move rarg1 "/dev/null"
@@ -5,54 +7,56 @@ function start 0
     call function io.fopen
     move rarg1 rout1
 
-    # move r0 rarg1
-    move r0 10000
+    # move rs0 rarg1
+    move rs0 10000
     label loop
-    sub r0 r0 1
-    cmp r0 0
+    sub rs0 rs0 1
+    cmp rs0 0
     jump ne 1
     halt
-    push r0
+    push rs0
     move rarg2 10000
     call function fizzother
-    pop r0
+    pop rs0
     move rip label loop
     halt
 end
 
 function fizzbuzz 1
-        add     r7 rarg1 1
-        move    r0 1
+        # using rarg8 as a scratch reg as its
+        # otherwise unused in this program
+        add     rarg8 rarg1 1
+        move    rs0 1
 
     label begin_loop
-    # In this loop, we use r3 to track whether we have printed
+    # In this loop, we use rs3 to track whether we have printed
     # a word or not.
-        move    r3 0
-        div     rjunk r1 r0 3
-        cmp     r1 0
+        move    rs3 0
+        div     rjunk rs1 rs0 3
+        cmp     rs1 0
         move    rarg1 ""
         cmov eq rarg1 "\e[91mfizz"
-        cmov eq r3 1
+        cmov eq rs3 1
         # call function io.printf1
 
-        div     rjunk r1 r0 5
-        cmp     r1 0
+        div     rjunk rs1 rs0 5
+        cmp     rs1 0
         move    rarg1 ""
         cmov eq rarg1 "\e[92mbuzz"
-        cmov eq r3 1
+        cmov eq rs3 1
         # call function io.printf1
-        cmp     r3 1
+        cmp     rs3 1
         jump eq 3
 
         move    rarg1 "\e[94m%u"
-        move    rarg2 r0
+        move    rarg2 rs0
         # call function io.printf2
 
         move    rarg1 " "
         # call function io.printf1
 
-        add     r0 r0 1
-        cmp     r0 r7
+        add     rs0 rs0 1
+        cmp     rs0 rarg8
         jump ne label begin_loop
 
         move rarg1 "\e[39m" # reset
@@ -64,34 +68,34 @@ end
 function fizzother 1
     # So we will have 3 counters and check if they are at fizz
     # buzz time or not.
-        move r0 1
-        move r1 1
-        move r2 1
-        add r3 rarg2 1
-        move r4 0
+        move rs0 1
+        move rs1 1
+        move rs2 1
+        add rs3 rarg2 1
+        move rs4 0
         
 
     label loop
-        cmp r1 3
+        cmp rs1 3
         jump ne label buzz
-        move r1 0
+        move rs1 0
         move rarg2 "fizz"
         call function io.fprintf 2
-        move r4 1
+        move rs4 1
 
     label buzz
-        cmp r2 5
+        cmp rs2 5
         jump ne label numeric
-        move r2 0
+        move rs2 0
         move rarg2 "buzz"
         call function io.fprintf 2
-        move r4 1
+        move rs4 1
 
     label numeric
-        cmp r4 1
+        cmp rs4 1
         jump eq label continue
         move rarg2 "%llu"
-        move rarg3 r0
+        move rarg3 rs0
         call function io.fprintf 3
 
 
@@ -99,11 +103,11 @@ function fizzother 1
         move rarg2 "\n"
         call function io.fprintf 2
 
-        add r0 r0 1
-        add r1 r1 1
-        add r2 r2 1
-        move r4 0
-        cmp r0 r3
+        add rs0 rs0 1
+        add rs1 rs1 1
+        add rs2 rs2 1
+        move rs4 0
+        cmp rs0 rs3
         jump ne label loop
 
         ret

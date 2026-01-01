@@ -7,10 +7,10 @@ function start
   jump ge label bad
   scmp rarg1 0
   jump lt label bad
-  move r2 [label a label b label c label d]
+  move rs2 [label a label b label c label d]
   mul rarg1 rarg1 0p1
-  add r2 r2 rarg1
-  read rip r2
+  add rs2 rs2 rarg1
+  read rip rs2
   label a
     move rarg1 "a"
     call function C.puts

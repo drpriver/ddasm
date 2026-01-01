@@ -1,23 +1,23 @@
 import io
 function start 0
     call function io.stdin
-    move r0 rout1
+    move rs0 rout1
     call function io.stdout
-    move r1 rout1
+    move rs1 rout1
     move rarg1 "Enter something: "
-    move rarg2 r1
+    move rarg2 rs1
     call function io.fputs
     move rbp rsp
-    move r2 rsp
+    move rs2 rsp
     add rsp rsp 80
-    move rarg1 r2
+    move rarg1 rs2
     move rarg2 80
-    move rarg3 r0
+    move rarg3 rs0
     call function io.fgets
     move rarg1 "You entered: "
-    move rarg2 r1
+    move rarg2 rs1
     call function io.fputs
-    move rarg1 r2
+    move rarg1 rs2
     call function io.fputs
     move rarg1 "\n"
     call function io.fputs

@@ -2,39 +2,39 @@ import io
 import misc
 function start 0
     move rbp rsp
-    move r0 rsp
+    move rs0 rsp
     move rout1 rarg1
     cmp rarg1 0
     cmov ne rip label validate
 
     add rsp rsp 80
-    move rarg1 r0
+    move rarg1 rs0
     move rarg2 80
     move rarg3 "N (for fizzbuzz): "
     call function io.getline 3
 
-    move rarg1 r0
+    move rarg1 rs0
     call function misc.atoi 1
 
     label validate
 
     # validate the input a bit
-    move r1 rout1
-    cmp r1 1
+    move rs1 rout1
+    cmp rs1 1
     jump ge label notsmall
     move rarg1 "Too Small!"
     call function io.puts 1
     halt
 
     label notsmall
-    cmp r1 100000
+    cmp rs1 100000
     jump le label notbig
     move rarg1 "Too big!"
     call function io.puts 1
     halt
 
     label notbig
-    move rarg1 r1
+    move rarg1 rs1
     add rarg1 rarg1 1
     move rarg2 1
     call function fizzbuzz 1
@@ -42,39 +42,40 @@ function start 0
 end
 
 function fizzbuzz 1
-        move     r7 rarg1
-        move    r0 1
+        # rarg8 as scratch reg
+        move     rarg8 rarg1
+        move    rs0 1
 
     label begin_loop
-    # In this loop, we use r3 to track whether we have printed
+    # In this loop, we use rs3 to track whether we have printed
     # a word or not.
-        move    r3 0
-        div     rjunk r1 r0 3
-        cmp     r1 0
+        move    rs3 0
+        div     rjunk rs1 rs0 3
+        cmp     rs1 0
         move    rarg1 ""
         cmov eq rarg1 "\e[91mfizz"
-        cmov eq r3 1
+        cmov eq rs3 1
         call function io.printf 1
 
-        div     rjunk r1 r0 5
-        cmp     r1 0
+        div     rjunk rs1 rs0 5
+        cmp     rs1 0
         move    rarg1 ""
         cmov eq rarg1 "\e[92mbuzz"
-        cmov eq r3 1
+        cmov eq rs3 1
         call function io.printf 1
-        cmp     r3 1
+        cmp     rs3 1
         jump eq label skip_number
 
         move    rarg1 "\e[94m%u"
-        move    rarg2 r0
+        move    rarg2 rs0
         call function io.printf 2
 
     label skip_number
         move    rarg1 " "
         call function io.printf 1
 
-        add     r0 r0 1
-        cmp     r0 r7
+        add     rs0 rs0 1
+        cmp     rs0 rarg8
         jump ne label begin_loop
 
         move rarg1 "\e[39m" # reset
@@ -87,27 +88,27 @@ function recursive_fizzbuzz 1
     jump eq label end
     push rarg1
     push rarg2
-    move r0 rarg2
+    move rs0 rarg2
 
-    move    r3 0
-    div     rjunk r1 r0 3
-    cmp     r1 0
+    move    rs3 0
+    div     rjunk rs1 rs0 3
+    cmp     rs1 0
     move    rarg1 ""
     cmov eq rarg1 "\e[91mfizz"
-    cmov eq r3 1
+    cmov eq rs3 1
     call function io.printf 1
 
-    div     rjunk r1 r0 5
-    cmp     r1 0
+    div     rjunk rs1 rs0 5
+    cmp     rs1 0
     move    rarg1 ""
     cmov eq rarg1 "\e[92mbuzz"
-    cmov eq r3 1
+    cmov eq rs3 1
     call function io.printf 1
-    cmp     r3 1
+    cmp     rs3 1
     jump eq label skip_number2
 
     move    rarg1 "\e[94m%u"
-    move    rarg2 r0
+    move    rarg2 rs0
     call function io.printf 2
 
 label skip_number2

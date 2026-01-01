@@ -2,8 +2,8 @@ import io
 function start 0
     move rarg1 "0x%.2llx\n"
 
-    move r0 0xff
-    and rarg2 r0 0x0f
+    move rs0 0xff
+    and rarg2 rs0 0x0f
     call function io.printf 2
 
     or rarg2 rarg2 0xf0
@@ -13,8 +13,8 @@ function start 0
     call function io.printf 2
 
     move rarg2 0
-    move r0 1
-    logical_or rarg2 rarg2 r0
+    move rs0 1
+    logical_or rarg2 rarg2 rs0
     call function io.printf 2
 
     move rarg2 0
@@ -34,11 +34,11 @@ function start 0
     move rarg3 0b0011
     xor rarg2 rarg2 rarg3
     call function io.printf 2
-    move r3 function io.printf
+    move rs3 function io.printf
 
-    xor r4 r3 function io.puts
-    xor r0 r4 function io.puts
-    call r0
+    xor rs4 rs3 function io.puts
+    xor rs0 rs4 function io.puts
+    call rs0
 
     halt
 end

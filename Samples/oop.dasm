@@ -38,27 +38,27 @@ var thirdClass [
 # [methid function methid function ... 0]
 # Note the 0 terminator.
 function classinvoke 4
-    push r0
+    push rs0
 
     label loop
-    read r0 rarg1
-    cmp r0 0
+    read rs0 rarg1
+    cmp rs0 0
     cmov eq rip label error
 
-    cmp r0 rarg2
+    cmp rs0 rarg2
     cmov eq rip label callmeth
     add rarg1 rarg1 0p2
     move rip label loop
 
     label callmeth
     add rarg1 rarg1 USIZE
-    read r0 rarg1
+    read rs0 rarg1
     move rarg1 rarg3
     move rarg2 rarg4
-    call r0
+    call rs0
 
     label leave
-    pop r0
+    pop rs0
     ret
 
     label error
@@ -137,143 +137,143 @@ end
 # arg1: a printer instance
 # arg2: A string postfix
 function printerPrint 2
-    push r0
-    add r0 rarg1 0p1
+    push rs0
+    add rs0 rarg1 0p1
 
     move rarg4 rarg2
     move rarg1 "Printer: %s (\e[94m%ld\e[39m): %s\n"
-    read rarg2 r0
-    add  rarg3 r0 0p1
+    read rarg2 rs0
+    add  rarg3 rs0 0p1
     read rarg3 rarg3
     add  rarg3 rarg3 1
-    add  r0 r0 0p1
-    write r0 rarg3
+    add  rs0 rs0 0p1
+    write rs0 rarg3
     call function io.printf 4
-    pop r0
+    pop rs0
     ret
 end
 
 # arg1: a otherPrinter instance
 # arg2: A string postfix
 function otherPrinterPrint 2
-    push r0
+    push rs0
     push rarg1
     push rarg2
     call function printerPrint
     pop rarg2
     pop rarg1
-    add r0 rarg1 0p1
+    add rs0 rarg1 0p1
 
     move rarg4 rarg2
     move rarg1 "OtherPrinter: %s (\e[95m%ld\e[39m): %s\n"
-    read rarg2 r0
-    add  rarg3 r0 0p1
+    read rarg2 rs0
+    add  rarg3 rs0 0p1
     read rarg3 rarg3
     add  rarg3 rarg3 1
-    add  r0 r0 0p1
-    write r0 rarg3
+    add  rs0 rs0 0p1
+    write rs0 rarg3
     call function io.printf 4
-    pop r0
+    pop rs0
     ret
 end
 
 # arg1: a thirdPrinter instance
 # arg2: A string postfix
 function thirdPrinterPrint 2
-    push r0
+    push rs0
     push rarg1
     push rarg2
     call function otherPrinterPrint
     pop  rarg2
     pop  rarg1
-    add r0 rarg1 0p1
+    add rs0 rarg1 0p1
 
     move rarg3 rarg2
     move rarg1 "%s ThirdPrinter: %s\n"
-    read rarg2 r0
+    read rarg2 rs0
     call function io.printf 3
-    pop r0
+    pop rs0
     ret
 end
 
 # rarg1: a printerClass
 function useprinter 1
-    push r0
-    push r4
+    push rs0
+    push rs4
 
     move rarg2 0smake
     call function classinvoke
 
-    move r0 rout1 # instance
-    move r4 "Amazing!"
+    move rs0 rout1 # instance
+    move rs4 "Amazing!"
 
-    move rarg1 r0
+    move rarg1 rs0
     move rarg2 0Ssetpref
     move rarg3 "\e[92m<<<Wow>>>\e[39m"
     call function invoke
 
-    move rarg1 r0
+    move rarg1 rs0
     move rarg2 0Sprint
-    move rarg3 r4
+    move rarg3 rs4
     call function invoke
 
-    move rarg1 r0
+    move rarg1 rs0
     move rarg2 0Sprint
-    move rarg3 r4
+    move rarg3 rs4
     call function invoke
 
-    move rarg1 r0
+    move rarg1 rs0
     move rarg2 0Sprint
-    move rarg3 r4
+    move rarg3 rs4
     call function invoke
 
-    move rarg1 r0
+    move rarg1 rs0
     move rarg2 0Ssetpref
     move rarg3 "\e[91m(((WOW)))\e[39m"
     call function invoke
 
-    move rarg1 r0
+    move rarg1 rs0
     move rarg2 0Sprint
-    move rarg3 r4
+    move rarg3 rs4
     call function invoke
 
-    move rarg1 r0
+    move rarg1 rs0
     move rarg2 0Sfree
     call function invoke
 
-    pop r4
-    pop r0
+    pop rs4
+    pop rs0
 
     ret
 end
 
 function start 0
-    read r0 var printerClass
-    move rarg1 r0
+    read rs0 var printerClass
+    move rarg1 rs0
     call function useprinter
     move rarg1 "=*= Success 1! =*="
     call function io.puts
-    move rarg1 r0
+    move rarg1 rs0
     call function useprinter
     move rarg1 "=*= Success 2! =*="
     call function io.puts
 
-    read r0 var secondClass
-    move rarg1 r0
+    read rs0 var secondClass
+    move rarg1 rs0
     call function useprinter
     move rarg1 "=*= Success 3! =*="
     call function io.puts
-    move rarg1 r0
+    move rarg1 rs0
     call function useprinter
     move rarg1 "=*= Success 4! =*="
     call function io.puts
 
-    read r0 var thirdClass
-    move rarg1 r0
+    read rs0 var thirdClass
+    move rarg1 rs0
     call function useprinter
     move rarg1 "=*= Success 5! =*="
     call function io.puts
-    move rarg1 r0
+    move rarg1 rs0
     call function useprinter
     move rarg1 "=*= Success 6! =*="
     call function io.puts
