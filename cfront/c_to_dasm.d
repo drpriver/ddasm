@@ -2175,12 +2175,9 @@ struct CDasmWriter {
         size_t left_elem_size = left_is_ptr ? left_type.element_size() : 0;
         size_t right_elem_size = right_is_ptr ? right_type.element_size() : 0;
 
-        // Check for literal RHS optimization (skip for && and || which need short-circuit)
+        // Check for literal RHS optimization
         CExpr* right = expr.right;
         if (CLiteral* lit = right.as_literal()) {
-            // Short-circuit operators can't use literal optimization
-            if (expr.op == CTokenType.AMP_AMP || expr.op == CTokenType.PIPE_PIPE)
-                goto general_case;
             str rhs = lit.value.lexeme;
 
             // Convert char literals to numeric value
@@ -2273,6 +2270,32 @@ struct CDasmWriter {
                     sb.writef("    move r% 0\n", target);
                     sb.writef("    cmov ge r% 1\n", target);
                     break;
+                case AMP_AMP:
+                    // Logical AND: result is 1 iff both lhs and rhs are non-zero
+                    // For literal RHS, we know at compile time if rhs is 0
+                    if (rhs == "0") {
+                        // x && 0 is always 0
+                        sb.writef("    move r% 0\n", target);
+                    } else {
+                        // x && non-zero: result is (x != 0)
+                        sb.writef("    cmp r% 0\n", lhs);
+                        sb.writef("    move r% 0\n", target);
+                        sb.writef("    cmov ne r% 1\n", target);
+                    }
+                    break;
+                case PIPE_PIPE:
+                    // Logical OR: result is 1 iff either lhs or rhs is non-zero
+                    // For literal RHS, we know at compile time if rhs is 0
+                    if (rhs != "0") {
+                        // x || non-zero is always 1
+                        sb.writef("    move r% 1\n", target);
+                    } else {
+                        // x || 0: result is (x != 0)
+                        sb.writef("    cmp r% 0\n", lhs);
+                        sb.writef("    move r% 0\n", target);
+                        sb.writef("    cmov ne r% 1\n", target);
+                    }
+                    break;
                 default:
                     error(expr.expr.token, "Unhandled binary operator");
                     return 1;
@@ -2280,7 +2303,6 @@ struct CDasmWriter {
             return 0;
         }
 
-    general_case:
         // General case: evaluate RHS to register
         int rhs = regallocator.allocate();
         err = gen_expression(right, rhs);

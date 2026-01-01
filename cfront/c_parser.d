@@ -3804,36 +3804,47 @@ struct CParser {
             }
         }
 
-        // _Countof operator: _Countof(type) or _Countof(expr)
+        // _Countof operator: _Countof(type) or _Countof expr
         if (match(CTokenType.COUNTOF)) {
             CToken op = previous();
 
-            // _Countof always requires parens
-            consume(CTokenType.LEFT_PAREN, "Expected '(' after _Countof");
-            if (ERROR_OCCURRED) return null;
+            // Check for _Countof(type) - requires parens
+            if (check(CTokenType.LEFT_PAREN)) {
+                // Peek ahead to see if it's a type
+                if (peek_at(1).type == CTokenType.VOID ||
+                    peek_at(1).type == CTokenType.CHAR ||
+                    peek_at(1).type == CTokenType.SHORT ||
+                    peek_at(1).type == CTokenType.INT ||
+                    peek_at(1).type == CTokenType.LONG ||
+                    peek_at(1).type == CTokenType.FLOAT ||
+                    peek_at(1).type == CTokenType.DOUBLE ||
+                    peek_at(1).type == CTokenType.UNSIGNED ||
+                    peek_at(1).type == CTokenType.SIGNED ||
+                    peek_at(1).type == CTokenType.STRUCT ||
+                    peek_at(1).type == CTokenType.UNION ||
+                    peek_at(1).type == CTokenType.ENUM ||
+                    (peek_at(1).type == CTokenType.IDENTIFIER &&
+                     (peek_at(1).lexeme in typedef_types) !is null)) {
+                    // _Countof(type) - type must be an array type
+                    advance();  // consume '('
+                    CType* type = parse_type_name();
+                    if (type is null) return null;
+                    consume(CTokenType.RIGHT_PAREN, "Expected ')' after type");
+                    if (ERROR_OCCURRED) return null;
 
-            // Check if it's _Countof(type) or _Countof(expr)
-            if (is_type_specifier(peek())) {
-                // _Countof(type) - type must be an array type
-                CType* type = parse_type();
-                if (type is null) return null;
-                consume(CTokenType.RIGHT_PAREN, "Expected ')' after type");
-                if (ERROR_OCCURRED) return null;
-
-                if (!type.is_array()) {
-                    error("_Countof requires an array type");
-                    return null;
+                    if (!type.is_array()) {
+                        error("_Countof requires an array type");
+                        return null;
+                    }
+                    return CCountof.make(allocator, type, type.array_size, op);
                 }
-                return CCountof.make(allocator, type, type.array_size, op);
-            } else {
-                // _Countof(expr) - expression must have array type
-                CExpr* expr = parse_expression();
-                if (expr is null) return null;
-                consume(CTokenType.RIGHT_PAREN, "Expected ')' after expression");
-                if (ERROR_OCCURRED) return null;
-                // Count will be computed during codegen based on expression's type
-                return CCountof.make_expr(allocator, expr, 0, op);
             }
+
+            // _Countof expr (unary operator on expression)
+            CExpr* expr = parse_unary();
+            if (expr is null) return null;
+            // Count will be computed during codegen based on expression's type
+            return CCountof.make_expr(allocator, expr, 0, op);
         }
 
         return parse_postfix();
