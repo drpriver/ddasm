@@ -6,6 +6,8 @@
 module cfront.c_preprocessor;
 
 import core.stdc.stdio : fprintf, stderr;
+import core.stdc.stdlib : getenv;
+import core.stdc.time : time;
 import dlib.aliases;
 import dlib.allocator : Allocator;
 import dlib.barray : Barray, make_barray;
@@ -33,8 +35,13 @@ struct CPreprocessor {
     str[] framework_paths;  // -F paths for framework lookup
     Barray!str pushed_include_paths;  // paths pushed via #pragma include_path
     str current_file;
+    str base_file;  // The root file being compiled (for __BASE_FILE__)
 
     bool error_occurred = false;
+
+    // Magic macro state
+    int counter_value = 0;  // For __COUNTER__
+    uint random_state = 12345;  // For __RANDOM__ (simple LCG)
 
     // Initialize with predefined macros
     void initialize(){
@@ -44,6 +51,13 @@ struct CPreprocessor {
         pushed_include_paths = make_barray!str(allocator);
         pragma_once_files.data.allocator = allocator;
         include_guards.data.allocator = allocator;
+
+        // Set base_file from current_file (must be set before initialize())
+        base_file = current_file;
+
+        // TODO: time is a weak seed (second resolution, predictable)
+        // Consider using /dev/urandom or mixing in pid/address
+        random_state = cast(uint)time(null);
 
         // Define built-in macros
         define_builtin_macros();
@@ -55,6 +69,11 @@ struct CPreprocessor {
         define_object_macro("__STDC_VERSION__", "201710L");
         define_object_macro("__FILE__", builtin:true);
         define_object_macro("__LINE__", builtin:true);
+        define_object_macro("__COUNTER__", builtin:true);
+        define_object_macro("__INCLUDE_DEPTH__", builtin:true);
+        define_object_macro("__BASE_FILE__", builtin:true);
+        define_object_macro("__DIR__", builtin:true);
+        define_object_macro("__RANDOM__", builtin:true);
 
         // TODO: make this an arg so we can pretend to be various compilers.
         version(linux)
@@ -306,6 +325,246 @@ struct CPreprocessor {
         return PPMacroDef(tok.lexeme, box[], is_builtin:true);
     }
 
+    PPMacroDef get_counter_macro(PPToken tok){
+        PPToken counter_tok = tok;
+        counter_tok.type = PPTokenType.PP_NUMBER;
+        counter_tok.lexeme = mwritef(allocator, "%", counter_value)[];
+        counter_value++;
+        Box!PPToken box = boxed(allocator, &counter_tok);
+        return PPMacroDef(tok.lexeme, box[], is_builtin:true);
+    }
+
+    PPMacroDef get_include_depth_macro(PPToken tok){
+        PPToken depth_tok = tok;
+        depth_tok.type = PPTokenType.PP_NUMBER;
+        depth_tok.lexeme = mwritef(allocator, "%", include_stack.count)[];
+        Box!PPToken box = boxed(allocator, &depth_tok);
+        return PPMacroDef(tok.lexeme, box[], is_builtin:true);
+    }
+
+    PPMacroDef get_base_file_macro(PPToken tok){
+        PPToken file_tok = tok;
+        file_tok.type = PPTokenType.PP_STRING;
+        file_tok.lexeme = mwritef(allocator, "\"%\"", E(base_file))[];
+        Box!PPToken box = boxed(allocator, &file_tok);
+        return PPMacroDef(tok.lexeme, box[], is_builtin:true);
+    }
+
+    PPMacroDef get_dir_macro(PPToken tok){
+        PPToken dir_tok = tok;
+        dir_tok.type = PPTokenType.PP_STRING;
+        str dir = get_directory(current_file);
+        if(dir.length == 0) dir = ".";
+        dir_tok.lexeme = mwritef(allocator, "\"%\"", E(dir))[];
+        Box!PPToken box = boxed(allocator, &dir_tok);
+        return PPMacroDef(tok.lexeme, box[], is_builtin:true);
+    }
+
+    PPMacroDef get_random_macro(PPToken tok){
+        PPToken rand_tok = tok;
+        rand_tok.type = PPTokenType.PP_NUMBER;
+        // Simple LCG random number generator
+        random_state = random_state * 1103515245 + 12345;
+        uint rand_val = (random_state >> 16) & 0x7FFF;
+        rand_tok.lexeme = mwritef(allocator, "%", rand_val)[];
+        Box!PPToken box = boxed(allocator, &rand_tok);
+        return PPMacroDef(tok.lexeme, box[], is_builtin:true);
+    }
+
+    // Handle __EXPAND__(string-literal) - destringify and tokenize
+    size_t handle_expand_builtin(PPToken[] tokens, size_t start, Barray!PPToken* output){
+        size_t i = start + 1;  // Skip __EXPAND__
+
+        // Skip whitespace
+        while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+
+        // Expect (
+        if(i >= tokens.length || !tokens[i].is_punct("(")){
+            error("__EXPAND__ requires parentheses");
+            return start + 1;
+        }
+        i++;
+
+        // Skip whitespace
+        while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+
+        // Collect argument tokens until )
+        Barray!PPToken arg_tokens = make_barray!PPToken(allocator);
+        int paren_depth = 1;
+        while(i < tokens.length && paren_depth > 0){
+            if(tokens[i].is_punct("(")) paren_depth++;
+            else if(tokens[i].is_punct(")")){
+                paren_depth--;
+                if(paren_depth == 0) break;
+            }
+            arg_tokens ~= tokens[i];
+            i++;
+        }
+
+        // Skip closing )
+        if(i < tokens.length && tokens[i].is_punct(")")) i++;
+
+        // Expand macros in argument first
+        Barray!PPToken expanded_arg = make_barray!PPToken(allocator);
+        foreach(tok; arg_tokens[]){
+            if(tok.type == PPTokenType.PP_IDENTIFIER){
+                PPMacroDef macro_def = get_macro(tok);
+                if(!macro_def.is_null && !macro_def.is_function_like){
+                    foreach(repl_tok; macro_def.replacement){
+                        expanded_arg ~= repl_tok;
+                    }
+                    continue;
+                }
+            }
+            expanded_arg ~= tok;
+        }
+
+        // Find the string literal in expanded argument
+        str string_content = "";
+        foreach(tok; expanded_arg[]){
+            if(tok.type == PPTokenType.PP_STRING){
+                str s = tok.lexeme;
+                // Remove quotes
+                if(s.length >= 2 && s[0] == '"' && s[$-1] == '"'){
+                    string_content = s[1..$-1];
+                }
+                break;
+            }
+        }
+
+        if(string_content.length == 0){
+            // No string found, nothing to expand
+            return i;
+        }
+
+        // Destringify: handle escape sequences
+        StringBuilder destringified;
+        destringified.allocator = allocator;
+        size_t j = 0;
+        while(j < string_content.length){
+            if(string_content[j] == '\\' && j + 1 < string_content.length){
+                char next = string_content[j + 1];
+                if(next == '"'){
+                    destringified.write("\"");
+                    j += 2;
+                } else if(next == '\\'){
+                    destringified.write("\\");
+                    j += 2;
+                } else if(next == 'n'){
+                    destringified.write("\n");
+                    j += 2;
+                } else if(next == 't'){
+                    destringified.write("\t");
+                    j += 2;
+                } else {
+                    destringified.write(string_content[j..j+1]);
+                    j++;
+                }
+            } else {
+                destringified.write(string_content[j..j+1]);
+                j++;
+            }
+        }
+
+        // Tokenize the destringified content
+        str content = destringified.borrow();
+        Barray!PPToken new_tokens = make_barray!PPToken(allocator);
+        pp_tokenize(cast(const(ubyte)[])content, "<expand>", &new_tokens, allocator);
+
+        // Output the tokens (skip EOF if present)
+        foreach(tok; new_tokens[]){
+            if(tok.type != PPTokenType.PP_EOF &&
+               tok.type != PPTokenType.PP_NEWLINE){
+                *output ~= tok;
+            }
+        }
+
+        return i;
+    }
+
+    // Handle __ENV__(name) or __ENV__(name, "default") - get environment variable as string
+    size_t handle_env_builtin(PPToken[] tokens, size_t start, Barray!PPToken* output){
+        size_t i = start + 1;  // Skip __ENV__
+
+        // Skip whitespace
+        while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+
+        // Expect (
+        if(i >= tokens.length || !tokens[i].is_punct("(")){
+            error("__ENV__ requires parentheses");
+            return start + 1;
+        }
+        i++;
+
+        // Skip whitespace
+        while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+
+        // Get the environment variable name (identifier)
+        str env_name = "";
+        if(i < tokens.length && tokens[i].type == PPTokenType.PP_IDENTIFIER){
+            env_name = tokens[i].lexeme;
+            i++;
+        } else {
+            error("__ENV__ requires identifier as first argument");
+            return i;
+        }
+
+        // Skip whitespace
+        while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+
+        // Check for optional default value (comma followed by string)
+        str default_value = "";
+        bool has_default = false;
+        if(i < tokens.length && tokens[i].is_punct(",")){
+            i++;
+            while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+
+            if(i < tokens.length && tokens[i].type == PPTokenType.PP_STRING){
+                str s = tokens[i].lexeme;
+                // Remove quotes
+                if(s.length >= 2 && s[0] == '"' && s[$-1] == '"'){
+                    default_value = s[1..$-1];
+                }
+                has_default = true;
+                i++;
+            }
+        }
+
+        // Skip whitespace and expect )
+        while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+        if(i < tokens.length && tokens[i].is_punct(")")) i++;
+
+        // Get the environment variable value
+        // Need to null-terminate the name for getenv
+        StringBuilder name_buf;
+        name_buf.allocator = allocator;
+        name_buf.write(env_name);
+        name_buf.nul_terminate();
+
+        const(char)* env_val = getenv(name_buf.borrow().ptr);
+
+        str result_value;
+        if(env_val !is null){
+            // Convert C string to D string
+            size_t len = 0;
+            while(env_val[len] != 0) len++;
+            result_value = cast(str)env_val[0..len];
+        } else if(has_default){
+            result_value = default_value;
+        } else {
+            result_value = "";
+        }
+
+        // Output as string literal token
+        PPToken str_tok;
+        str_tok.type = PPTokenType.PP_STRING;
+        str_tok.lexeme = mwritef(allocator, "\"%\"", E(result_value))[];
+        str_tok.file = current_file;
+        *output ~= str_tok;
+
+        return i;
+    }
+
     // Get macro definition
     PPMacroDef get_macro(PPToken tok){
         // Handle special predefined macros
@@ -314,6 +573,16 @@ struct CPreprocessor {
             return get_file_macro(tok);
         if(name == "__LINE__")
             return get_line_macro(tok);
+        if(name == "__COUNTER__")
+            return get_counter_macro(tok);
+        if(name == "__INCLUDE_DEPTH__")
+            return get_include_depth_macro(tok);
+        if(name == "__BASE_FILE__")
+            return get_base_file_macro(tok);
+        if(name == "__DIR__")
+            return get_dir_macro(tok);
+        if(name == "__RANDOM__")
+            return get_random_macro(tok);
         if(auto value = name in macros){
             if(value.is_undefined) return PPMacroDef(is_null:true);
             return *value;
@@ -380,6 +649,18 @@ struct CPreprocessor {
 
             // Handle identifiers - check for macro expansion
             if(tok.type == PPTokenType.PP_IDENTIFIER){
+                // Handle __EXPAND__(string-literal) - destringify
+                if(tok.lexeme == "__EXPAND__"){
+                    i = handle_expand_builtin(input, i, output);
+                    continue;
+                }
+
+                // Handle __ENV__(name) or __ENV__(name, "default")
+                if(tok.lexeme == "__ENV__"){
+                    i = handle_env_builtin(input, i, output);
+                    continue;
+                }
+
                 PPMacroDef macro_def = get_macro(tok);
                 if(!macro_def.is_null){
                     HideSet hs = HideSet.create(allocator);
@@ -804,14 +1085,18 @@ struct CPreprocessor {
             include_guards[full_path] = guard;
         }
 
-        // Save current file
+        // Save current file and push include stack
         str saved_file = current_file;
         current_file = full_path;
+        PPIncludeFrame frame;
+        frame.filename = full_path;
+        include_stack ~= frame;
 
         // Process included tokens recursively
         process(include_tokens[], output);
 
-        // Restore current file
+        // Restore current file and pop include stack
+        include_stack.count--;
         current_file = saved_file;
 
         return line_end + 1;
@@ -1325,6 +1610,18 @@ struct CPreprocessor {
             // Skip whitespace
             if(tok.type == PPTokenType.PP_WHITESPACE){
                 i++;
+                continue;
+            }
+
+            // Handle __EXPAND__ in #if context
+            if(tok.type == PPTokenType.PP_IDENTIFIER && tok.matches("__EXPAND__")){
+                i = handle_expand_builtin(tokens, i, output);
+                continue;
+            }
+
+            // Handle __ENV__ in #if context
+            if(tok.type == PPTokenType.PP_IDENTIFIER && tok.matches("__ENV__")){
+                i = handle_env_builtin(tokens, i, output);
                 continue;
             }
 

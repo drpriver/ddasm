@@ -335,3 +335,69 @@ Prints all current include paths to stderr for debugging.
 //   /usr/local/include
 //   /usr/include
 ```
+
+### Magic Macros
+
+Beyond the standard `__FILE__` and `__LINE__`, the preprocessor supports:
+
+| Macro | Description |
+|-------|-------------|
+| `__COUNTER__` | Auto-incrementing integer (0, 1, 2, ...) |
+| `__INCLUDE_DEPTH__` | Nesting depth in #include stack (0 = top level) |
+| `__BASE_FILE__` | The root file being compiled (not includes) |
+| `__DIR__` | Directory of current file |
+| `__RANDOM__` | Random integer (different each expansion) |
+| `__ENV__(NAME)` | Environment variable as string (see below) |
+| `__EXPAND__(str)` | Destringify string into tokens (see below) |
+
+Example:
+```c
+int id1 = __COUNTER__;  // 0
+int id2 = __COUNTER__;  // 1
+const char* dir = __DIR__;  // "src"
+#include "header.h"  // inside header: __INCLUDE_DEPTH__ = 1, __BASE_FILE__ = main file
+```
+
+### `__EXPAND__(string-literal)`
+
+Destringifies a string literal into preprocessor tokens - the inverse of `#` stringification.
+
+```c
+int x = __EXPAND__("1 + 2");  // → int x = 1 + 2;
+
+#define CODE "int y = 42;"
+__EXPAND__(CODE)              // → int y = 42;
+
+// Works in #if too:
+#define DEBUG "1"
+#if __EXPAND__(DEBUG)
+// ...
+#endif
+```
+
+This is the primitive that enables `__ENV__` to work with `#if`.
+
+### `__ENV__(NAME)` and `__ENV__(NAME, "default")`
+
+Gets an environment variable as a string literal.
+
+```c
+const char* home = __ENV__(HOME);           // → "/home/user"
+const char* user = __ENV__(USER);           // → "username"
+const char* missing = __ENV__(NOTSET);      // → "" (empty string)
+const char* safe = __ENV__(NOTSET, "fallback");  // → "fallback"
+```
+
+Combine with `__EXPAND__` for conditional compilation based on environment:
+
+```c
+#define BUILD_TYPE __ENV__(BUILD, "release")
+#if __EXPAND__(BUILD_TYPE) == release
+// release build
+#endif
+
+// Or use numeric env vars:
+#if __EXPAND__(__ENV__(DEBUG, "0"))
+int debug_mode = 1;
+#endif
+```
