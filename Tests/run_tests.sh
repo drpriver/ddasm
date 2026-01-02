@@ -37,6 +37,7 @@ for test_file in "$SCRIPT_DIR"/*.c; do
     fi
 
     filename=$(basename "$test_file")
+    echo "$filename"
 
     # Check for SKIP marker in file
     if head -1 "$test_file" | grep -q "// SKIP"; then

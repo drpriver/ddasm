@@ -36,7 +36,7 @@ struct CPreprocessor {
     bool error_occurred = false;
 
     // Initialize with predefined macros
-    void init(){
+    void initialize(){
         macros.data.allocator = allocator;
         cond_stack = make_barray!PPCondBlock(allocator);
         include_stack = make_barray!PPIncludeFrame(allocator);
@@ -54,17 +54,60 @@ struct CPreprocessor {
         define_object_macro("__FILE__", builtin:true);
         define_object_macro("__LINE__", builtin:true);
 
-        // Size macros - platform dependent
-        define_object_macro("__SIZEOF_INT__", "4");
-        define_object_macro("__SIZEOF_SHORT__", "2");
-        define_object_macro("__SIZEOF_LONG_LONG__", "8");
-        version(D_LP64){
-            define_object_macro("__SIZEOF_LONG__", "8");
-            define_object_macro("__SIZEOF_POINTER__", "8");
-            define_object_macro("__LP64__", "1");
-        } else {
-            define_object_macro("__SIZEOF_LONG__", "4");
-            define_object_macro("__SIZEOF_POINTER__", "4");
+        // TODO: make this an arg so we can pretend to be various compilers.
+        version(linux)
+            enum DEFAULT_COMPILER_IS_GCC = true;
+        else
+            enum DEFAULT_COMPILER_IS_GCC = false;
+        if(DEFAULT_COMPILER_IS_GCC){
+            // macros for stdint.h
+            define_object_macro("__INT_LEAST8_TYPE__", "signed char");
+            define_object_macro("__INT_FAST8_TYPE__", "signed char");
+            define_object_macro("__INT_LEAST16_TYPE__", "short");
+            define_object_macro("__INT_FAST16_TYPE__", "short");
+            define_object_macro("__INT_LEAST32_TYPE__", "int");
+            define_object_macro("__INT_FAST32_TYPE__", "int");
+            version(D_LP64){
+                define_object_macro("__INT_LEAST64_TYPE__", "long");
+                define_object_macro("__INT_FAST64_TYPE__", "long");
+            }
+            else{
+                define_object_macro("__INT_LEAST64_TYPE__", "long long");
+                define_object_macro("__INT_FAST64_TYPE__", "long long");
+            }
+            define_object_macro("__UINT_LEAST8_TYPE__", "unsigned char");
+            define_object_macro("__UINT_FAST8_TYPE__", "unsigned char");
+            define_object_macro("__UINT_LEAST16_TYPE__", "unsigned short");
+            define_object_macro("__UINT_FAST16_TYPE__", "unsigned short");
+            define_object_macro("__UINT_LEAST32_TYPE__", "unsigned");
+            define_object_macro("__UINT_FAST32_TYPE__", "unsigned");
+            version(D_LP64){
+                define_object_macro("__UINT_LEAST64_TYPE__", "unsigned long");
+                define_object_macro("__UINT_FAST64_TYPE__", "unsigned long");
+                define_object_macro("__INTPTR_TYPE__", "long");
+                define_object_macro("__UINTPTR_TYPE__", "unsigned long");
+            }
+            else {
+                define_object_macro("__UINT_LEAST64_TYPE__", "unsigned long long");
+                define_object_macro("__UINT_FAST64_TYPE__", "unsigned long long");
+                define_object_macro("__INTPTR_TYPE__", "long long");
+                define_object_macro("__UINTPTR_TYPE__", "unsigned long long");
+            }
+            define_object_macro("__INTMAX_TYPE__", "long long");
+            define_object_macro("__UINTMAX_TYPE__", "unsigned long long");
+
+            // Size macros - platform dependent
+            define_object_macro("__SIZEOF_INT__", "4");
+            define_object_macro("__SIZEOF_SHORT__", "2");
+            define_object_macro("__SIZEOF_LONG_LONG__", "8");
+            version(D_LP64){
+                define_object_macro("__SIZEOF_LONG__", "8");
+                define_object_macro("__SIZEOF_POINTER__", "8");
+                define_object_macro("__LP64__", "1");
+            } else {
+                define_object_macro("__SIZEOF_LONG__", "4");
+                define_object_macro("__SIZEOF_POINTER__", "4");
+            }
         }
 
         // OS detection
@@ -1212,12 +1255,15 @@ struct CPreprocessor {
 
             return i;
         } else {
-            // Object-like macro
+            // Object-like macro - use substitute() to handle ## pasting
             Barray!PPToken substituted = make_barray!PPToken(allocator);
-            foreach(tok; macro_def.replacement){
-                // Set expansion location on replacement tokens so nested macros
-                // have the right invocation point
-                substituted ~= with_expansion_loc(tok, invocation);
+            PPToken[][] empty_args;
+            substitute(macro_def, empty_args, hs, &substituted);
+
+            // Set expansion location on all substituted tokens so nested macros
+            // have the right invocation point
+            foreach(ref tok; substituted[]){
+                tok = with_expansion_loc(tok, invocation);
             }
 
             // Rescan for more macros

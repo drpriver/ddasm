@@ -151,15 +151,10 @@ int main(int argc, char** argv) {
     }
 
     // Add default paths after user-specified ones
-    foreach (p; DEFAULT_INCLUDE_PATHS)
-        include_paths ~= p;
-    foreach (p; DEFAULT_FRAMEWORK_PATHS)
-        framework_paths ~= p;
-
+    include_paths.extend(DEFAULT_INCLUDE_PATHS);
+    framework_paths.extend(DEFAULT_INCLUDE_PATHS);
     FixedAllocator f = FixedAllocator.fixed!(1024 * 1024);
-    Box!(char[]) progtext = {
-        f.allocator(),
-    };
+    Box!(char[]) progtext = {f.allocator()};
     scope(exit) progtext.dealloc;
     int err = cfront.cfront.compile_c_to_dasm(bscript.data, &progtext, sourcefile[], include_paths[], framework_paths[]);
     if (err) return err;

@@ -256,10 +256,8 @@ int main(int argc, char** argv){
         import cfront.cfront : DEFAULT_INCLUDE_PATHS, DEFAULT_FRAMEWORK_PATHS, DEFAULT_LIBRARY_PATHS;
         static import cfront.cfront;
         // Add default paths
-        foreach (p; DEFAULT_INCLUDE_PATHS)
-            include_paths ~= p;
-        foreach (p; DEFAULT_FRAMEWORK_PATHS)
-            framework_paths ~= p;
+        include_paths.extend(DEFAULT_INCLUDE_PATHS);
+        framework_paths.extend(DEFAULT_FRAMEWORK_PATHS);
         Box!(char[]) dasmtext = {allocator:MALLOCATOR};
         ubyte[] data = btext.as!(ubyte[]).data;
         int err = cfront.cfront.compile_c_to_dasm(data, &dasmtext, sourcefile[], include_paths[], framework_paths[]);

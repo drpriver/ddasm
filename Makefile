@@ -9,9 +9,9 @@ include $(DEPFILES)
 Bin/%: %.d | Bin Deps
 	ldc2 -i $< -betterC -fvisibility=hidden $(OPT) -of $@ -makedeps=Deps/$*.deps
 Bin/%-debug: %.d | Bin Deps
-	ldc2 -i $< -betterC -fvisibility=hidden -O0 -g -of $@ -makedeps=Deps/$*.deps
+	ldc2 -i $< -betterC -fvisibility=hidden -O0 -g -of $@ -makedeps=Deps/$*-debug.deps
 Bin/%-release: %.d | Bin Deps
-	ldc2 -i $< -betterC -fvisibility=hidden -O3 -g -of $@ -makedeps=Deps/$*.deps
+	ldc2 -i $< -betterC -fvisibility=hidden -O3 -g -of $@ -makedeps=Deps/$*-release.deps
 
 .PHONY: ddasm
 ddasm: Bin/ddasm Bin/ddasm-debug Bin/ddasm-release
@@ -33,7 +33,7 @@ clean:
 	$(RM) $(wildcard Bin/*)
 
 .PHONY: tests
-tests: ddasm c2dasm
-	bash Tests/run_tests.sh
+tests: ddasm c2dasm cpp
+	Tests/run_tests.py
 
 .DEFAULT_GOAL:= all

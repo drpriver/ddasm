@@ -32,10 +32,20 @@ version(OSX) {
         "/Library/Frameworks",
     ];
 } else version(linux) {
-    enum str[] DEFAULT_INCLUDE_PATHS = [
-        "/usr/include",
-        "/usr/local/include",
-    ];
+    version(X86_64)
+        enum str[] DEFAULT_INCLUDE_PATHS = [
+            // XXX
+            "/usr/lib/gcc/x86_64-linux-gnu/9/include",
+            "/usr/local/include",
+            "/usr/include/x86_64-linux-gnu",
+            "/usr/include",
+        ];
+    else
+        // FIXME: arch-specific includes
+        enum str[] DEFAULT_INCLUDE_PATHS = [
+            "/usr/local/include",
+            "/usr/include",
+        ];
     enum str[] DEFAULT_FRAMEWORK_PATHS = [];  // No frameworks on Linux
 } else {
     enum str[] DEFAULT_INCLUDE_PATHS = [
@@ -69,10 +79,9 @@ int compile_c_to_dasm(const(ubyte)[] source, Box!(char[])* progtext, str source_
     scope(exit) arena.free_all();
 
     // Find actual content length (before NUL terminator, if any)
-    size_t actual_len = 0;
-    while (actual_len < source.length && source[actual_len] != 0) {
-        actual_len++;
-    }
+    size_t actual_len = source.length;
+    while(actual_len && source[actual_len-1] == 0)
+        actual_len--;
     const(ubyte)[] trimmed_source = source[0 .. actual_len];
 
     // Phase 3: Tokenize source to PPTokens
@@ -87,9 +96,50 @@ int compile_c_to_dasm(const(ubyte)[] source, Box!(char[])* progtext, str source_
     preprocessor.current_file = source_file;
     preprocessor.include_paths = include_paths;
     preprocessor.framework_paths = framework_paths;
-    preprocessor.init();
+    preprocessor.initialize();
     err = preprocessor.process(pp_tokens[], &processed);
     if (err) return 1;
+    if(0){
+        str last_file = "";
+        int last_line = 0;
+        import cfront.c_pp_token;
+        import core.stdc.stdio;
+        fprintf(stderr, "processed.length: %zu\n", processed[].length);
+        foreach (tok; processed[]) {
+            // Skip whitespace and newlines for cleaner output
+            if (tok.type == PPTokenType.PP_WHITESPACE) {
+                fwrite(" ".ptr, 1, 1, stdout);
+                continue;
+            }
+            if (tok.type == PPTokenType.PP_NEWLINE) {
+                fwrite("\n".ptr, 1, 1, stdout);
+                continue;
+            }
+            if (tok.type == PPTokenType.PP_EOF) {
+                continue;
+            }
+
+            // Use expansion location if set (where macro was invoked)
+            str eff_file = tok.expansion_file.length > 0 ? tok.expansion_file : tok.file;
+            int eff_line = tok.expansion_file.length > 0 ? tok.expansion_line : tok.line;
+
+            // Print line markers when file/line changes
+            if (eff_file != last_file || eff_line != last_line) {
+                if (last_file.length > 0) {
+                    fwrite("\n".ptr, 1, 1, stdout);
+                }
+                fprintf(stdout, "# %d \"%.*s\"\n",
+                    eff_line,
+                    cast(int)eff_file.length, eff_file.ptr);
+                last_file = eff_file;
+                last_line = eff_line;
+            }
+
+            // Output token
+            fwrite(tok.lexeme.ptr, 1, tok.lexeme.length, stdout);
+        }
+        fwrite("\n".ptr, 1, 1, stdout);
+    }
 
     // Phase 5+: Convert PPTokens to CTokens
     Barray!CToken tokens = make_barray!CToken(arena.allocator());

@@ -95,10 +95,8 @@ extern(C) int main(int argc, char** argv) {
     }
 
     // Add default paths
-    foreach (p; DEFAULT_INCLUDE_PATHS)
-        include_paths ~= p;
-    foreach (p; DEFAULT_FRAMEWORK_PATHS)
-        framework_paths ~= p;
+    include_paths.extend(DEFAULT_INCLUDE_PATHS);
+    framework_paths.extend(DEFAULT_FRAMEWORK_PATHS);
 
     Allocator alloc = Mallocator.allocator();
 
@@ -132,7 +130,7 @@ extern(C) int main(int argc, char** argv) {
     pp.current_file = sourcefile[];
     pp.include_paths = include_paths[];
     pp.framework_paths = framework_paths[];
-    pp.init();
+    pp.initialize();
 
     Barray!PPToken output = make_barray!PPToken(alloc);
     err = pp.process(tokens[], &output);
