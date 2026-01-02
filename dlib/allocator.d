@@ -52,7 +52,7 @@ struct Allocator {
         }
     }
 
-    T[] zalloc(T)(size_t count){return zalloc(count * T.sizeof);}
+    T[] zalloc(T)(size_t count){return cast(T[])zalloc(count * T.sizeof);}
 
     void[]
     realloc(void*data, size_t old_size, size_t new_size){

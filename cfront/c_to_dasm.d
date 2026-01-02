@@ -279,6 +279,7 @@ struct CDasmWriter {
     Table!(str, bool) arrays;        // Array variables (need special handling)
     Table!(str, CType*) global_types; // Global variable types
     Table!(str, CType*) func_return_types; // Function return types (for struct returns)
+    Table!(str, CFunction*) func_info;     // Function info (for varargs check)
     Table!(str, long) enum_constants; // Enum constant values (name -> value)
 
     // Loop control
@@ -320,6 +321,191 @@ struct CDasmWriter {
         if(size <= 8) return 1;
         if(size <= 16) return 2;
         return 0;  // Too big, use hidden pointer
+    }
+
+    // Calculate max register slots used by any call in the function
+    // This determines how many param registers could be clobbered
+    int calc_max_call_slots(CFunction* func){
+        int max_slots = 0;
+        foreach(stmt; func.body){
+            int s = scan_stmt_for_calls(stmt);
+            if(s > max_slots) max_slots = s;
+        }
+        return max_slots;
+    }
+
+    int scan_stmt_for_calls(CStmt* stmt){
+        if(stmt is null) return 0;
+        int max_slots = 0;
+
+        void update(int s){ if(s > max_slots) max_slots = s; }
+
+        final switch(stmt.kind) with (CStmtKind){
+            case EXPR:
+                update(scan_expr_for_calls((cast(CExprStmt*)stmt).expression));
+                break;
+            case RETURN:
+                if((cast(CReturnStmt*)stmt).value)
+                    update(scan_expr_for_calls((cast(CReturnStmt*)stmt).value));
+                break;
+            case IF:
+                auto s = cast(CIfStmt*)stmt;
+                update(scan_expr_for_calls(s.condition));
+                update(scan_stmt_for_calls(s.then_branch));
+                if(s.else_branch) update(scan_stmt_for_calls(s.else_branch));
+                break;
+            case WHILE:
+                auto s = cast(CWhileStmt*)stmt;
+                update(scan_expr_for_calls(s.condition));
+                update(scan_stmt_for_calls(s.body));
+                break;
+            case DO_WHILE:
+                auto s = cast(CDoWhileStmt*)stmt;
+                update(scan_stmt_for_calls(s.body));
+                update(scan_expr_for_calls(s.condition));
+                break;
+            case FOR:
+                auto s = cast(CForStmt*)stmt;
+                if(s.init_stmt) update(scan_stmt_for_calls(s.init_stmt));
+                if(s.condition) update(scan_expr_for_calls(s.condition));
+                if(s.increment) update(scan_expr_for_calls(s.increment));
+                update(scan_stmt_for_calls(s.body_));
+                break;
+            case BLOCK:
+                foreach(s; (cast(CBlock*)stmt).statements)
+                    update(scan_stmt_for_calls(s));
+                break;
+            case VAR_DECL:
+                auto decl = cast(CVarDecl*)stmt;
+                if(decl.initializer)
+                    update(scan_expr_for_calls(decl.initializer));
+                break;
+            case SWITCH:
+                auto s = cast(CSwitchStmt*)stmt;
+                update(scan_expr_for_calls(s.condition));
+                foreach(ref c; s.cases){
+                    if(c.case_value) update(scan_expr_for_calls(c.case_value));
+                    foreach(cs; c.statements) update(scan_stmt_for_calls(cs));
+                }
+                break;
+            case GOTO:
+                break;  // goto doesn't contain expressions
+            case LABEL:
+                auto s = cast(CLabelStmt*)stmt;
+                update(scan_stmt_for_calls(s.statement));
+                break;
+            case BREAK:
+            case CONTINUE:
+            case EMPTY:
+                break;
+        }
+        return max_slots;
+    }
+
+    int scan_expr_for_calls(CExpr* expr){
+        if(expr is null) return 0;
+        expr = expr.ungroup();
+        int max_slots = 0;
+
+        void update(int s){ if(s > max_slots) max_slots = s; }
+
+        final switch(expr.kind) with (CExprKind){
+            case LITERAL:
+            case IDENTIFIER:
+                break;
+            case BINARY:
+                auto e = cast(CBinary*)expr;
+                update(scan_expr_for_calls(e.left));
+                update(scan_expr_for_calls(e.right));
+                break;
+            case UNARY:
+                auto e = cast(CUnary*)expr;
+                update(scan_expr_for_calls(e.operand));
+                break;
+            case CALL:
+                auto call = cast(CCall*)expr;
+                // Calculate register slots for this call
+                int slots = 0;
+
+                // Check for hidden return pointer
+                if(CIdentifier* id = call.callee.as_identifier()){
+                    if(CType** rt = id.name.lexeme in func_return_types){
+                        CType* ret_type = *rt;
+                        if(ret_type !is null && ret_type.is_struct_or_union() && !struct_fits_in_registers(ret_type)){
+                            slots += 1;  // Hidden return pointer
+                        }
+                    }
+                }
+
+                // Count slots for each argument
+                foreach(arg; call.args){
+                    CType* arg_type = get_expr_type(arg);
+                    if(arg_type && arg_type.is_struct_or_union() && struct_fits_in_registers(arg_type)){
+                        slots += struct_return_regs(arg_type);
+                    } else {
+                        slots += 1;
+                    }
+                }
+
+                update(slots);
+
+                // Also scan callee and args for nested calls
+                update(scan_expr_for_calls(call.callee));
+                foreach(arg; call.args)
+                    update(scan_expr_for_calls(arg));
+                break;
+            case ASSIGN:
+                auto e = cast(CAssign*)expr;
+                update(scan_expr_for_calls(e.target));
+                update(scan_expr_for_calls(e.value));
+                break;
+            case TERNARY:
+                auto e = cast(CTernary*)expr;
+                update(scan_expr_for_calls(e.condition));
+                update(scan_expr_for_calls(e.if_true));
+                update(scan_expr_for_calls(e.if_false));
+                break;
+            case CAST:
+                auto e = cast(CCast*)expr;
+                update(scan_expr_for_calls(e.operand));
+                break;
+            case SIZEOF:
+            case ALIGNOF:
+            case COUNTOF:
+                break;
+            case SUBSCRIPT:
+                auto e = cast(CSubscript*)expr;
+                update(scan_expr_for_calls(e.array));
+                update(scan_expr_for_calls(e.index));
+                break;
+            case MEMBER_ACCESS:
+                auto e = cast(CMemberAccess*)expr;
+                update(scan_expr_for_calls(e.object));
+                break;
+            case COMPOUND_LITERAL:
+                auto e = cast(CCompoundLiteral*)expr;
+                update(scan_expr_for_calls(e.initializer));
+                break;
+            case INIT_LIST:
+                auto e = cast(CInitList*)expr;
+                foreach(ref elem; e.elements){
+                    if(elem.value) update(scan_expr_for_calls(elem.value));
+                }
+                break;
+            case VA_ARG:
+                break;
+            case GROUPING:
+                // Already handled by ungroup() at start
+                break;
+            case GENERIC:
+                auto e = cast(CGeneric*)expr;
+                update(scan_expr_for_calls(e.controlling));
+                foreach(ref assoc; e.associations){
+                    update(scan_expr_for_calls(assoc.result));
+                }
+                break;
+        }
+        return max_slots;
     }
 
     // Get the type of an expression (for pointer arithmetic scaling)
@@ -680,10 +866,13 @@ struct CDasmWriter {
         }
         if(emitted_any_vars) sb.write("\n");
 
-        // First pass: collect function return types for struct return handling
+        // First pass: collect function info for struct return and varargs handling
+        // Include both definitions and declarations (for extern varargs functions)
         func_return_types.data.allocator = allocator;
+        func_info.data.allocator = allocator;
         foreach(ref func; unit.functions){
             func_return_types[func.name.lexeme] = func.return_type;
+            func_info[func.name.lexeme] = &func;
         }
 
         // Load enum constants
@@ -746,7 +935,7 @@ struct CDasmWriter {
             sb.write("function start 0\n");
             sb.write("    call function main 0\n");
             sb.write("    move rarg1 rout1\n");
-            sb.write("    call function misc.exit\n");
+            sb.write("    call function misc.exit 1\n");
             sb.write("    ret\n");
             sb.write("end\n");
         }
@@ -925,6 +1114,11 @@ struct CDasmWriter {
         analyzer.analyze_function(func);
         scope(exit) analyzer.cleanup();
 
+        // Calculate max register slots used by any call in this function
+        // Params in registers < max_call_slots must be saved (calls clobber them)
+        // Params in registers >= max_call_slots can stay in place
+        int max_call_slots = calc_max_call_slots(func);
+
         // Copy address-taken and array info
         foreach(ref item; analyzer.addr_taken.items()){
             addr_taken[item.key] = true;
@@ -1001,6 +1195,13 @@ struct CDasmWriter {
 
         // Calculate how many params are on stack (total_param_slots already calculated above)
         int n_stack_params = total_param_slots > N_REG_ARGS ? total_param_slots - N_REG_ARGS : 0;
+
+        // For register-based locals, start allocating from max_call_slots
+        // This lets us use R(max_call_slots)..R7 for saved params instead of R8+
+        // Note: reglocals in R0-R7 must be saved around calls (handled in gen_call)
+        if(!use_stack && max_call_slots < N_REG_ARGS){
+            regallocator.reset_to(max_call_slots);
+        }
 
         // Move arguments from rarg registers (or stack) to locals
         foreach(i, ref param; func.params){
@@ -1099,13 +1300,14 @@ struct CDasmWriter {
                     int offset = (n_stack_params - stack_idx) * 8 + 8;
                     sb.writef("    sub r% rbp %\n", r, P(offset));
                     sb.writef("    read r% r%\n", r, r);
-                } else if(analyzer.is_leaf()){
-                    // Leaf function: params stay in their RARG registers (R0-R7)
+                } else if(reg_slot >= max_call_slots){
+                    // Param is in a register that won't be clobbered by any call
+                    // (reg_slot >= max args used by biggest call)
                     // No move needed - just map the name to the register
                     reglocals[pname] = RARG1 + reg_slot;
                 } else {
-                    // Non-leaf function: must save args to scratch regs (R8+)
-                    // because calls will clobber R0-R7
+                    // Param is in a register that could be clobbered by calls
+                    // Must save to scratch regs (R8+)
                     int r = regallocator.allocate();
                     reglocals[pname] = r;
                     sb.writef("    move r% rarg%\n", r, 1 + reg_slot);
@@ -1113,12 +1315,13 @@ struct CDasmWriter {
             }
         }
 
-        // For leaf functions with register-based locals, adjust allocator
-        // to start after the param registers we're using (can use R(n)..R14)
-        // instead of always starting at R8
-        if(!use_stack && analyzer.is_leaf()){
+        // For functions where params stay in arg registers, we need to skip those
+        // when allocating temporaries. Only move forward, never backward.
+        if(!use_stack){
             int n_reg_params = total_param_slots < N_REG_ARGS ? total_param_slots : N_REG_ARGS;
-            if(n_reg_params < RegisterAllocator.REG_START){
+            // Params that stayed in place use R0..R(n_reg_params-1)
+            // Only advance allocator if it would skip past those registers
+            if(n_reg_params > regallocator.alloced){
                 regallocator.reset_to(n_reg_params);
             }
         }
@@ -2877,6 +3080,73 @@ struct CDasmWriter {
                 }
             }
 
+            // Increment/decrement on member access: ++p->field or p->field++
+            if(CMemberAccess* ma = expr.operand.as_member_access()){
+                int addr_reg = regallocator.allocate();
+
+                // Get the struct type
+                CType* obj_type = get_expr_type(ma.object);
+                if(obj_type is null){
+                    error(expr.expr.token, "Cannot determine type for member access");
+                    return 1;
+                }
+
+                CType* struct_type = obj_type;
+                if(ma.is_arrow){
+                    if(!obj_type.is_pointer()){
+                        error(expr.expr.token, "'->' requires pointer type");
+                        return 1;
+                    }
+                    struct_type = obj_type.pointed_to;
+                }
+
+                if(struct_type is null || !struct_type.is_struct_or_union()){
+                    error(expr.expr.token, "Member access requires struct/union type");
+                    return 1;
+                }
+
+                // Find the field
+                StructField* field = struct_type.get_field(ma.member.lexeme);
+                if(field is null){
+                    error(expr.expr.token, "Unknown field");
+                    return 1;
+                }
+
+                // Get address of the field
+                if(ma.is_arrow){
+                    // p->field: get pointer value, add offset
+                    int err2 = gen_expression(ma.object, addr_reg);
+                    if(err2) return err2;
+                } else {
+                    // p.field: get address of struct, add offset
+                    int err2 = gen_struct_address(ma.object, addr_reg);
+                    if(err2) return err2;
+                }
+                if(field.offset != 0){
+                    sb.writef("    add r% r% %\n", addr_reg, addr_reg, field.offset);
+                }
+
+                size_t elem_size = field.type ? field.type.size_of() : 8;
+                bool is_unsigned = field.type ? field.type.is_unsigned : true;
+                str read_instr = read_instr_for_size(elem_size, is_unsigned);
+                str write_instr = write_instr_for_size(elem_size);
+                int val_reg = target != TARGET_IS_NOTHING ? target : regallocator.allocate();
+
+                // Read current value
+                sb.writef("    % r% r%\n", read_instr, val_reg, addr_reg);
+
+                if(expr.is_prefix){
+                    sb.writef("    % r% r% %\n", op_instr, val_reg, val_reg, inc_amount);
+                    sb.writef("    % r% r%\n", write_instr, addr_reg, val_reg);
+                } else {
+                    int new_val = regallocator.allocate();
+                    sb.writef("    % r% r% %\n", op_instr, new_val, val_reg, inc_amount);
+                    sb.writef("    % r% r%\n", write_instr, addr_reg, new_val);
+                }
+                regallocator.reset_to(before);
+                return 0;
+            }
+
             regallocator.reset_to(before);
             return 0;
         }
@@ -2917,15 +3187,23 @@ struct CDasmWriter {
     int gen_call(CCall* expr, int target){
         int before = regallocator.alloced;
 
-        // Check if callee returns a struct
+        // Check if callee returns a struct and if it's varargs
         bool callee_returns_struct = false;
         bool callee_uses_hidden_ptr = false;
+        bool callee_is_varargs = false;
+        int n_fixed_args = 0;  // Number of fixed args for varargs functions
         CType* callee_return_type = null;
         if(CIdentifier* id = expr.callee.as_identifier()){
             if(CType** rt = id.name.lexeme in func_return_types){
                 callee_return_type = *rt;
                 callee_returns_struct = callee_return_type !is null && callee_return_type.is_struct_or_union();
                 callee_uses_hidden_ptr = callee_returns_struct && !struct_fits_in_registers(callee_return_type);
+            }
+            // Check if function is varargs
+            if(CFunction** fp = id.name.lexeme in func_info){
+                CFunction* f = *fp;
+                callee_is_varargs = f.is_varargs;
+                n_fixed_args = cast(int)f.params.length;
             }
         }
 
@@ -2957,16 +3235,110 @@ struct CDasmWriter {
             total_slots += arg_slots(arg);
         }
 
-        // Count stack args (slots beyond N_REG_ARGS)
-        int n_stack_args = total_slots > N_REG_ARGS ? total_slots - N_REG_ARGS : 0;
+        // Count stack args (slots beyond N_REG_ARGS, or varargs beyond fixed args)
+        int n_stack_args = 0;
+        foreach(i, arg; expr.args){
+            int slot = get_arg_slot(i);
+            bool is_vararg = callee_is_varargs && i >= n_fixed_args;
+            if(slot >= N_REG_ARGS || is_vararg){
+                n_stack_args += arg_slots(arg);
+            }
+        }
 
-        // Evaluate arguments
+        // Collect reglocals in R0-R7 that need saving across calls
+        // These are registers used by the optimization that puts params in R(max_call_slots)..R7
+        int[N_REG_ARGS] low_reglocals_to_save;
+        int n_low_reglocals = 0;
+        foreach(ref item; reglocals.items()){
+            int r = item.value;
+            if(r >= 0 && r < N_REG_ARGS){
+                low_reglocals_to_save[n_low_reglocals++] = r;
+            }
+        }
+
+        // For varargs calls, evaluate varargs first (push them), then fixed args
+        // This avoids clobbering fixed args when evaluating varargs into r0
+        // IMPORTANT: We save registers BEFORE pushing varargs so they end up below
+        // the varargs on the stack (varargs must be on top for native trampoline)
+        if(callee_is_varargs){
+            // Save low reglocals first (R0-R7 that hold our locals)
+            for(int i = 0; i < n_low_reglocals; i++){
+                sb.writef("    push r%\n", low_reglocals_to_save[i]);
+            }
+            // Save R8+ scratch regs
+            for(int i = N_REG_ARGS; i < before; i++){
+                sb.writef("    push r%\n", i);
+            }
+
+            // Push varargs (those beyond n_fixed_args)
+            for(size_t i = n_fixed_args; i < expr.args.length; i++){
+                CExpr* arg = expr.args[i];
+                CType* arg_type = get_expr_type(arg);
+                if(arg_type && arg_type.is_struct_or_union()){
+                    if(struct_fits_in_registers(arg_type)){
+                        // Small struct: push each word
+                        int addr_reg = regallocator.allocate();
+                        int err = gen_struct_address(arg, addr_reg);
+                        if(err) return err;
+                        sb.writef("    read r0 r%\n", addr_reg);
+                        sb.write("    push r0\n");
+                        if(arg_type.size_of() > 8){
+                            sb.writef("    add r% r% 8\n", addr_reg, addr_reg);
+                            sb.writef("    read r0 r%\n", addr_reg);
+                            sb.write("    push r0\n");
+                        }
+                        regallocator.reset_to(regallocator.alloced - 1);
+                    } else {
+                        // Large struct: push address
+                        int err = gen_struct_address(arg, 0);
+                        if(err) return err;
+                        sb.write("    push r0\n");
+                    }
+                } else {
+                    int err = gen_expression(arg, 0);
+                    if(err) return err;
+                    sb.write("    push r0\n");
+                }
+            }
+            // Now evaluate fixed args into registers (no preservation needed)
+            for(size_t i = 0; i < n_fixed_args; i++){
+                CExpr* arg = expr.args[i];
+                int slot = get_arg_slot(i);
+                CType* arg_type = get_expr_type(arg);
+                int num_slots = arg_slots(arg);
+
+                if(arg_type && arg_type.is_struct_or_union()){
+                    if(struct_fits_in_registers(arg_type)){
+                        int addr_reg = regallocator.allocate();
+                        int err = gen_struct_address(arg, addr_reg);
+                        if(err) return err;
+                        sb.writef("    read rarg% r%\n", 1 + slot, addr_reg);
+                        if(arg_type.size_of() > 8){
+                            sb.writef("    add r% r% 8\n", addr_reg, addr_reg);
+                            sb.writef("    read rarg% r%\n", 2 + slot, addr_reg);
+                        }
+                        regallocator.reset_to(regallocator.alloced - 1);
+                    } else {
+                        int err = gen_struct_address(arg, RARG1 + slot);
+                        if(err) return err;
+                    }
+                } else {
+                    int err = gen_expression(arg, RARG1 + slot);
+                    if(err) return err;
+                }
+            }
+        }
+
+        // Non-varargs: evaluate arguments in order with push/pop preservation
+        if(!callee_is_varargs)
         foreach(i, arg; expr.args){
             CType* arg_type = get_expr_type(arg);
             int slot = get_arg_slot(i);
             int num_slots = arg_slots(arg);
-            bool is_stack_arg = (slot >= N_REG_ARGS);
-            bool spans_to_stack = (slot < N_REG_ARGS && slot + num_slots > N_REG_ARGS);
+            // Varargs beyond fixed args always go on stack
+            bool is_vararg = callee_is_varargs && i >= n_fixed_args;
+            bool is_stack_arg = (slot >= N_REG_ARGS) || is_vararg;
+            bool spans_to_stack = !is_vararg && (slot < N_REG_ARGS && slot + num_slots > N_REG_ARGS);
 
             if(is_stack_arg){
                 // Stack argument: evaluate to temp and push
@@ -3055,17 +3427,20 @@ struct CDasmWriter {
         }
 
         // Pop register arguments back in reverse order (skip stack args)
-        for(int i = cast(int)expr.args.length - 2; i >= 0; i--){
-            int slot = get_arg_slot(i);
-            int num_slots = arg_slots(expr.args[i]);
-            // Only pop if this was a register arg (slot < N_REG_ARGS)
-            if(slot < N_REG_ARGS){
-                int regs_to_pop = num_slots;
-                if(slot + num_slots > N_REG_ARGS){
-                    regs_to_pop = N_REG_ARGS - slot;  // Only pop register portion
-                }
-                for(int s = regs_to_pop - 1; s >= 0; s--){
-                    sb.writef("    pop rarg%\n", 1 + slot + s);
+        // For varargs calls, we handled args separately above (no push/pop preservation)
+        if(!callee_is_varargs){
+            for(int i = cast(int)expr.args.length - 2; i >= 0; i--){
+                int slot = get_arg_slot(i);
+                int num_slots = arg_slots(expr.args[i]);
+                // Only pop if this was a register arg (slot < N_REG_ARGS)
+                if(slot < N_REG_ARGS){
+                    int regs_to_pop = num_slots;
+                    if(slot + num_slots > N_REG_ARGS){
+                        regs_to_pop = N_REG_ARGS - slot;  // Only pop register portion
+                    }
+                    for(int s = regs_to_pop - 1; s >= 0; s--){
+                        sb.writef("    pop rarg%\n", 1 + slot + s);
+                    }
                 }
             }
         }
@@ -3085,12 +3460,19 @@ struct CDasmWriter {
 
         // Generate call
         if(CIdentifier* id = expr.callee.as_identifier()){
-            // Save registers before call (rarg1-8 overlap with r0-r7, so save after args are set)
-            // We need to save registers that were allocated before this call and will be needed after
-            // But those are in r0+, which now overlap with rarg. This is handled by the push/pop of rargs.
-            // Only save higher registers (r8+) that were in use
-            for(int i = N_REG_ARGS; i < before; i++){
-                sb.writef("    push r%\n", i);
+            // Save registers before call:
+            // 1. Reglocals in R0-R7 (from max_call_slots optimization)
+            // 2. Scratch registers R8+ that were in use
+            // For varargs calls, we already saved R8+ before pushing varargs
+            if(!callee_is_varargs){
+                // Save low reglocals first (they get clobbered by callee's temps)
+                for(int i = 0; i < n_low_reglocals; i++){
+                    sb.writef("    push r%\n", low_reglocals_to_save[i]);
+                }
+                // Save R8+ scratch regs
+                for(int i = N_REG_ARGS; i < before; i++){
+                    sb.writef("    push r%\n", i);
+                }
             }
 
             // Direct call - use qualified name for extern functions
@@ -3102,9 +3484,16 @@ struct CDasmWriter {
                 sb.writef("    call function % %\n", id.name.lexeme, total_args);
             }
 
-            // Restore registers
-            for(int i = before - 1; i >= N_REG_ARGS; i--){
-                sb.writef("    pop r%\n", i);
+            // Restore registers (for non-varargs; varargs restores after stack cleanup)
+            if(!callee_is_varargs){
+                // Restore R8+ scratch regs (reverse order)
+                for(int i = before - 1; i >= N_REG_ARGS; i--){
+                    sb.writef("    pop r%\n", i);
+                }
+                // Restore low reglocals (reverse order)
+                for(int i = n_low_reglocals - 1; i >= 0; i--){
+                    sb.writef("    pop r%\n", low_reglocals_to_save[i]);
+                }
             }
         } else {
             // Indirect call through register
@@ -3112,20 +3501,42 @@ struct CDasmWriter {
             int err = gen_expression(expr.callee, func_reg);
             if(err) return err;
 
-            for(int i = N_REG_ARGS; i < before; i++){
-                sb.writef("    push r%\n", i);
+            if(!callee_is_varargs){
+                for(int i = 0; i < n_low_reglocals; i++){
+                    sb.writef("    push r%\n", low_reglocals_to_save[i]);
+                }
+                for(int i = N_REG_ARGS; i < before; i++){
+                    sb.writef("    push r%\n", i);
+                }
             }
 
             sb.writef("    call r% %\n", func_reg, total_args);
 
-            for(int i = before - 1; i >= N_REG_ARGS; i--){
-                sb.writef("    pop r%\n", i);
+            if(!callee_is_varargs){
+                for(int i = before - 1; i >= N_REG_ARGS; i--){
+                    sb.writef("    pop r%\n", i);
+                }
+                for(int i = n_low_reglocals - 1; i >= 0; i--){
+                    sb.writef("    pop r%\n", low_reglocals_to_save[i]);
+                }
             }
         }
 
         // Caller cleanup: pop stack args
         if(n_stack_args > 0){
             sb.writef("    sub rsp rsp %\n", P(n_stack_args));
+        }
+
+        // For varargs calls, restore R8+ registers AFTER stack cleanup
+        // (they were saved before varargs were pushed)
+        // Also restore low reglocals
+        if(callee_is_varargs){
+            for(int i = before - 1; i >= N_REG_ARGS; i--){
+                sb.writef("    pop r%\n", i);
+            }
+            for(int i = n_low_reglocals - 1; i >= 0; i--){
+                sb.writef("    pop r%\n", low_reglocals_to_save[i]);
+            }
         }
 
         if(target != TARGET_IS_NOTHING){

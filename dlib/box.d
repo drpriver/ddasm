@@ -92,3 +92,9 @@ boxed(T)(Allocator a, T[] val){
     copy[] = val[];
     return Box!T(a, copy);
 }
+
+Box!T
+boxed(T)(Allocator a){
+    T* p = (a.zalloc!T)(1).ptr;
+    return Box!T(a, p);
+}

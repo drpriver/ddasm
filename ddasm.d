@@ -13,7 +13,7 @@ import dlib.term_util: get_cols, stdin_is_interactive;
 import dlib.file_util: read_file, FileFlags, FileResult;
 import dlib.allocator;
 import dlib.barray: Barray;
-import dlib.box: Box;
+import dlib.box: Box, boxed;
 import dlib.str_util: endswith;
 import dlib.table;
 import dlib.aliases;
@@ -322,14 +322,11 @@ int main(int argc, char** argv){
         // Load dynamic libraries from dlimport declarations
         import dvm.dvm_dynload;
         import cfront.cfront : DEFAULT_LIBRARY_PATHS, DEFAULT_FRAMEWORK_PATHS;
-        foreach (p; DEFAULT_LIBRARY_PATHS)
-            lib_paths ~= p;
-        foreach (p; DEFAULT_FRAMEWORK_PATHS)
-            framework_paths ~= p;
+        lib_paths.extend(DEFAULT_LIBRARY_PATHS);
+        framework_paths.extend(DEFAULT_FRAMEWORK_PATHS);
         foreach(ref dlimport; prog.dlimports[]){
-            LinkedModule* dyn_mod = cast(LinkedModule*)MALLOCATOR.alloc(LinkedModule.sizeof).ptr;
-            *dyn_mod = LinkedModule.init;
-            auto dl_err = load_dynamic_module(MALLOCATOR, dlimport, dyn_mod, lib_paths[], framework_paths[]);
+            LinkedModule* dyn_mod = boxed!LinkedModule(MALLOCATOR).pointer;
+            DynLoadError dl_err = load_dynamic_module(MALLOCATOR, dlimport, dyn_mod, lib_paths[], framework_paths[]);
             if(dl_err.errored){
                 fprintf(stderr, "Failed to load '%.*s': %.*s\n",
                     cast(int)dlimport.alias_name.length, dlimport.alias_name.ptr,
@@ -356,14 +353,14 @@ int main(int argc, char** argv){
         return 0;
     do {
         machine.paused = 0;
-    if(debugger && disassemble)
-        err = machine.run!(RunFlags.DEBUG|RunFlags.DISASSEMBLE_EACH)(&linked_prog, 1024*1024);
-    else if(debugger)
-        err = machine.run!(RunFlags.DEBUG)(&linked_prog, 1024*1024);
-    else if(disassemble)
-        err = machine.run!(RunFlags.DISASSEMBLE_EACH)(&linked_prog, 1024*1024);
-    else
-        err = machine.run!(RunFlags.NONE)(&linked_prog, 1024*1024);
+        if(debugger && disassemble)
+            err = machine.run!(RunFlags.DEBUG|RunFlags.DISASSEMBLE_EACH)(&linked_prog, 1024*1024);
+        else if(debugger)
+            err = machine.run!(RunFlags.DEBUG)(&linked_prog, 1024*1024);
+        else if(disassemble)
+            err = machine.run!(RunFlags.DISASSEMBLE_EACH)(&linked_prog, 1024*1024);
+        else
+            err = machine.run!(RunFlags.NONE)(&linked_prog, 1024*1024);
         if(machine.paused){
             fprintf(stderr, "Running paused\n");
             getchar();

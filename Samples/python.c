@@ -24,9 +24,7 @@ PyObject* get(PyObject* obj, char* key){
 #error "no Py_DECREF"
 #endif
 
-int main(){
-  printf("hello world\n");
-  Py_Initialize();
+void doimports(void){
   PyObject* json = pyimport("json");
   PyObject* loads = get(json, "loads");
   PyObject* builtins = pyimport("builtins");
@@ -38,6 +36,12 @@ int main(){
   Py_DECREF(builtins);
   Py_DECREF(loads);
   Py_DECREF(json);
+}
+
+int main(){
+  printf("hello world\n");
+  Py_Initialize();
+  doimports();
   char* code = "print('hello from python');import sys;print(f'{sys.version=}')";
   if(PyRun_SimpleString(code) == -1){
     PyErr_Print();
