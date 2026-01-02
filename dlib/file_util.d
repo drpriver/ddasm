@@ -173,3 +173,29 @@ write_file(const void[] data, const char* filepath, FileFlags flags = FileFlags.
         return 0;
     }
 }
+
+// Get file size without reading contents. Returns -1 on error.
+long get_file_size(const char* filepath){
+    version(Posix){
+        stat_t s;
+        int err = stat(filepath, &s);
+        if(err == -1) return -1;
+        return s.st_size;
+    }
+    version(Windows){
+        HANDLE handle = CreateFileA(
+                cast(char*)filepath,
+                GENERIC_READ,
+                FILE_SHARE_READ,
+                null,
+                OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL,
+                null);
+        if(handle == INVALID_HANDLE_VALUE) return -1;
+        scope(exit) CloseHandle(handle);
+        LARGE_INTEGER li_size;
+        BOOL success = GetFileSizeEx(handle, &li_size);
+        if(!success) return -1;
+        return li_size.QuadPart;
+    }
+}

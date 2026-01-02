@@ -13,7 +13,7 @@ import dlib.allocator : Allocator;
 import dlib.barray : Barray, make_barray;
 import dlib.table : Table;
 import dlib.stringbuilder : StringBuilder, mwritef, E, Pad;
-import dlib.file_util : read_file, FileResult, FileFlags;
+import dlib.file_util : read_file, FileResult, FileFlags, get_file_size;
 import dlib.box: Box, boxed;
 import cfront.c_pp_token;
 import cfront.c_pp_lexer : pp_tokenize;
@@ -908,6 +908,8 @@ struct CPreprocessor {
             handle_warning(line_tokens);
         } else if(directive == "line"){
             handle_line(line_tokens);
+        } else if(directive == "embed"){
+            handle_embed(line_tokens, output);
         } else {
             // Unknown directive - ignore
         }
@@ -1845,6 +1847,263 @@ struct CPreprocessor {
         }
     }
 
+    // Handle #embed directive
+    // Emits: __embed("resolved_path", offset, length)
+    void handle_embed(PPToken[] line, Barray!PPToken* output){
+        size_t i = 0;
+
+        // Skip whitespace
+        while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+
+        if(i >= line.length){
+            error("#embed requires filename");
+            return;
+        }
+
+        str filename;
+        bool is_system = false;
+        PPToken first_tok = line[i];
+
+        // Parse filename - similar to #include
+        if(line[i].type == PPTokenType.PP_PUNCTUATOR && line[i].matches("<")){
+            // <resource> style
+            is_system = true;
+            i++;
+            StringBuilder sb;
+            sb.allocator = allocator;
+            while(i < line.length && !line[i].is_punct(">") &&
+                   line[i].type != PPTokenType.PP_NEWLINE){
+                sb.write(line[i].lexeme);
+                i++;
+            }
+            if(i < line.length && line[i].is_punct(">")) i++;
+            filename = sb.borrow();
+        } else if(line[i].type == PPTokenType.PP_STRING){
+            // "resource" style
+            str s = line[i].lexeme;
+            if(s.length >= 2){
+                filename = s[1 .. $ - 1];  // Remove quotes
+            }
+            i++;
+        } else {
+            error("#embed requires filename");
+            return;
+        }
+
+        // Parse embed parameters
+        long limit_value = -1;  // -1 means no limit
+        PPToken[] prefix_tokens;
+        PPToken[] suffix_tokens;
+        PPToken[] if_empty_tokens;
+        bool has_prefix = false;
+        bool has_suffix = false;
+        bool has_if_empty = false;
+
+        while(i < line.length){
+            // Skip whitespace
+            while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+            if(i >= line.length) break;
+
+            if(line[i].type != PPTokenType.PP_IDENTIFIER){
+                // Unknown token - skip
+                i++;
+                continue;
+            }
+
+            str param_name = line[i].lexeme;
+            i++;
+
+            // Skip whitespace
+            while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+
+            // Check for parameter clause (...)
+            if(i >= line.length || !line[i].is_punct("(")){
+                // Parameter without clause - warn and ignore
+                fprintf(stderr, "%.*s:%d: warning: unknown embed parameter '%.*s'\n",
+                    cast(int)current_file.length, current_file.ptr,
+                    first_tok.line,
+                    cast(int)param_name.length, param_name.ptr);
+                continue;
+            }
+
+            // Parse balanced token sequence
+            i++;  // Skip (
+            size_t clause_start = i;
+            int depth = 1;
+            while(i < line.length && depth > 0){
+                if(line[i].is_punct("(")) depth++;
+                else if(line[i].is_punct(")")) depth--;
+                if(depth > 0) i++;
+            }
+            PPToken[] clause_tokens = line[clause_start .. i];
+            if(i < line.length) i++;  // Skip )
+
+            // Handle known parameters
+            if(param_name == "limit" || param_name == "__limit__"){
+                // Parse integer constant from clause
+                limit_value = parse_embed_limit(clause_tokens);
+                if(limit_value < 0){
+                    error("#embed limit must be non-negative integer");
+                    return;
+                }
+            } else if(param_name == "prefix" || param_name == "__prefix__"){
+                prefix_tokens = clause_tokens;
+                has_prefix = true;
+            } else if(param_name == "suffix" || param_name == "__suffix__"){
+                suffix_tokens = clause_tokens;
+                has_suffix = true;
+            } else if(param_name == "if_empty" || param_name == "__if_empty__"){
+                if_empty_tokens = clause_tokens;
+                has_if_empty = true;
+            } else {
+                // Unknown parameter - warn per spec (implementation-defined params)
+                fprintf(stderr, "%.*s:%d: warning: unknown embed parameter '%.*s'\n",
+                    cast(int)current_file.length, current_file.ptr,
+                    first_tok.line,
+                    cast(int)param_name.length, param_name.ptr);
+            }
+        }
+
+        // Resolve path
+        str full_path = resolve_include(filename, is_system);
+        if(full_path.length == 0){
+            fprintf(stderr, "%.*s:%d: error: '%.*s' file not found for #embed\n",
+                cast(int)current_file.length, current_file.ptr,
+                first_tok.line,
+                cast(int)filename.length, filename.ptr);
+            error_occurred = true;
+            return;
+        }
+
+        // Get file size
+        StringBuilder path_buf;
+        path_buf.allocator = allocator;
+        path_buf.write(full_path);
+        path_buf.nul_terminate();
+        long file_size = get_file_size(path_buf.borrow().ptr);
+        if(file_size < 0){
+            fprintf(stderr, "%.*s:%d: error: cannot stat '%.*s'\n",
+                cast(int)current_file.length, current_file.ptr,
+                first_tok.line,
+                cast(int)full_path.length, full_path.ptr);
+            error_occurred = true;
+            return;
+        }
+
+        // Apply limit
+        long byte_count = file_size;
+        if(limit_value >= 0 && limit_value < byte_count){
+            byte_count = limit_value;
+        }
+
+        // Handle empty case
+        if(byte_count == 0){
+            if(has_if_empty){
+                // Emit if_empty tokens
+                foreach(tok; if_empty_tokens){
+                    if(tok.type != PPTokenType.PP_WHITESPACE){
+                        *output ~= tok;
+                    }
+                }
+            }
+            // Empty embed with no if_empty produces nothing
+            return;
+        }
+
+        // Non-empty: emit prefix, __embed(...), suffix
+
+        // Emit prefix tokens (without leading/trailing whitespace)
+        if(has_prefix){
+            foreach(tok; prefix_tokens){
+                if(tok.type != PPTokenType.PP_WHITESPACE){
+                    *output ~= tok;
+                }
+            }
+        }
+
+        // Emit __embed("path", 0, length)
+        emit_embed_token(output, full_path, 0, byte_count, first_tok);
+
+        // Emit suffix tokens
+        if(has_suffix){
+            foreach(tok; suffix_tokens){
+                if(tok.type != PPTokenType.PP_WHITESPACE){
+                    *output ~= tok;
+                }
+            }
+        }
+    }
+
+    // Parse limit parameter value
+    long parse_embed_limit(PPToken[] tokens){
+        size_t i = 0;
+        while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+        if(i >= tokens.length) return -1;
+
+        if(tokens[i].type != PPTokenType.PP_NUMBER) return -1;
+
+        // Simple integer parsing
+        long value = 0;
+        foreach(c; tokens[i].lexeme){
+            if(c >= '0' && c <= '9'){
+                value = value * 10 + (c - '0');
+            } else if(c == '\''){
+                // C23 digit separator - ignore
+            } else {
+                return -1;  // Not a simple integer
+            }
+        }
+        return value;
+    }
+
+    // Emit __embed("path", offset, length) tokens
+    void emit_embed_token(Barray!PPToken* output, str path, long offset, long length, PPToken loc){
+        PPToken tok;
+        tok.line = loc.line;
+        tok.column = loc.column;
+        tok.file = loc.file;
+
+        // __embed
+        tok.type = PPTokenType.PP_IDENTIFIER;
+        tok.lexeme = "__embed";
+        *output ~= tok;
+
+        // (
+        tok.type = PPTokenType.PP_PUNCTUATOR;
+        tok.lexeme = "(";
+        *output ~= tok;
+
+        // "path"
+        tok.type = PPTokenType.PP_STRING;
+        tok.lexeme = mwritef(allocator, "\"%\"", E(path))[];
+        *output ~= tok;
+
+        // ,
+        tok.type = PPTokenType.PP_PUNCTUATOR;
+        tok.lexeme = ",";
+        *output ~= tok;
+
+        // offset
+        tok.type = PPTokenType.PP_NUMBER;
+        tok.lexeme = mwritef(allocator, "%", offset)[];
+        *output ~= tok;
+
+        // ,
+        tok.type = PPTokenType.PP_PUNCTUATOR;
+        tok.lexeme = ",";
+        *output ~= tok;
+
+        // length
+        tok.type = PPTokenType.PP_NUMBER;
+        tok.lexeme = mwritef(allocator, "%", length)[];
+        *output ~= tok;
+
+        // )
+        tok.type = PPTokenType.PP_PUNCTUATOR;
+        tok.lexeme = ")";
+        *output ~= tok;
+    }
+
     // Handle _Pragma("string") operator
     size_t handle_pragma_operator(PPToken[] tokens, size_t start, Barray!PPToken* output){
         size_t i = start + 1;  // Skip _Pragma
@@ -2065,6 +2324,112 @@ struct CPreprocessor {
                 PPToken result;
                 result.type = PPTokenType.PP_NUMBER;
                 result.lexeme = "0";
+                *output ~= result;
+                continue;
+            }
+
+            // Handle __has_embed (C23 - check if embed would succeed)
+            // Returns: 0 = not found, 1 = found and non-empty, 2 = found but empty
+            if(tok.type == PPTokenType.PP_IDENTIFIER && tok.matches("__has_embed")){
+                i++;
+                while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+                if(i >= tokens.length || !tokens[i].is_punct("(")){
+                    PPToken result;
+                    result.type = PPTokenType.PP_NUMBER;
+                    result.lexeme = "0";  // __STDC_EMBED_NOT_FOUND__
+                    *output ~= result;
+                    continue;
+                }
+                i++;
+                while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+
+                // Parse header name
+                str filename;
+                bool is_system = false;
+                bool found_name = false;
+
+                if(i < tokens.length && tokens[i].type == PPTokenType.PP_STRING){
+                    // "resource" form
+                    str s = tokens[i].lexeme;
+                    if(s.length >= 2 && s[0] == '"' && s[$-1] == '"'){
+                        filename = s[1..$-1];
+                        is_system = false;
+                        found_name = true;
+                    }
+                    i++;
+                } else if(i < tokens.length && tokens[i].is_punct("<")){
+                    // <resource> form
+                    i++;
+                    StringBuilder sb;
+                    sb.allocator = allocator;
+                    while(i < tokens.length && !tokens[i].is_punct(">")){
+                        sb.write(tokens[i].lexeme);
+                        i++;
+                    }
+                    if(i < tokens.length && tokens[i].is_punct(">")) i++;
+                    filename = sb.borrow();
+                    is_system = true;
+                    found_name = true;
+                }
+
+                // Parse optional embed parameters (to check limit(0) makes it empty)
+                long limit_value = -1;
+                while(i < tokens.length && !tokens[i].is_punct(")")){
+                    if(tokens[i].type == PPTokenType.PP_IDENTIFIER){
+                        str param_name = tokens[i].lexeme;
+                        i++;
+                        while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+                        if(i < tokens.length && tokens[i].is_punct("(")){
+                            i++;
+                            size_t clause_start = i;
+                            int depth = 1;
+                            while(i < tokens.length && depth > 0){
+                                if(tokens[i].is_punct("(")) depth++;
+                                else if(tokens[i].is_punct(")")) depth--;
+                                if(depth > 0) i++;
+                            }
+                            PPToken[] clause = tokens[clause_start .. i];
+                            if(i < tokens.length) i++;
+
+                            if(param_name == "limit" || param_name == "__limit__"){
+                                limit_value = parse_embed_limit(clause);
+                            }
+                        }
+                    } else {
+                        i++;
+                    }
+                }
+                if(i < tokens.length) i++;  // Skip )
+
+                // Determine result
+                int has_embed_result = 0;  // __STDC_EMBED_NOT_FOUND__
+                if(found_name){
+                    str resolved = resolve_include(filename, is_system);
+                    if(resolved.length > 0){
+                        // File exists - check if empty
+                        StringBuilder path_buf;
+                        path_buf.allocator = allocator;
+                        path_buf.write(resolved);
+                        path_buf.nul_terminate();
+                        long file_size = get_file_size(path_buf.borrow().ptr);
+
+                        if(file_size >= 0){
+                            long effective_size = file_size;
+                            if(limit_value >= 0 && limit_value < effective_size){
+                                effective_size = limit_value;
+                            }
+                            if(effective_size == 0){
+                                has_embed_result = 2;  // __STDC_EMBED_EMPTY__
+                            } else {
+                                has_embed_result = 1;  // __STDC_EMBED_FOUND__
+                            }
+                        }
+                    }
+                }
+
+                PPToken result;
+                result.type = PPTokenType.PP_NUMBER;
+                result.lexeme = has_embed_result == 0 ? "0" : (has_embed_result == 1 ? "1" : "2");
                 *output ~= result;
                 continue;
             }
