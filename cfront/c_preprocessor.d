@@ -601,6 +601,8 @@ struct CPreprocessor {
         PPMacroDef def;
         def.name = name;
         def.is_undefined = false;
+        def.def_file = current_file;
+        def.def_line = line.length > 0 ? line[0].line : 0;
 
         // Check for function-like macro (immediately followed by '(')
         if(i < line.length && line[i].type == PPTokenType.PP_PUNCTUATOR && line[i].matches("(")){
@@ -995,6 +997,172 @@ struct CPreprocessor {
         if(i < line.length && line[i].type == PPTokenType.PP_IDENTIFIER){
             if(line[i].lexeme == "once"){
                 pragma_once_files[current_file] = true;
+            } else if(line[i].lexeme == "expand"){
+                // #pragma expand(tokens) - print macro expansion for debugging
+                i++;
+                while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+
+                // Collect remaining tokens
+                Barray!PPToken tokens_to_expand = make_barray!PPToken(allocator);
+                while(i < line.length && line[i].type != PPTokenType.PP_NEWLINE){
+                    if(line[i].type != PPTokenType.PP_WHITESPACE || tokens_to_expand.count > 0){
+                        tokens_to_expand ~= line[i];
+                    }
+                    i++;
+                }
+
+                // Build original string
+                StringBuilder orig_sb;
+                orig_sb.allocator = allocator;
+                foreach(tok; tokens_to_expand[]){
+                    orig_sb.write(tok.lexeme);
+                }
+
+                // Expand macros
+                Barray!PPToken expanded = make_barray!PPToken(allocator);
+                expand_for_if(tokens_to_expand[], &expanded);
+
+                // Build expanded string
+                StringBuilder exp_sb;
+                exp_sb.allocator = allocator;
+                foreach(tok; expanded[]){
+                    exp_sb.write(tok.lexeme);
+                }
+
+                int pragma_line = line.length > 0 ? line[0].line : 0;
+                fprintf(stderr, "%.*s:%d: %.*s -> %.*s\n",
+                        cast(int)current_file.length, current_file.ptr,
+                        pragma_line,
+                        cast(int)orig_sb.cursor, orig_sb.borrow().ptr,
+                        cast(int)exp_sb.cursor, exp_sb.borrow().ptr);
+
+            } else if(line[i].lexeme == "eval"){
+                // #pragma eval(tokens) - evaluate expression for debugging
+                i++;
+                while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+
+                // Collect remaining tokens
+                Barray!PPToken tokens_to_eval = make_barray!PPToken(allocator);
+                while(i < line.length && line[i].type != PPTokenType.PP_NEWLINE){
+                    if(line[i].type != PPTokenType.PP_WHITESPACE || tokens_to_eval.count > 0){
+                        tokens_to_eval ~= line[i];
+                    }
+                    i++;
+                }
+
+                // Build original string
+                StringBuilder orig_sb;
+                orig_sb.allocator = allocator;
+                foreach(tok; tokens_to_eval[]){
+                    orig_sb.write(tok.lexeme);
+                }
+
+                // Evaluate expression
+                long value = evaluate_expression(tokens_to_eval[]);
+
+                int pragma_line = line.length > 0 ? line[0].line : 0;
+                fprintf(stderr, "%.*s:%d: %.*s = %ld\n",
+                        cast(int)current_file.length, current_file.ptr,
+                        pragma_line,
+                        cast(int)orig_sb.cursor, orig_sb.borrow().ptr,
+                        value);
+
+            } else if(line[i].lexeme == "reveal"){
+                // #pragma reveal(macroname) - show macro definition
+                i++;
+                while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+
+                // Skip optional (
+                if(i < line.length && line[i].is_punct("(")) i++;
+                while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+
+                if(i < line.length && line[i].type == PPTokenType.PP_IDENTIFIER){
+                    str macro_name = line[i].lexeme;
+                    PPMacroDef macro_def = get_macro(line[i]);
+
+                    int pragma_line = line.length > 0 ? line[0].line : 0;
+
+                    if(macro_def.is_null || macro_def.is_undefined){
+                        fprintf(stderr, "%.*s:%d: %.*s is not defined\n",
+                                cast(int)current_file.length, current_file.ptr,
+                                pragma_line,
+                                cast(int)macro_name.length, macro_name.ptr);
+                    } else if(macro_def.is_builtin){
+                        fprintf(stderr, "%.*s:%d: %.*s = <builtin>\n",
+                                cast(int)current_file.length, current_file.ptr,
+                                pragma_line,
+                                cast(int)macro_name.length, macro_name.ptr);
+                    } else {
+                        // Build #define string
+                        StringBuilder def_sb;
+                        def_sb.allocator = allocator;
+                        def_sb.write("#define ");
+                        def_sb.write(macro_name);
+
+                        if(macro_def.is_function_like){
+                            def_sb.write("(");
+                            foreach(pi, param; macro_def.params){
+                                if(pi > 0) def_sb.write(", ");
+                                def_sb.write(param);
+                            }
+                            if(macro_def.is_variadic) def_sb.write(", ...");
+                            def_sb.write(")");
+                        }
+
+                        def_sb.write(" ");
+                        foreach(tok; macro_def.replacement){
+                            def_sb.write(tok.lexeme);
+                        }
+
+                        // Show definition location and the define
+                        fprintf(stderr, "%.*s:%d: %.*s\n",
+                                cast(int)macro_def.def_file.length, macro_def.def_file.ptr,
+                                macro_def.def_line,
+                                cast(int)def_sb.cursor, def_sb.borrow().ptr);
+                    }
+                }
+
+            } else if(line[i].lexeme == "message"){
+                // #pragma message "text" - print message (GCC/Clang compatible, but with macro expansion)
+                i++;
+                while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+
+                // Collect tokens to expand
+                Barray!PPToken msg_tokens = make_barray!PPToken(allocator);
+                while(i < line.length && line[i].type != PPTokenType.PP_NEWLINE){
+                    if(line[i].type != PPTokenType.PP_WHITESPACE || msg_tokens.count > 0){
+                        msg_tokens ~= line[i];
+                    }
+                    i++;
+                }
+
+                // Expand macros
+                Barray!PPToken expanded = make_barray!PPToken(allocator);
+                expand_for_if(msg_tokens[], &expanded);
+
+                // Build message from expanded tokens
+                StringBuilder msg_sb;
+                msg_sb.allocator = allocator;
+                foreach(tok; expanded[]){
+                    if(tok.type == PPTokenType.PP_STRING){
+                        // Remove quotes from string literal
+                        str s = tok.lexeme;
+                        if(s.length >= 2 && s[0] == '"' && s[$-1] == '"'){
+                            msg_sb.write(s[1..$-1]);
+                        } else {
+                            msg_sb.write(s);
+                        }
+                    } else if(tok.type != PPTokenType.PP_WHITESPACE || msg_sb.cursor > 0){
+                        msg_sb.write(tok.lexeme);
+                    }
+                }
+
+                int pragma_line = line.length > 0 ? line[0].line : 0;
+                fprintf(stderr, "%.*s:%d: note: %.*s\n",
+                        cast(int)current_file.length, current_file.ptr,
+                        pragma_line,
+                        cast(int)msg_sb.cursor, msg_sb.borrow().ptr);
+
             } else if(line[i].lexeme == "library"){
                 // #pragma library("libname") - emit tokens for parser
                 // Emit: #pragma library ( "libname" )

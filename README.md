@@ -260,3 +260,50 @@ Dasm currently has way more features than davescript.
   by wrapping that in a `version(){}` block
 * I made it build with dub at some point. I don't know what I'm doing as
   plain `dub` asserts, but `dub build` works.
+
+## C Preprocessor (cpp)
+
+The project includes a C preprocessor (`Bin/cpp`) that can be used standalone or as part of the C-to-dasm compiler (`c2dasm`).
+
+### Debugging Pragmas
+
+The preprocessor supports several debugging pragmas to help diagnose macro expansion issues:
+
+#### `#pragma expand TOKENS`
+Shows how tokens expand after macro substitution.
+
+```c
+#define FOO bar
+#define ADD(a,b) ((a)+(b))
+#pragma expand FOO          // file.c:3: FOO -> bar
+#pragma expand ADD(1, 2)    // file.c:4: ADD(1, 2) -> ((1)+(2))
+```
+
+#### `#pragma eval EXPR`
+Evaluates a preprocessor expression (like in `#if`) and prints the result.
+
+```c
+#define X 5
+#pragma eval X + 3              // file.c:2: X + 3 = 8
+#pragma eval 1 + 2 * 3          // file.c:3: 1 + 2 * 3 = 7
+#pragma eval defined(X)         // file.c:4: defined(X) = 1
+```
+
+#### `#pragma reveal NAME`
+Shows the definition of a macro and where it was defined.
+
+```c
+#define MAX(a,b) ((a) > (b) ? (a) : (b))
+#pragma reveal MAX       // file.c:1: #define MAX(a, b) ((a) > (b) ? (a) : (b))
+#pragma reveal UNDEFINED // file.c:2: UNDEFINED is not defined
+```
+
+#### `#pragma message "text"`
+Prints a message during preprocessing (GCC/Clang compatible, but with macro expansion).
+
+```c
+#define VERSION 2
+#pragma message "Compiling version " VERSION  // file.c:2: note: Compiling version 2
+```
+
+All pragma output goes to stderr with file:line prefix.

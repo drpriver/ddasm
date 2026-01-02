@@ -64,6 +64,8 @@ struct PPMacroDef {
     str name;
     PPToken[] replacement;   // Token sequence (not string!)
     str[] params;            // Parameter names (null for object-like)
+    str def_file;            // File where macro was defined
+    int def_line;            // Line where macro was defined
     bool is_function_like;
     bool is_variadic;        // Last param is ... or __VA_ARGS__
     bool is_undefined;       // True if #undef'd
