@@ -31,6 +31,7 @@ struct CPreprocessor {
     Table!(str, str) include_guards;  // filename -> guard macro name
     str[] include_paths;
     str[] framework_paths;  // -F paths for framework lookup
+    Barray!str pushed_include_paths;  // paths pushed via #pragma include_path
     str current_file;
 
     bool error_occurred = false;
@@ -40,6 +41,7 @@ struct CPreprocessor {
         macros.data.allocator = allocator;
         cond_stack = make_barray!PPCondBlock(allocator);
         include_stack = make_barray!PPIncludeFrame(allocator);
+        pushed_include_paths = make_barray!str(allocator);
         pragma_once_files.data.allocator = allocator;
         include_guards.data.allocator = allocator;
 
@@ -833,6 +835,12 @@ struct CPreprocessor {
             }
         }
 
+        // Try pushed include paths first (in reverse order - last pushed = highest priority)
+        for(size_t i = pushed_include_paths.count; i > 0; i--){
+            str path = concat_path(pushed_include_paths[i-1], filename);
+            if(file_exists(path)) return path;
+        }
+
         version(OSX){
             // Try framework paths (e.g., Foo/Bar.h -> Foo.framework/Headers/Bar.h)
             str framework_result = resolve_framework_include(filename);
@@ -1192,6 +1200,88 @@ struct CPreprocessor {
                 nl.type = PPTokenType.PP_NEWLINE;
                 nl.lexeme = "\n";
                 *output ~= nl;
+
+            } else if(line[i].lexeme == "include_path"){
+                // #pragma include_path push/pop/reveal
+                i++;
+                while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+
+                int pragma_line = line.length > 0 ? line[0].line : 0;
+
+                if(i < line.length && line[i].type == PPTokenType.PP_IDENTIFIER){
+                    str subcommand = line[i].lexeme;
+                    i++;
+
+                    if(subcommand == "push"){
+                        // #pragma include_path push "path" or <path>
+                        while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+
+                        str path_str = "";
+                        if(i < line.length && line[i].type == PPTokenType.PP_STRING){
+                            // "path" form
+                            str s = line[i].lexeme;
+                            if(s.length >= 2 && s[0] == '"' && s[$-1] == '"'){
+                                path_str = s[1..$-1];
+                            }
+                        } else if(i < line.length && line[i].is_punct("<")){
+                            // <path> form - collect until >
+                            i++;
+                            StringBuilder path_sb;
+                            path_sb.allocator = allocator;
+                            while(i < line.length && !line[i].is_punct(">") &&
+                                  line[i].type != PPTokenType.PP_NEWLINE){
+                                path_sb.write(line[i].lexeme);
+                                i++;
+                            }
+                            path_str = path_sb.borrow();
+                        }
+
+                        if(path_str.length > 0){
+                            // Resolve relative paths against current file's directory
+                            str resolved_path;
+                            if(path_str[0] != '/'){
+                                str dir = get_directory(current_file);
+                                if(dir.length > 0){
+                                    resolved_path = concat_path(dir, path_str);
+                                } else {
+                                    resolved_path = path_str;
+                                }
+                            } else {
+                                resolved_path = path_str;
+                            }
+                            pushed_include_paths ~= resolved_path;
+                        }
+
+                    } else if(subcommand == "pop"){
+                        // #pragma include_path pop
+                        if(pushed_include_paths.count == 0){
+                            fprintf(stderr, "%.*s:%d: warning: #pragma include_path pop with nothing pushed\n",
+                                    cast(int)current_file.length, current_file.ptr,
+                                    pragma_line);
+                        } else {
+                            pushed_include_paths.count--;
+                        }
+
+                    } else if(subcommand == "reveal"){
+                        // #pragma include_path reveal - show all include paths
+                        fprintf(stderr, "%.*s:%d: include paths:\n",
+                                cast(int)current_file.length, current_file.ptr,
+                                pragma_line);
+
+                        // Show pushed paths first (in search order - reverse)
+                        for(size_t j = pushed_include_paths.count; j > 0; j--){
+                            str p = pushed_include_paths[j-1];
+                            fprintf(stderr, "  [pushed] %.*s\n",
+                                    cast(int)p.length, p.ptr);
+                        }
+
+                        // Show configured paths
+                        foreach(p; include_paths){
+                            fprintf(stderr, "  %.*s\n",
+                                    cast(int)p.length, p.ptr);
+                        }
+                    }
+                }
             }
             // Ignore other pragmas
         }

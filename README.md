@@ -307,3 +307,31 @@ Prints a message during preprocessing (GCC/Clang compatible, but with macro expa
 ```
 
 All pragma output goes to stderr with file:line prefix.
+
+### Include Path Pragmas
+
+The preprocessor supports pragmas to dynamically modify include search paths:
+
+#### `#pragma include_path push "path"`
+Adds a path to the front of the include search list. Relative paths are resolved relative to the file containing the pragma.
+
+```c
+#pragma include_path push "../mylib"
+#include "helper.h"  // searches ../mylib first
+#pragma include_path pop
+```
+
+#### `#pragma include_path pop`
+Removes the most recently pushed path. Warns if nothing was pushed.
+
+#### `#pragma include_path reveal`
+Prints all current include paths to stderr for debugging.
+
+```c
+#pragma include_path reveal
+// Output:
+// file.c:1: include paths:
+//   [pushed] /path/to/mylib
+//   /usr/local/include
+//   /usr/include
+```
