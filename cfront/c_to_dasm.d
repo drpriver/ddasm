@@ -64,6 +64,7 @@ struct CAnalyzer {
     Barray!(str) all_vars;         // All local variable names
     Allocator allocator;
     int compound_literal_slots;    // Total slots needed for compound literals
+    bool has_calls;                // Whether function contains any calls (non-leaf)
 
     void analyze_function(CFunction* func){
         addr_taken.data.allocator = allocator;
@@ -75,6 +76,7 @@ struct CAnalyzer {
         structs.cleanup();
         all_vars.clear();
         compound_literal_slots = 0;
+        has_calls = false;
 
         foreach(stmt; func.body){
             analyze_stmt(stmt);
@@ -84,6 +86,10 @@ struct CAnalyzer {
     bool should_use_stack(){
         // Use stack if any address is taken, any arrays, structs, compound literals, or more than 4 variables
         return addr_taken.count > 0 || arrays.count > 0 || structs.count > 0 || compound_literal_slots > 0 || all_vars[].length > 4;
+    }
+
+    bool is_leaf(){
+        return !has_calls;
     }
 
     void analyze_stmt(CStmt* stmt){
@@ -183,6 +189,7 @@ struct CAnalyzer {
                 break;
             case CALL:
                 auto e = cast(CCall*)expr;
+                has_calls = true;  // Mark as non-leaf function
                 analyze_expr(e.callee);
                 foreach(arg; e.args)
                     analyze_expr(arg);
@@ -289,6 +296,8 @@ struct CDasmWriter {
 
     bool ERROR_OCCURRED = false;
     bool use_stack = false;  // Set true when we need stack-based locals
+    bool is_leaf_func = false;  // True if function makes no calls (can use R0-R7 freely)
+    int n_param_regs = 0;    // Number of registers used by params (for leaf: R0-R(n-1), else R8-R(8+n-1))
     int funcdepth = 0;
     int stack_offset = 1;    // Current stack offset for locals (start at 1, slot 0 is saved RBP)
 
@@ -1079,17 +1088,35 @@ struct CDasmWriter {
                 }
             } else {
                 // Register-based locals (no stack frame)
-                int r = regallocator.allocate();
-                reglocals[pname] = r;
                 if(is_stack_param){
                     // Read from caller's stack
+                    int r = regallocator.allocate();
+                    reglocals[pname] = r;
                     int stack_idx = reg_slot - N_REG_ARGS;
                     int offset = (n_stack_params - stack_idx) * 8 + 8;
                     sb.writef("    sub r% rbp %\n", r, P(offset));
                     sb.writef("    read r% r%\n", r, r);
+                } else if(analyzer.is_leaf()){
+                    // Leaf function: params stay in their RARG registers (R0-R7)
+                    // No move needed - just map the name to the register
+                    reglocals[pname] = RARG1 + reg_slot;
                 } else {
+                    // Non-leaf function: must save args to scratch regs (R8+)
+                    // because calls will clobber R0-R7
+                    int r = regallocator.allocate();
+                    reglocals[pname] = r;
                     sb.writef("    move r% rarg%\n", r, 1 + reg_slot);
                 }
+            }
+        }
+
+        // For leaf functions with register-based locals, adjust allocator
+        // to start after the param registers we're using (can use R(n)..R14)
+        // instead of always starting at R8
+        if(!use_stack && analyzer.is_leaf()){
+            int n_reg_params = total_param_slots < N_REG_ARGS ? total_param_slots : N_REG_ARGS;
+            if(n_reg_params < RegisterAllocator.REG_START){
+                regallocator.reset_to(n_reg_params);
             }
         }
 
