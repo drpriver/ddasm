@@ -160,6 +160,7 @@ struct CAnalyzer {
             case BREAK:
             case CONTINUE:
             case EMPTY:
+            case DASM:
                 break;
         }
     }
@@ -397,6 +398,7 @@ struct CDasmWriter {
             case BREAK:
             case CONTINUE:
             case EMPTY:
+            case DASM:
                 break;
         }
         return max_slots;
@@ -985,7 +987,7 @@ struct CDasmWriter {
 
                 str alias_name = lib_to_alias[lib];
                 sb.writef("dlimport %\n", alias_name);
-                sb.writef("  \"%\"\n", lib);
+                sb.writef("  path \"%\"\n", lib);
 
                 // Emit functions from this library
                 foreach(ref func; unit.functions){
@@ -1003,7 +1005,7 @@ struct CDasmWriter {
 
                     ubyte n_ret = func.return_type.is_void() ? 0 : 1;
                     auto n_params = func.params.length > 8 ? 8 : func.params.length;
-                    sb.writef("  % % %", fname, n_params, n_ret);
+                    sb.writef("  function % % %", fname, n_params, n_ret);
                     if(func.is_varargs) sb.write(" varargs");
                     sb.write("\n");
                 }
@@ -1017,7 +1019,7 @@ struct CDasmWriter {
                     str olib = normalize_lib(gvar.library);
                     if(olib != lib) continue;
 
-                    sb.writef("  % object\n", oname);
+                    sb.writef("  var %\n", oname);
                 }
 
                 sb.write("end\n");
@@ -1332,8 +1334,8 @@ struct CDasmWriter {
             if(err) return err;
         }
 
-        // Add implicit return if needed
-        if(func.body.length == 0 || func.body[$ - 1].kind != CStmtKind.RETURN){
+        // Add implicit return if needed (skip for dasm blocks - they handle their own return)
+        if(func.body.length == 0 || (func.body[$ - 1].kind != CStmtKind.RETURN && func.body[$ - 1].kind != CStmtKind.DASM)){
             if(use_stack){
                 sb.write("    move rsp rbp\n");
                 sb.write("    pop rbp\n");
@@ -1365,6 +1367,7 @@ struct CDasmWriter {
             case SWITCH:   return gen_switch(cast(CSwitchStmt*)stmt);
             case GOTO:     return gen_goto(cast(CGotoStmt*)stmt);
             case LABEL:    return gen_label(cast(CLabelStmt*)stmt);
+            case DASM:     return gen_dasm(cast(CDasmStmt*)stmt);
         }
     }
 
@@ -1678,6 +1681,13 @@ struct CDasmWriter {
         if(stmt.statement !is null){
             return gen_statement(stmt.statement);
         }
+        return 0;
+    }
+
+    int gen_dasm(CDasmStmt* stmt){
+        // Emit raw dasm code directly
+        sb.write(stmt.code);
+        sb.write('\n');
         return 0;
     }
 

@@ -1,17 +1,17 @@
 dlimport SDL
-    "SDL2"
-    SDL_CreateWindow 6 1
-    SDL_GetWindowSize 3 0
-    SDL_DestroyWindow 1 0
-    SDL_WaitEvent 1 1
-    SDL_CreateRenderer 3 1
-    SDL_SetRenderDrawColor 5 1
-    SDL_RenderClear 1 1
-    SDL_RenderFillRect 2 1
-    SDL_RenderPresent 1 0
-    SDL_DestroyRenderer 1 0
-    SDL_Init 1 1
-    SDL_Quit 0 0
+    path "SDL2"
+    function SDL_CreateWindow 6 1
+    function SDL_GetWindowSize 3 0
+    function SDL_DestroyWindow 1 0
+    function SDL_WaitEvent 1 1
+    function SDL_CreateRenderer 3 1
+    function SDL_SetRenderDrawColor 5 1
+    function SDL_RenderClear 1 1
+    function SDL_RenderFillRect 2 1
+    function SDL_RenderPresent 1 0
+    function SDL_DestroyRenderer 1 0
+    function SDL_Init 1 1
+    function SDL_Quit 0 0
 end
 
 import mem

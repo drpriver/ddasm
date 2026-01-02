@@ -107,6 +107,7 @@ enum CTokenType : uint {
     CONTINUE = 709,
     RETURN = 710,
     GOTO = 711,
+    DASM = 712,
 
     // Preprocessor
     HASH = '#',
@@ -295,6 +296,7 @@ struct PPToCConverter {
             if(name == "case") return CTokenType.CASE;
             if(name == "enum") return CTokenType.ENUM;
             if(name == "goto") return CTokenType.GOTO;
+            if(name == "dasm") return CTokenType.DASM;
             if(name == "auto") return CTokenType.AUTO;
             if(name == "bool") return CTokenType.BOOL;
             if(name == "true") return CTokenType.TRUE_KW;

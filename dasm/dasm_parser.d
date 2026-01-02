@@ -156,87 +156,8 @@ struct ParseContext{
                             err_print(tok, "expected newline after dlimport header");
                             return PARSE_ERROR;
                         }
-                        // Parse library paths and function specs until "end"
-                        for(;;){
-                            tok = tokenizer.current_token_and_advance;
-                            while(tok.type == SPACE || tok.type == TAB || tok.type == NEWLINE)
-                                tok = tokenizer.current_token_and_advance;
-                            tok = tokenizer.skip_comment(tok);
-                            if(tok.type == NEWLINE)
-                                continue;
-                            if(tok.type == EOF){
-                                err_print(tok, "unexpected EOF in dlimport block");
-                                return PARSE_ERROR;
-                            }
-                            // Check for quoted library path
-                            if(tok.type == QUOTATION){
-                                const(char)* lib_start = tok._text + 1; // skip opening quote
-                                tok = tokenizer.current_token_and_advance;
-                                while(tok.type != QUOTATION && tok.type != NEWLINE && tok.type != EOF){
-                                    tok = tokenizer.current_token_and_advance;
-                                }
-                                if(tok.type != QUOTATION){
-                                    err_print(tok, "unterminated library path string");
-                                    return PARSE_ERROR;
-                                }
-                                decl.library_paths.push(lib_start[0 .. tok._text - lib_start]);
-                                continue;
-                            }
-                            if(tok.type != IDENTIFIER){
-                                err_print(tok, "expected function/object name, library path string, or 'end'");
-                                return PARSE_ERROR;
-                            }
-                            if(tok.text == "end")
-                                break;
-                            str symbol_name = tok.text;
-                            tok = tokenizer.current_token_and_advance;
-                            while(tok.type == SPACE || tok.type == TAB)
-                                tok = tokenizer.current_token_and_advance;
-                            // Check if this is an object spec (symbol object) or function spec (symbol n_args n_ret)
-                            if(tok.type == IDENTIFIER && tok.text == "object"){
-                                // Object import
-                                import dvm.dvm_unlinked : DlimportObjSpec;
-                                DlimportObjSpec ospec;
-                                ospec.name = symbol_name;
-                                decl.objs.push(ospec);
-                                continue;
-                            }
-                            // Otherwise it's a function spec
-                            DlimportFuncSpec spec;
-                            spec.name = symbol_name;
-                            if(tok.type != NUMBER){
-                                err_print(tok, "expected argument count or 'object'");
-                                return PARSE_ERROR;
-                            }
-                            IntegerResult!ulong n_args_res = parse_unsigned_human(tok.text);
-                            if(n_args_res.errored || n_args_res.value > 8){
-                                err_print(tok, "invalid argument count (must be 0-8)");
-                                return PARSE_ERROR;
-                            }
-                            spec.n_args = cast(ubyte)n_args_res.value;
-                            tok = tokenizer.current_token_and_advance;
-                            while(tok.type == SPACE || tok.type == TAB)
-                                tok = tokenizer.current_token_and_advance;
-                            if(tok.type != NUMBER){
-                                err_print(tok, "expected return count (0 or 1)");
-                                return PARSE_ERROR;
-                            }
-                            IntegerResult!ulong n_ret_res = parse_unsigned_human(tok.text);
-                            if(n_ret_res.errored || n_ret_res.value > 1){
-                                err_print(tok, "invalid return count (must be 0 or 1)");
-                                return PARSE_ERROR;
-                            }
-                            spec.n_ret = cast(ubyte)n_ret_res.value;
-                            // Check for optional "varargs" marker (peek ahead)
-                            // Skip spaces to peek at next token
-                            while(tokenizer.current_token.type == SPACE || tokenizer.current_token.type == TAB)
-                                tokenizer.advance;
-                            if(tokenizer.current_token.type == IDENTIFIER && tokenizer.current_token.text == "varargs"){
-                                spec.is_varargs = true;
-                                tokenizer.advance; // consume "varargs"
-                            }
-                            decl.funcs.push(spec);
-                        }
+                        int err = parse_dlimport(&decl);
+                        if(err) return err;
                         if(decl.library_paths.count == 0){
                             err_print(tok, "dlimport block must contain at least one library path");
                             return PARSE_ERROR;
@@ -630,6 +551,122 @@ struct ParseContext{
         }
     }
     }
+
+    int parse_dlimport(DlimportDecl* decl){with(AsmError)with(TokenType){
+        Token tok;
+        // Parse library paths and function specs until "end"
+        for(;;){
+            tok = tokenizer.current_token_and_advance;
+            while(tok.type == SPACE || tok.type == TAB || tok.type == NEWLINE)
+                tok = tokenizer.current_token_and_advance;
+            tok = tokenizer.skip_comment(tok);
+            if(tok.type == NEWLINE)
+                continue;
+            if(tok.type == EOF){
+                err_print(tok, "unexpected EOF in dlimport block");
+                return PARSE_ERROR;
+            }
+            if(tok.type != IDENTIFIER){
+                err_print(tok, "expected one of 'path', 'var', 'function', or 'end'");
+                return PARSE_ERROR;
+            }
+            if(tok.text == "end")
+                break;
+            // Check for library path
+            if(tok.text == "path"){
+                tok = tokenizer.current_token_and_advance;
+                if(tok.type != SPACE){
+                    err_print(tok, "path must be followed by a space: ", Q(tok.text));
+                    return PARSE_ERROR;
+                }
+                tok = tokenizer.current_token_and_advance;
+                if(tok.type != QUOTATION){
+                    err_print(tok, "path must be followed by a quoted path: ", Q(tok.text));
+                    return PARSE_ERROR;
+                }
+                const(char)* lib_start = tok._text + 1; // skip opening quote
+                tok = tokenizer.current_token_and_advance;
+                while(tok.type != QUOTATION && tok.type != NEWLINE && tok.type != EOF){
+                    tok = tokenizer.current_token_and_advance;
+                }
+                if(tok.type != QUOTATION){
+                    err_print(tok, "unterminated library path string");
+                    return PARSE_ERROR;
+                }
+                decl.library_paths.push(lib_start[0 .. tok._text - lib_start]);
+                tok = tokenizer.current_token_and_advance;
+            }
+            else if(tok.text == "var"){
+                tok = tokenizer.current_token_and_advance;
+                while(tok.type == SPACE || tok.type == TAB)
+                    tok = tokenizer.current_token_and_advance;
+                if(tok.type != IDENTIFIER){
+                    err_print(tok, "expected identifier after 'var': ", Q(tok.text));
+                    return PARSE_ERROR;
+                }
+                decl.objs ~= DlimportObjSpec(tok.text);
+                tok = tokenizer.current_token_and_advance;
+            }
+            else if(tok.text == "function"){
+                tok = tokenizer.current_token_and_advance;
+                while(tok.type == SPACE || tok.type == TAB)
+                    tok = tokenizer.current_token_and_advance;
+                if(tok.type != IDENTIFIER){
+                    err_print(tok, "expected identifier after 'function': ", Q(tok.text));
+                    return PARSE_ERROR;
+                }
+                DlimportFuncSpec spec = {name:tok.text};
+                tok = tokenizer.current_token_and_advance;
+                while(tok.type == SPACE || tok.type == TAB)
+                    tok = tokenizer.current_token_and_advance;
+                if(tok.type != NUMBER){
+                    err_print(tok, "expected argument count: ", Q(tok.text));
+                    return PARSE_ERROR;
+                }
+                IntegerResult!ulong n_args_res = parse_unsigned_human(tok.text);
+                if(n_args_res.errored || n_args_res.value > 255){
+                    err_print(tok, "invalid argument count: ", Q(tok.text));
+                    return PARSE_ERROR;
+                }
+                spec.n_args = cast(ubyte)n_args_res.value;
+                tok = tokenizer.current_token_and_advance;
+                while(tok.type == SPACE || tok.type == TAB)
+                    tok = tokenizer.current_token_and_advance;
+                if(tok.type != NUMBER){
+                    err_print(tok, "expected return count");
+                    return PARSE_ERROR;
+                }
+                IntegerResult!ulong n_ret_res = parse_unsigned_human(tok.text);
+                if(n_ret_res.errored || n_ret_res.value > 2){
+                    err_print(tok, "invalid return count (must be 0, 1, or 2): ", Q(tok.text));
+                    return PARSE_ERROR;
+                }
+                spec.n_ret = cast(ubyte)n_ret_res.value;
+                tok = tokenizer.current_token_and_advance;
+                // Check for optional "varargs" marker (peek ahead)
+                // Skip spaces to peek at next token
+                while(tokenizer.current_token.type == SPACE || tokenizer.current_token.type == TAB)
+                    tokenizer.advance;
+                if(tokenizer.current_token.type == IDENTIFIER && tokenizer.current_token.text == "varargs"){
+                    spec.is_varargs = true;
+                    tokenizer.advance; // consume "varargs"
+                }
+                decl.funcs.push(spec);
+            }
+            else {
+                err_print(tok, "expected one of 'path', 'var', 'function', or 'end'");
+                return PARSE_ERROR;
+            }
+            while(tok.type == SPACE || tok.type == TAB)
+                tok = tokenizer.current_token_and_advance;
+            tok = tokenizer.skip_comment(tok);
+            if(tok.type != NEWLINE && tok.type != EOF){
+                err_print(tok, "trailing tokens: ", Q(tok.text));
+                return PARSE_ERROR;
+            }
+        }
+        return 0;
+    }}
 }
 
 Table!(string, uintptr_t)*

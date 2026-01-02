@@ -101,6 +101,9 @@ struct CPreprocessor {
         define_object_macro("__GNUC_MINOR__", "2");
         define_object_macro("__GNUC_PATCHLEVEL__", "1");
 
+        // DDASM compiler identification
+        define_object_macro("__DDASM__", "1");
+
         // Common empty macros
         define_object_macro("__extension__", "");
         define_object_macro("volatile", "");

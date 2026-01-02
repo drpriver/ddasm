@@ -7,6 +7,10 @@
 #pragma library("SDL2")
   #include <SDL2/SDL.h>
 
+#ifdef __DDASM__
+void abort(void){ dasm { dump; abort } }
+#endif
+
 SDL_Window* gwindow;
 SDL_Renderer* grenderer;
 typedef signed char Tile;
@@ -36,8 +40,7 @@ int start(int width, int height){
   if(!window) {printf("no window\n"); abort();}
   renderer = SDL_CreateRenderer(window, -1, 0);
   if(!renderer) {printf("no renderer\n"); abort();}
-  // Set blend mode (SDL_BLENDMODE_BLEND = 1)
-  SDL_SetRenderDrawBlendMode(renderer, 1);
+  SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
   gwindow = window;
   grenderer = renderer;
   Tile* board = calloc(BOARD_SIZE*BOARD_SIZE, sizeof *board);
@@ -51,6 +54,13 @@ int start(int width, int height){
   SDL_DestroyWindow(window);
   SDL_Quit();
   return 0;
+#ifdef __DDASM__
+  // hack, this will break once we have dead code elimination, but this
+  // generates a reference to this function that is otherwise only
+  // referenced from inline dasm and I don't feel like actually parsing
+  // inline dasm in the c front end yet.
+  SDL_RenderFillRect(renderer, &(SDL_Rect){0});
+#endif
 }
 
 void grow_window(){
@@ -179,12 +189,10 @@ void main_loop(void){
       poll = 1;
     }
     int type = event->type;
-    // int* ptype = event;
-    // int type = *ptype;
     if(type == SDL_QUIT){
       break;
     }
-    else if(type == SDL_KEYDOWN){ //keydown
+    else if(type == SDL_KEYDOWN){
       SDL_Keycode code = event->key.keysym.sym;
       if(code == 'q') break;
       else if(code == ' ') gpaused = !gpaused;
@@ -250,9 +258,24 @@ void main_loop(void){
 }
 
 void draw_rect(void* renderer, int x, int y, int w, int h){
+    #ifdef __DDASM__
+    dasm {
+        shl rarg3 rarg3 32
+        or rarg2 rarg2 rarg3
+        write rsp rarg2
+        shl rarg5 rarg5 32
+        or rarg4 rarg4 rarg5
+        add rarg2 rsp 8
+        write rarg2 rarg4
+        move rarg2 rsp
+        call function SDL2.SDL_RenderFillRect
+        ret
+    }
+    #else
     // SDL_Rect r = {x, y, w, h};
     // SDL_RenderFillRect(renderer, &r);
     SDL_RenderFillRect(renderer, &(SDL_Rect){x, y, w, h});
+    #endif
 }
 
 void render_and_present(int sx, int sy, int dx, int dy){

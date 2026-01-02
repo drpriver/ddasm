@@ -8,6 +8,7 @@ import core.stdc.stdio : fprintf, stderr;
 import dlib.aliases;
 import dlib.allocator : Allocator;
 import dlib.barray : Barray, make_barray;
+import dlib.stringbuilder : StringBuilder;
 import dlib.table : Table;
 
 import cfront.c_pp_to_c : CToken, CTokenType;
@@ -2979,6 +2980,7 @@ struct CParser {
         if(match(CTokenType.CONTINUE)) return parse_continue();
         if(match(CTokenType.SWITCH)) return parse_switch();
         if(match(CTokenType.GOTO)) return parse_goto();
+        if(match(CTokenType.DASM)) return parse_dasm();
 
         // Check for label: identifier followed by colon
         if(check(CTokenType.IDENTIFIER) && peek_at(1).type == CTokenType.COLON){
@@ -3271,6 +3273,60 @@ struct CParser {
         if(ERROR_OCCURRED) return null;
 
         return CGotoStmt.make(allocator, label, keyword);
+    }
+
+    // dasm { ... } - inline assembly block
+    CStmt* parse_dasm(){
+        CToken keyword = previous();
+
+        consume(CTokenType.LEFT_BRACE, "Expected '{' after 'dasm'");
+        if(ERROR_OCCURRED) return null;
+
+        // Collect tokens until matching '}'
+        StringBuilder sb;
+        sb.allocator = allocator;
+
+        int last_line = peek().line;
+        int depth = 1;
+        CTokenType prev_type = CTokenType.EOF;
+
+        while(depth > 0 && !at_end){
+            CToken tok = peek();
+
+            if(tok.type == CTokenType.LEFT_BRACE){
+                depth++;
+                sb.write('{');
+                prev_type = tok.type;
+                advance();
+            } else if(tok.type == CTokenType.RIGHT_BRACE){
+                depth--;
+                if(depth > 0){
+                    sb.write('}');
+                    prev_type = tok.type;
+                    advance();
+                }
+                // Don't advance past final '}' yet
+            } else {
+                // Check if we've moved to a new line
+                if(tok.line > last_line){
+                    sb.write('\n');
+                    last_line = tok.line;
+                } else if(sb.cursor > 0){
+                    // Add space between tokens, but not around dots
+                    if(tok.type != CTokenType.DOT && prev_type != CTokenType.DOT){
+                        sb.write(' ');
+                    }
+                }
+                sb.write(tok.lexeme);
+                prev_type = tok.type;
+                advance();
+            }
+        }
+
+        consume(CTokenType.RIGHT_BRACE, "Expected '}' to close dasm block");
+        if(ERROR_OCCURRED) return null;
+
+        return CDasmStmt.make(allocator, sb.borrow(), keyword);
     }
 
     // (6.8.2) labeled-statement:

@@ -1,9 +1,9 @@
 dlimport LibC
-  "libc.so.6"
-  "libSystem.B.dylib"
-   atoi 1 1
-   puts 1 1 
-   printf 1 1 varargs
+    path "libc.so.6"
+    path "libSystem.B.dylib"
+    function atoi 1 1
+    function puts 1 1
+    function printf 1 1 varargs
 end
 
 

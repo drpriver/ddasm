@@ -1,6 +1,6 @@
 dlimport C
-  "libc.so.6"
-  puts 1 1
+  path "libc.so.6"
+  function puts 1 1
 end
 function start
   scmp rarg1 4

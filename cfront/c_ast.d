@@ -781,6 +781,7 @@ enum CStmtKind {
     SWITCH,
     GOTO,
     LABEL,
+    DASM,
 }
 
 struct CStmt {
@@ -1005,6 +1006,20 @@ struct CLabelStmt {
         result.stmt.token = t;
         result.label = lbl;
         result.statement = s;
+        return &result.stmt;
+    }
+}
+
+struct CDasmStmt {
+    CStmt stmt;
+    str code;  // Raw dasm code to emit
+
+    static CStmt* make(Allocator a, str code, CToken t){
+        auto data = a.zalloc(typeof(this).sizeof);
+        auto result = cast(typeof(this)*)data.ptr;
+        result.stmt.kind = CStmtKind.DASM;
+        result.stmt.token = t;
+        result.code = code;
         return &result.stmt;
     }
 }
