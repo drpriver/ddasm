@@ -336,12 +336,24 @@ Prints all current include paths to stderr for debugging.
 //   /usr/include
 ```
 
+### C23 Support
+
+The preprocessor supports C23 (and some C2Y) preprocessing features:
+- `#elifdef` / `#elifndef` - shorthand for `#elif defined(...)`
+- `#warning` - emit warning diagnostic
+- `__has_include(<header>)` / `__has_include("header")` - check if header exists
+- `__VA_OPT__(content)` - conditional expansion in variadic macros
+- `_Pragma("...")` - pragma operator for use in macros
+- `#line` - override `__LINE__` and `__FILE__`
+
 ### Magic Macros
 
 Beyond the standard `__FILE__` and `__LINE__`, the preprocessor supports:
 
 | Macro | Description |
 |-------|-------------|
+| `__DATE__` | Compilation date as `"Mmm dd yyyy"` |
+| `__TIME__` | Compilation time as `"hh:mm:ss"` |
 | `__COUNTER__` | Auto-incrementing integer (0, 1, 2, ...) |
 | `__COUNTER__(name)` | Named counter stream (independent per name) |
 | `__INCLUDE_DEPTH__` | Nesting depth in #include stack (0 = top level) |
