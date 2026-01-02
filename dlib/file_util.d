@@ -91,12 +91,12 @@ read_file(const char* filepath, Allocator a = MALLOCATOR, FileFlags flags = File
         }
         scope(exit) CloseHandle(handle);
         LARGE_INTEGER li_size;
-        BOOl size_success = GetFileSize(handle, &li_size);
+        BOOL size_success = GetFileSize(handle, &li_size);
         if(!size_success){
             result.errored = GetLastError();
             return result;
         }
-        size_t size = size.QuadPart;
+        size_t size = li_size.QuadPart;
         size_t real_size = size;
         if(flags & FileFlags.NUL_TERMINATE)
             size += 1;
@@ -148,7 +148,7 @@ write_file(const void[] data, const char* filepath, FileFlags flags = FileFlags.
             return GetLastError();
         assert(bytes_written == data.length);
         if(flags & FileFlags.NEWLINE_TERMINATE){
-            if((cast(char[])data)[$-1] != '\n'){
+            if(!data.length || (cast(char[])data)[$-1] != '\n'){
                 WriteFile(handle, "\n".ptr, 1, &bytes_written, null);
             }
         }

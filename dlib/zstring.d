@@ -44,6 +44,7 @@ struct ZString {
     opDollar(){ return length; }
 
     this(str  str_){
+        assert(str_.length);
         assert( str_[$-1] == 0);
         ptr =  str_.ptr;
         length =  str_.length-1;

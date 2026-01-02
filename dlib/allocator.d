@@ -302,7 +302,7 @@ struct ArenaAllocator{
     _alloc(size_t size, bool zero){
         size = round_size_up(size);
         if(size > Arena.ARENA_BUFFER_SIZE)
-            return zero?base_allocator.alloc(size):base_allocator.zalloc(size);
+            return zero?base_allocator.zalloc(size):base_allocator.alloc(size);
         if(!arena){
             arena = make_arena();
             if(!arena) return null;

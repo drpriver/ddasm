@@ -14,6 +14,11 @@ struct Box(T){
         static if(isVoid){
             size_t size;
         }
+        else {
+            ref T opUnary(string s)() if(s == "*"){
+                return *pointer;
+            }
+        }
 
         void
         dealloc(){
@@ -26,6 +31,30 @@ struct Box(T){
             pointer = null;
         }
         inout(T)[] opIndex() inout {return pointer?pointer[0..1]:null;}
+
+        Box!(CastTo) as(CastTo)(){
+            // `is` is so fucking weird
+            static if(is(CastTo == C[], C)){
+                // casting slices is broken in betterC
+                // (causes weird linker errors in unrelated code, with dmd 2.098).
+                static if(isVoid){
+                }
+                else {
+                    size_t size = T.sizeof;
+                }
+                assert(size % C.sizeof == 0);
+                size_t newlength = size / C.sizeof;
+                C[] slice = (cast(C*)pointer)[0 .. newlength];
+                return Box!(CastTo)(allocator, slice);
+            }
+            else {
+                static if(isVoid)
+                    assert(size == CastTo.sizeof);
+                else
+                    static assert(T.sizeof == CastTo.sizeof);
+                return Box!(CastTo)(allocator, cast(CastTo*)pointer);
+            }
+        }
     }
     else {
         U[] data;
@@ -47,8 +76,16 @@ struct Box(T){
                 C[] slice = (cast(C*)data.ptr)[0 .. newlength];
                 return Box!(CastTo)(allocator, slice);
             }
+            else static if(is(CastTo == U)){
+                assert(data.length == 1);
+                return Box!(CastTo)(allocator, data.ptr);
+            }
             else {
-                static assert(0, "TODO: slice to single object");
+                static if(isVoid)
+                    assert(data.length == CastTo.sizeof);
+                else
+                    assert(data.length * U.sizeof == CastTo.sizeof);
+                return Box!(CastTo)(allocator, cast(CastTo*)data.ptr);
             }
         }
         void
@@ -93,6 +130,11 @@ boxed(T)(Allocator a, T[] val){
     return Box!T(a, copy);
 }
 
+Box!(T[])
+boxed(T)(Allocator a, size_t len){
+    T[] p = (a.zalloc!T)(len);
+    return Box!(T[])(a, p);
+}
 Box!T
 boxed(T)(Allocator a){
     T* p = (a.zalloc!T)(1).ptr;
