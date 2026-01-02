@@ -1413,11 +1413,16 @@ struct CDasmWriter {
                     sb.writef("    read rout2 r%\n", src_reg);
                 }
             } else {
-                // Non-struct return: just move value to rout1
-                int temp = regallocator.allocate();
-                int err = gen_expression(stmt.value, temp);
-                if(err) return err;
-                sb.writef("    move rout1 r%\n", temp);
+                // Non-struct return: generate directly to rout1
+                // Check if value is already in a register
+                int src = get_expr_reg(stmt.value);
+                if(src >= 0){
+                    sb.writef("    move rout1 r%\n", src);
+                } else {
+                    // Generate directly to r15 (rout1)
+                    int err = gen_expression(stmt.value, 15);
+                    if(err) return err;
+                }
             }
             regallocator.reset_to(before);
         }
@@ -2377,6 +2382,39 @@ struct CDasmWriter {
         return 0;
     }
 
+    // Returns register if expr is already in one, or -1 if it needs evaluation
+    int get_expr_reg(CExpr* expr){
+        expr = expr.ungroup();
+        if(auto id = expr.as_identifier()){
+            str name = id.name.lexeme;
+            // Don't return register for arrays (they decay to pointers, need address computation)
+            if(CType** vt = name in var_types){
+                if((*vt).is_array()) return -1;
+            }
+            if(int* r = name in reglocals)
+                return *r;
+        }
+        return -1;
+    }
+
+    // Returns true if evaluating expr won't clobber registers other than target
+    // (i.e., it's a single instruction: literal, reglocal, or enum constant)
+    bool is_simple_expr(CExpr* expr){
+        if(expr is null) return true;
+        expr = expr.ungroup();
+        if(expr.as_literal()) return true;
+        if(auto id = expr.as_identifier()){
+            str name = id.name.lexeme;
+            // Arrays need address computation
+            if(CType** vt = name in var_types){
+                if((*vt).is_array()) return false;
+            }
+            if(name in reglocals) return true;
+            if(name in enum_constants) return true;
+        }
+        return false;
+    }
+
     int gen_identifier(CIdentifier* expr, int target){
         if(target == TARGET_IS_NOTHING) return 0;
 
@@ -2579,9 +2617,14 @@ struct CDasmWriter {
     no_fold:
 
         int before = regallocator.alloced;
-        int lhs = target;
-        int err = gen_expression(expr.left, lhs);
-        if(err) return err;
+
+        // Check if left operand is already in a register
+        int lhs = get_expr_reg(expr.left);
+        if(lhs < 0){
+            lhs = target;
+            int err = gen_expression(expr.left, lhs);
+            if(err) return err;
+        }
 
         // Check for pointer/array arithmetic scaling
         CType* left_type = get_expr_type(expr.left);
@@ -2719,10 +2762,13 @@ struct CDasmWriter {
             return 0;
         }
 
-        // General case: evaluate RHS to register
-        int rhs = regallocator.allocate();
-        err = gen_expression(right, rhs);
-        if(err) return err;
+        // General case: check if RHS is already in a register
+        int rhs = get_expr_reg(right);
+        if(rhs < 0){
+            rhs = regallocator.allocate();
+            int err = gen_expression(right, rhs);
+            if(err) return err;
+        }
 
         switch(expr.op) with (CTokenType){
             case PLUS:
@@ -3329,6 +3375,23 @@ struct CDasmWriter {
             }
         }
 
+        // Check if all args are simple (no push/pop needed)
+        bool all_args_simple = true;
+        if(!callee_is_varargs){
+            foreach(arg; expr.args){
+                CType* arg_type = get_expr_type(arg);
+                // Struct args are not simple
+                if(arg_type && arg_type.is_struct_or_union()){
+                    all_args_simple = false;
+                    break;
+                }
+                if(!is_simple_expr(arg)){
+                    all_args_simple = false;
+                    break;
+                }
+            }
+        }
+
         // Non-varargs: evaluate arguments in order with push/pop preservation
         if(!callee_is_varargs)
         foreach(i, arg; expr.args){
@@ -3387,8 +3450,8 @@ struct CDasmWriter {
                     }
                     regallocator.reset_to(regallocator.alloced - 1);
                 }
-                // Push register part to preserve
-                if(i != expr.args.length - 1){
+                // Push register part to preserve (skip if all args are simple)
+                if(!all_args_simple && i != expr.args.length - 1){
                     sb.writef("    push rarg%\n", 1 + slot);
                 }
             } else {
@@ -3417,8 +3480,8 @@ struct CDasmWriter {
                     if(err) return err;
                 }
 
-                // Push to preserve across subsequent arg evaluation
-                if(i != expr.args.length - 1){
+                // Push to preserve across subsequent arg evaluation (skip if all args are simple)
+                if(!all_args_simple && i != expr.args.length - 1){
                     for(int s = 0; s < num_slots; s++){
                         sb.writef("    push rarg%\n", 1 + slot + s);
                     }
@@ -3428,7 +3491,8 @@ struct CDasmWriter {
 
         // Pop register arguments back in reverse order (skip stack args)
         // For varargs calls, we handled args separately above (no push/pop preservation)
-        if(!callee_is_varargs){
+        // Skip if all args were simple (no push was done)
+        if(!callee_is_varargs && !all_args_simple){
             for(int i = cast(int)expr.args.length - 2; i >= 0; i--){
                 int slot = get_arg_slot(i);
                 int num_slots = arg_slots(expr.args[i]);
