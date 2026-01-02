@@ -95,8 +95,9 @@ function fizzother 1
         cmp rs4 1
         jump eq label continue
         move rarg2 "%llu"
-        move rarg3 rs0
+        push rs0
         call function io.fprintf 3
+        sub rsp rsp 8
 
 
     label continue
