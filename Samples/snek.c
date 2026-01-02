@@ -8,7 +8,7 @@
   #include <SDL2/SDL.h>
 
 #ifdef __DDASM__
-void abort(void){ dasm { dump; abort } }
+void abort(void){ __dasm { dump; abort } }
 #endif
 
 SDL_Window* gwindow;
@@ -259,7 +259,7 @@ void main_loop(void){
 
 void draw_rect(void* renderer, int x, int y, int w, int h){
     #ifdef __DDASM__
-    dasm {
+    __dasm__ {
         shl rarg3 rarg3 32
         or rarg2 rarg2 rarg3
         write rsp rarg2

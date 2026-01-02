@@ -322,6 +322,7 @@ struct PPToCConverter {
             if(name == "sizeof") return CTokenType.SIZEOF;
             if(name == "signed") return CTokenType.SIGNED;
             if(name == "inline") return CTokenType.INLINE;
+            if(name == "__dasm") return CTokenType.DASM;
         }
         if(name.length == 7){
             if(name == "typedef") return CTokenType.TYPEDEF;
@@ -343,6 +344,7 @@ struct PPToCConverter {
             if(name == "__inline") return CTokenType.INLINE;
             if(name == "_Complex") return CTokenType.COMPLEX;
             if(name == "_Generic") return CTokenType.GENERIC;
+            if(name == "__dasm__") return CTokenType.DASM;
         }
         if(name.length == 9){
             if(name == "_Noreturn") return CTokenType.NORETURN;
