@@ -7,12 +7,12 @@ module cfront.c_preprocessor;
 
 import core.stdc.stdio : fprintf, stderr;
 import core.stdc.stdlib : getenv;
-import core.stdc.time : time;
+import core.stdc.time : time, localtime, tm;
 import dlib.aliases;
 import dlib.allocator : Allocator;
 import dlib.barray : Barray, make_barray;
 import dlib.table : Table;
-import dlib.stringbuilder : StringBuilder, mwritef, E;
+import dlib.stringbuilder : StringBuilder, mwritef, E, Pad;
 import dlib.file_util : read_file, FileResult, FileFlags;
 import dlib.box: Box, boxed;
 import cfront.c_pp_token;
@@ -43,6 +43,13 @@ struct CPreprocessor {
     int counter_value = 0;  // For __COUNTER__
     Table!(str, int) named_counters;  // For __COUNTER__(name)
     uint random_state = 12345;  // For __RANDOM__ (simple LCG)
+    str date_string;  // For __DATE__ - "Mmm dd yyyy"
+    str time_string;  // For __TIME__ - "hh:mm:ss"
+
+    // #line directive state
+    int line_offset = 0;      // Added to token line numbers for __LINE__
+    int line_offset_base = 0; // Token line where #line was issued
+    str file_override;        // Override for __FILE__ (null = use token's file)
 
     // Initialize with predefined macros
     void initialize(){
@@ -59,7 +66,35 @@ struct CPreprocessor {
 
         // TODO: time is a weak seed (second resolution, predictable)
         // Consider using /dev/urandom or mixing in pid/address
-        random_state = cast(uint)time(null);
+        auto now = time(null);
+        random_state = cast(uint)now;
+
+        // Initialize __DATE__ and __TIME__ strings
+        auto tm_ptr = localtime(&now);
+        if(tm_ptr !is null){
+            static immutable string[12] months = [
+                "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+            ];
+            // Format: "Mmm dd yyyy" - note space before single-digit day
+            int day = tm_ptr.tm_mday;
+            int year = tm_ptr.tm_year + 1900;
+            str month = months[tm_ptr.tm_mon];
+            if(day < 10){
+                date_string = mwritef(allocator, "\"%  % %\"", month, day, year)[];
+            } else {
+                date_string = mwritef(allocator, "\"% % %\"", month, day, year)[];
+            }
+            // Format: "hh:mm:ss"
+            int hour = tm_ptr.tm_hour;
+            int min = tm_ptr.tm_min;
+            int sec = tm_ptr.tm_sec;
+            time_string = mwritef(allocator, "\"%:%:%\"", Pad(hour, 2, '0'), Pad(min, 2, '0'), Pad(sec, 2, '0'))[];
+        } else {
+            // Fallback if localtime fails
+            date_string = "\"??? ?? ????\"";
+            time_string = "\"??:??:??\"";
+        }
 
         // Define built-in macros
         define_builtin_macros();
@@ -69,6 +104,10 @@ struct CPreprocessor {
         // Platform macros
         define_object_macro("__STDC__", "1");
         define_object_macro("__STDC_VERSION__", "201710L");
+        // C23 embed result macros
+        define_object_macro("__STDC_EMBED_NOT_FOUND__", "0");
+        define_object_macro("__STDC_EMBED_FOUND__", "1");
+        define_object_macro("__STDC_EMBED_EMPTY__", "2");
         define_object_macro("__FILE__", builtin:true);
         define_object_macro("__LINE__", builtin:true);
         define_object_macro("__COUNTER__", builtin:true);
@@ -76,6 +115,8 @@ struct CPreprocessor {
         define_object_macro("__BASE_FILE__", builtin:true);
         define_object_macro("__DIR__", builtin:true);
         define_object_macro("__RANDOM__", builtin:true);
+        define_object_macro("__DATE__", builtin:true);
+        define_object_macro("__TIME__", builtin:true);
 
         // TODO: make this an arg so we can pretend to be various compilers.
         version(linux)
@@ -312,17 +353,18 @@ struct CPreprocessor {
     PPMacroDef get_file_macro(PPToken tok){
         PPToken file_tok = tok;
         file_tok.type = PPTokenType.PP_STRING;
-        // Build quoted string for filename: "filename"
-        // FIXME: intern this string
-        file_tok.lexeme = mwritef(allocator, "\"%\"", E(current_file))[];
+        // Use file_override if set by #line, otherwise use current_file
+        str filename = file_override.length > 0 ? file_override : current_file;
+        file_tok.lexeme = mwritef(allocator, "\"%\"", E(filename))[];
         Box!PPToken box = boxed(allocator, &file_tok);
         return PPMacroDef(tok.lexeme, box[], is_builtin:true);
     }
     PPMacroDef get_line_macro(PPToken tok){
         PPToken line_tok = tok;
         line_tok.type = PPTokenType.PP_NUMBER;
-        // FIXME: intern this string
-        line_tok.lexeme = mwritef(allocator, "%", tok.line)[];
+        // Apply #line offset if set
+        int effective_line = tok.line + line_offset;
+        line_tok.lexeme = mwritef(allocator, "%", effective_line)[];
         Box!PPToken box = boxed(allocator, &line_tok);
         return PPMacroDef(tok.lexeme, box[], is_builtin:true);
     }
@@ -370,6 +412,22 @@ struct CPreprocessor {
         uint rand_val = (random_state >> 16) & 0x7FFF;
         rand_tok.lexeme = mwritef(allocator, "%", rand_val)[];
         Box!PPToken box = boxed(allocator, &rand_tok);
+        return PPMacroDef(tok.lexeme, box[], is_builtin:true);
+    }
+
+    PPMacroDef get_date_macro(PPToken tok){
+        PPToken date_tok = tok;
+        date_tok.type = PPTokenType.PP_STRING;
+        date_tok.lexeme = date_string;
+        Box!PPToken box = boxed(allocator, &date_tok);
+        return PPMacroDef(tok.lexeme, box[], is_builtin:true);
+    }
+
+    PPMacroDef get_time_macro(PPToken tok){
+        PPToken time_tok = tok;
+        time_tok.type = PPTokenType.PP_STRING;
+        time_tok.lexeme = time_string;
+        Box!PPToken box = boxed(allocator, &time_tok);
         return PPMacroDef(tok.lexeme, box[], is_builtin:true);
     }
 
@@ -638,6 +696,10 @@ struct CPreprocessor {
             return get_dir_macro(tok);
         if(name == "__RANDOM__")
             return get_random_macro(tok);
+        if(name == "__DATE__")
+            return get_date_macro(tok);
+        if(name == "__TIME__")
+            return get_time_macro(tok);
         if(auto value = name in macros){
             if(value.is_undefined) return PPMacroDef(is_null:true);
             return *value;
@@ -727,6 +789,15 @@ struct CPreprocessor {
                     // No parens - fall through to normal macro expansion
                 }
 
+                // Handle _Pragma operator
+                if(tok.lexeme == "_Pragma"){
+                    size_t new_i = handle_pragma_operator(input, i, output);
+                    if(new_i != i){
+                        i = new_i;
+                        continue;
+                    }
+                }
+
                 PPMacroDef macro_def = get_macro(tok);
                 if(!macro_def.is_null){
                     HideSet hs = HideSet.create(allocator);
@@ -812,6 +883,7 @@ struct CPreprocessor {
         // Conditional directives must be processed even in inactive blocks
         if(directive == "if" || directive == "ifdef" ||
             directive == "ifndef" || directive == "elif" ||
+            directive == "elifdef" || directive == "elifndef" ||
             directive == "else" || directive == "endif"){
             handle_conditional(directive, line_tokens);
             return line_end + 1;
@@ -833,9 +905,9 @@ struct CPreprocessor {
         } else if(directive == "error"){
             handle_error(line_tokens);
         } else if(directive == "warning"){
-            // Ignore warnings
+            handle_warning(line_tokens);
         } else if(directive == "line"){
-            // Ignore #line
+            handle_line(line_tokens);
         } else {
             // Unknown directive - ignore
         }
@@ -895,6 +967,72 @@ struct CPreprocessor {
                 if(is_parent_active()){
                     long value = evaluate_expression(line);
                     if(value != 0){
+                        top.currently_active = true;
+                        top.condition_met = true;
+                    } else {
+                        top.currently_active = false;
+                    }
+                } else {
+                    top.currently_active = false;
+                }
+            }
+        }
+        else if(directive == "elifdef"){
+            if(cond_stack.count == 0){
+                error("#elifdef without #if");
+                return;
+            }
+            auto top = &cond_stack[cond_stack.count - 1];
+            if(top.seen_else){
+                error("#elifdef after #else");
+                return;
+            }
+            if(top.condition_met){
+                top.currently_active = false;
+            } else {
+                if(is_parent_active()){
+                    // Get identifier
+                    size_t i = 0;
+                    while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+                    if(i >= line.length || line[i].type != PPTokenType.PP_IDENTIFIER){
+                        error("#elifdef requires identifier");
+                        return;
+                    }
+                    bool defined = is_defined(line[i].lexeme);
+                    if(defined){
+                        top.currently_active = true;
+                        top.condition_met = true;
+                    } else {
+                        top.currently_active = false;
+                    }
+                } else {
+                    top.currently_active = false;
+                }
+            }
+        }
+        else if(directive == "elifndef"){
+            if(cond_stack.count == 0){
+                error("#elifndef without #if");
+                return;
+            }
+            auto top = &cond_stack[cond_stack.count - 1];
+            if(top.seen_else){
+                error("#elifndef after #else");
+                return;
+            }
+            if(top.condition_met){
+                top.currently_active = false;
+            } else {
+                if(is_parent_active()){
+                    // Get identifier
+                    size_t i = 0;
+                    while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+                    if(i >= line.length || line[i].type != PPTokenType.PP_IDENTIFIER){
+                        error("#elifndef requires identifier");
+                        return;
+                    }
+                    bool defined = is_defined(line[i].lexeme);
+                    if(!defined){
                         top.currently_active = true;
                         top.condition_met = true;
                     } else {
@@ -1653,6 +1791,131 @@ struct CPreprocessor {
                 cast(int)sb.cursor, sb.borrow().ptr);
     }
 
+    // Handle #warning
+    void handle_warning(PPToken[] line){
+        StringBuilder sb;
+        sb.allocator = allocator;
+        foreach(tok; line){
+            if(tok.type != PPTokenType.PP_WHITESPACE || sb.cursor > 0){
+                sb.write(tok.lexeme);
+            }
+        }
+        fprintf(stderr, "%.*s: warning: #warning %.*s\n",
+                cast(int)current_file.length, current_file.ptr,
+                cast(int)sb.cursor, sb.borrow().ptr);
+    }
+
+    // Handle #line directive
+    void handle_line(PPToken[] line){
+        size_t i = 0;
+        while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+
+        if(i >= line.length || line[i].type != PPTokenType.PP_NUMBER){
+            error("#line requires a line number");
+            return;
+        }
+
+        // Parse line number
+        int new_line = 0;
+        foreach(c; line[i].lexeme){
+            if(c >= '0' && c <= '9'){
+                new_line = new_line * 10 + (c - '0');
+            } else {
+                error("#line requires a positive integer");
+                return;
+            }
+        }
+
+        // Compute offset: we want __LINE__ on the NEXT line to be new_line
+        // Current token is on line[i].line, next line will be line[i].line + 1
+        // We want: (line[i].line + 1) + offset = new_line
+        // So: offset = new_line - line[i].line - 1
+        line_offset = new_line - line[i].line - 1;
+        i++;
+
+        // Check for optional filename
+        while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+
+        if(i < line.length && line[i].type == PPTokenType.PP_STRING){
+            // Extract filename from string literal (remove quotes)
+            str s = line[i].lexeme;
+            if(s.length >= 2 && s[0] == '"' && s[$-1] == '"'){
+                file_override = s[1..$-1];
+            }
+        }
+    }
+
+    // Handle _Pragma("string") operator
+    size_t handle_pragma_operator(PPToken[] tokens, size_t start, Barray!PPToken* output){
+        size_t i = start + 1;  // Skip _Pragma
+
+        // Skip whitespace
+        while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+
+        // Expect (
+        if(i >= tokens.length || !tokens[i].is_punct("(")){
+            return start;  // Not a valid _Pragma invocation
+        }
+        i++;
+
+        // Skip whitespace
+        while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+
+        // Expect string literal
+        if(i >= tokens.length || tokens[i].type != PPTokenType.PP_STRING){
+            return start;
+        }
+
+        str pragma_str = tokens[i].lexeme;
+        i++;
+
+        // Skip whitespace
+        while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+
+        // Expect )
+        if(i >= tokens.length || !tokens[i].is_punct(")")){
+            return start;
+        }
+        i++;
+
+        // Destringify: remove quotes and process escapes
+        if(pragma_str.length < 2 || pragma_str[0] != '"' || pragma_str[$-1] != '"'){
+            return i;  // Invalid string, skip
+        }
+
+        StringBuilder sb;
+        sb.allocator = allocator;
+        size_t j = 1;  // Skip opening quote
+        while(j < pragma_str.length - 1){
+            char c = pragma_str[j];
+            if(c == '\\' && j + 1 < pragma_str.length - 1){
+                j++;
+                char next = pragma_str[j];
+                switch(next){
+                    case 'n': sb.write('\n'); break;
+                    case 't': sb.write('\t'); break;
+                    case 'r': sb.write('\r'); break;
+                    case '\\': sb.write('\\'); break;
+                    case '"': sb.write('"'); break;
+                    default: sb.write(next); break;
+                }
+            } else {
+                sb.write(c);
+            }
+            j++;
+        }
+
+        // Tokenize the destringified content
+        str pragma_content = sb.borrow();
+        Barray!PPToken pragma_tokens = make_barray!PPToken(allocator);
+        pp_tokenize(cast(const(ubyte)[])pragma_content, current_file, &pragma_tokens, allocator);
+
+        // Execute as pragma (without the #pragma prefix)
+        handle_pragma(pragma_tokens[], output);
+
+        return i;
+    }
+
     // Evaluate preprocessor expression
     long evaluate_expression(PPToken[] tokens){
         // First expand macros (except in defined())
@@ -1723,16 +1986,75 @@ struct CPreprocessor {
                 }
             }
 
-            // Handle __has_include, __has_include_next specially (they take header-name args)
-            if(tok.type == PPTokenType.PP_IDENTIFIER &&
-                (tok.matches("__has_include") || tok.matches("__has_include_next"))){
+            // Handle __has_include specially (it takes header-name args)
+            if(tok.type == PPTokenType.PP_IDENTIFIER && tok.matches("__has_include")){
                 i++;
                 // Skip whitespace
                 while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
-                // Skip (
+                // Expect (
+                if(i >= tokens.length || !tokens[i].is_punct("(")){
+                    PPToken result;
+                    result.type = PPTokenType.PP_NUMBER;
+                    result.lexeme = "0";
+                    *output ~= result;
+                    continue;
+                }
+                i++;
+                while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+
+                // Parse header name
+                str filename;
+                bool is_system = false;
+                bool found = false;
+
+                if(i < tokens.length && tokens[i].type == PPTokenType.PP_STRING){
+                    // "header.h" form
+                    str s = tokens[i].lexeme;
+                    if(s.length >= 2 && s[0] == '"' && s[$-1] == '"'){
+                        filename = s[1..$-1];
+                        is_system = false;
+                        found = true;
+                    }
+                    i++;
+                } else if(i < tokens.length && tokens[i].is_punct("<")){
+                    // <header.h> form - collect tokens until >
+                    i++;
+                    StringBuilder sb;
+                    sb.allocator = allocator;
+                    while(i < tokens.length && !tokens[i].is_punct(">")){
+                        sb.write(tokens[i].lexeme);
+                        i++;
+                    }
+                    if(i < tokens.length && tokens[i].is_punct(">")) i++;
+                    filename = sb.borrow();
+                    is_system = true;
+                    found = true;
+                }
+
+                // Skip to closing )
+                while(i < tokens.length && !tokens[i].is_punct(")")) i++;
+                if(i < tokens.length) i++;
+
+                // Check if file exists
+                bool exists = false;
+                if(found){
+                    str resolved = resolve_include(filename, is_system);
+                    exists = resolved.length > 0;
+                }
+
+                PPToken result;
+                result.type = PPTokenType.PP_NUMBER;
+                result.lexeme = exists ? "1" : "0";
+                *output ~= result;
+                continue;
+            }
+
+            // Handle __has_include_next (stub - always 0)
+            if(tok.type == PPTokenType.PP_IDENTIFIER && tok.matches("__has_include_next")){
+                i++;
+                while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
                 if(i < tokens.length && tokens[i].is_punct("(")){
                     i++;
-                    // Skip until matching )
                     int depth = 1;
                     while(i < tokens.length && depth > 0){
                         if(tokens[i].is_punct("(")) depth++;
@@ -1740,7 +2062,6 @@ struct CPreprocessor {
                         i++;
                     }
                 }
-                // Emit 0 (we don't support __has_include)
                 PPToken result;
                 result.type = PPTokenType.PP_NUMBER;
                 result.lexeme = "0";
@@ -1859,11 +2180,19 @@ struct CPreprocessor {
                 tok = with_expansion_loc(tok, invocation);
             }
 
-            // Rescan for more macros
+            // Rescan for more macros and _Pragma
             size_t j = 0;
             while(j < substituted.count){
                 PPToken tok = substituted[j];
                 if(tok.type == PPTokenType.PP_IDENTIFIER){
+                    // Check for _Pragma operator
+                    if(tok.lexeme == "_Pragma"){
+                        size_t new_j = handle_pragma_operator(substituted[], j, output);
+                        if(new_j != j){
+                            j = new_j;
+                            continue;
+                        }
+                    }
                     PPMacroDef nested = get_macro(tok);
                     if(!nested.is_null && !hs.is_hidden(tok.lexeme)){
                         j = expand_macro_invocation(substituted[], j, nested, hs, output);
@@ -1887,11 +2216,19 @@ struct CPreprocessor {
                 tok = with_expansion_loc(tok, invocation);
             }
 
-            // Rescan for more macros
+            // Rescan for more macros and _Pragma
             size_t j = 0;
             while(j < substituted.count){
                 PPToken tok = substituted[j];
                 if(tok.type == PPTokenType.PP_IDENTIFIER){
+                    // Check for _Pragma operator
+                    if(tok.lexeme == "_Pragma"){
+                        size_t new_j = handle_pragma_operator(substituted[], j, output);
+                        if(new_j != j){
+                            j = new_j;
+                            continue;
+                        }
+                    }
                     PPMacroDef nested = get_macro(tok);
                     if(!nested.is_null && !hs.is_hidden(tok.lexeme)){
                         j = expand_macro_invocation(substituted[], j, nested, hs, output);
@@ -2016,6 +2353,71 @@ struct CPreprocessor {
                         }
                     }
                     i++;
+                    continue;
+                }
+
+                // Check for __VA_OPT__(content)
+                if(macro_def.is_variadic && tok.matches("__VA_OPT__")){
+                    i++;
+                    // Skip whitespace
+                    while(i < repl.length && repl[i].type == PPTokenType.PP_WHITESPACE) i++;
+                    // Expect (
+                    if(i >= repl.length || !repl[i].is_punct("(")){
+                        continue;
+                    }
+                    i++;
+
+                    // Collect tokens until matching )
+                    size_t opt_start = i;
+                    int depth = 1;
+                    while(i < repl.length && depth > 0){
+                        if(repl[i].is_punct("(")) depth++;
+                        else if(repl[i].is_punct(")")){
+                            depth--;
+                            if(depth == 0) break;
+                        }
+                        i++;
+                    }
+                    size_t opt_end = i;
+                    if(i < repl.length) i++;  // Skip closing )
+
+                    // Check if __VA_ARGS__ is non-empty
+                    bool va_args_nonempty = args.length > macro_def.params.length;
+                    if(va_args_nonempty){
+                        // Process opt_content with parameter substitution
+                        for(size_t oi = opt_start; oi < opt_end; oi++){
+                            PPToken otok = repl[oi];
+                            if(otok.type == PPTokenType.PP_IDENTIFIER){
+                                // Check for parameter
+                                int pidx = macro_def.find_param(otok.lexeme);
+                                if(pidx >= 0 && pidx < args.length){
+                                    foreach(arg_tok; args[pidx]){
+                                        if(arg_tok.type != PPTokenType.PP_WHITESPACE){
+                                            *output ~= arg_tok;
+                                        }
+                                    }
+                                    continue;
+                                }
+                                // Check for __VA_ARGS__
+                                if(otok.matches("__VA_ARGS__")){
+                                    for(size_t ai = macro_def.params.length; ai < args.length; ai++){
+                                        if(ai > macro_def.params.length){
+                                            PPToken comma;
+                                            comma.type = PPTokenType.PP_PUNCTUATOR;
+                                            comma.lexeme = ",";
+                                            *output ~= comma;
+                                        }
+                                        foreach(arg_tok; args[ai]){
+                                            *output ~= arg_tok;
+                                        }
+                                    }
+                                    continue;
+                                }
+                            }
+                            *output ~= otok;
+                        }
+                    }
+                    // If empty, emit nothing
                     continue;
                 }
             }

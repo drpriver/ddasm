@@ -351,6 +351,24 @@ struct StringBuilder{
     void write(T)(Escaped!T e){
         escaped(e.val);
     }
+    void write(T)(Padded!T p){
+        _check_remaining_size(p.width);
+        size_t before = cursor;
+        write(p.val);
+        size_t writ = cursor - before;
+        if(writ < p.width){
+            size_t pad = p.width - writ;
+            if(p.pad_left){
+                import core.stdc.string: memmove, memset;
+                memmove(data+before, data+before+pad, writ);
+                memset(data+before, p.pad_char, pad);
+                cursor += pad;
+            }
+            else {
+                write_nchar(p.pad_char, pad);
+            }
+        }
+    }
     static if(Allocator.state_size){
         static
         Box!(char[])
@@ -414,6 +432,17 @@ struct Hex(T){
 }
 struct PHex(T){
     T val;
+}
+struct Padded(T){
+    T val;
+    size_t width;
+    char pad_char = ' ';
+    bool pad_left = true;
+}
+
+Padded!T
+Pad(T)(T val, size_t width, char pad_char = ' ', bool pad_left=true){
+    return Padded!T(val, width, pad_char, pad_left);
 }
 
 Hex!T
