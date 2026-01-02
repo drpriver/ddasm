@@ -248,6 +248,12 @@ get_misc_module(){
     reg("rand", (){
         return cast(uintptr_t)rand();
     });
+    reg("srand", (uintptr_t seed){
+        srand(cast(uint)seed);
+    });
+    reg("exit", (uintptr_t p){
+        return exit(cast(int)cast(intptr_t)p);
+    });
     version(Posix)
         reg("misc.clock", (){
             timespec tv;

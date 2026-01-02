@@ -742,8 +742,11 @@ struct CDasmWriter {
 
         // If there's a main() but no start(), generate start wrapper
         if(has_main && !has_start){
+            sb.write("import misc\n");
             sb.write("function start 0\n");
             sb.write("    call function main 0\n");
+            sb.write("    move rarg1 rout1\n");
+            sb.write("    call function misc.exit\n");
             sb.write("    ret\n");
             sb.write("end\n");
         }
