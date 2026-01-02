@@ -41,6 +41,7 @@ struct CPreprocessor {
 
     // Magic macro state
     int counter_value = 0;  // For __COUNTER__
+    Table!(str, int) named_counters;  // For __COUNTER__(name)
     uint random_state = 12345;  // For __RANDOM__ (simple LCG)
 
     // Initialize with predefined macros
@@ -51,6 +52,7 @@ struct CPreprocessor {
         pushed_include_paths = make_barray!str(allocator);
         pragma_once_files.data.allocator = allocator;
         include_guards.data.allocator = allocator;
+        named_counters.data.allocator = allocator;
 
         // Set base_file from current_file (must be set before initialize())
         base_file = current_file;
@@ -565,6 +567,59 @@ struct CPreprocessor {
         return i;
     }
 
+    // Handle __COUNTER__(name) - named counter streams
+    size_t handle_counter_builtin(PPToken[] tokens, size_t start, Barray!PPToken* output){
+        size_t i = start + 1;  // Skip __COUNTER__
+
+        // Must have opening paren
+        if(i >= tokens.length || !tokens[i].is_punct("(")){
+            // No paren - fall back to normal __COUNTER__ expansion
+            // Return start to let normal macro expansion handle it
+            return start;
+        }
+        i++;  // Skip (
+
+        // Skip whitespace
+        while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+
+        // Get the counter name (must be identifier)
+        if(i >= tokens.length || tokens[i].type != PPTokenType.PP_IDENTIFIER){
+            error("__COUNTER__(name) requires identifier");
+            return i;
+        }
+        str counter_name = tokens[i].lexeme;
+        i++;
+
+        // Skip whitespace
+        while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+
+        // Must have closing paren
+        if(i >= tokens.length || !tokens[i].is_punct(")")){
+            error("__COUNTER__(name) missing closing paren");
+            return i;
+        }
+        i++;  // Skip )
+
+        // Get or create the named counter
+        int value;
+        if(auto p = counter_name in named_counters){
+            value = *p;
+            *p = value + 1;
+        } else {
+            value = 0;
+            named_counters[counter_name] = 1;
+        }
+
+        // Output as number token
+        PPToken num_tok;
+        num_tok.type = PPTokenType.PP_NUMBER;
+        num_tok.lexeme = mwritef(allocator, "%", value)[];
+        num_tok.file = current_file;
+        *output ~= num_tok;
+
+        return i;
+    }
+
     // Get macro definition
     PPMacroDef get_macro(PPToken tok){
         // Handle special predefined macros
@@ -659,6 +714,17 @@ struct CPreprocessor {
                 if(tok.lexeme == "__ENV__"){
                     i = handle_env_builtin(input, i, output);
                     continue;
+                }
+
+                // Handle __COUNTER__(name) - named counter streams
+                // Falls through to normal __COUNTER__ if no parens
+                if(tok.lexeme == "__COUNTER__"){
+                    size_t new_i = handle_counter_builtin(input, i, output);
+                    if(new_i != i){
+                        i = new_i;
+                        continue;
+                    }
+                    // No parens - fall through to normal macro expansion
                 }
 
                 PPMacroDef macro_def = get_macro(tok);

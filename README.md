@@ -343,6 +343,7 @@ Beyond the standard `__FILE__` and `__LINE__`, the preprocessor supports:
 | Macro | Description |
 |-------|-------------|
 | `__COUNTER__` | Auto-incrementing integer (0, 1, 2, ...) |
+| `__COUNTER__(name)` | Named counter stream (independent per name) |
 | `__INCLUDE_DEPTH__` | Nesting depth in #include stack (0 = top level) |
 | `__BASE_FILE__` | The root file being compiled (not includes) |
 | `__DIR__` | Directory of current file |
@@ -356,6 +357,11 @@ int id1 = __COUNTER__;  // 0
 int id2 = __COUNTER__;  // 1
 const char* dir = __DIR__;  // "src"
 #include "header.h"  // inside header: __INCLUDE_DEPTH__ = 1, __BASE_FILE__ = main file
+
+// Named counters are independent streams
+int foo0 = __COUNTER__(foo);  // 0
+int bar0 = __COUNTER__(bar);  // 0
+int foo1 = __COUNTER__(foo);  // 1
 ```
 
 ### `__EXPAND__(string-literal)`
