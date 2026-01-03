@@ -152,65 +152,6 @@ function start(){
         io.printf2("fib(%zu) = %zu\n", i, fib(i))
 }
 ```
-Which compiles to:
-```
-import io
-function fib 1
-  move r0 r10
-  move r10 0
-  move r11 1
-  move r12 r0
-  tail_call function fib_inner
-end
-
-function fib_inner 3
-  move r0 r10
-  move r1 r11
-  move r2 r12
-  move r3 r2
-  scmp r3 0
-  jump gt label L0
-  move r3 r0
-  move r15 r3
-  ret
-  label L0
-  move r10 r1
-  move r11 r0
-  move r3 r1
-  add r11 r11 r3
-  move r12 r2
-  sub r12 r12 1
-  tail_call function fib_inner
-end
-
-function start 0
-  move r0 0
-  label L0
-  move r1 r0
-  scmp r1 20
-  jump ge label L1
-  move r10 "fib(%zu) = %zu\n"
-  push r10
-  move r11 r0
-  push r11
-  move r10 r0
-  push r0
-  call function fib
-  pop r0
-  move r12 rout1
-  pop r11
-  pop r10
-  push r0
-  call function io.printf2
-  pop r0
-  move r1 r0
-  add r1 r1 1
-  move r0 r1
-  move rip label L0
-  label L1
-  ret
-end
-```
 
 It has regular decimal literals, binary literals, hex literals, pointer-size
 literals and string number literals.
