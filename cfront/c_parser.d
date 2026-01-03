@@ -25,6 +25,7 @@ struct CParser {
     Table!(str, CType*) enum_types;    // Defined enum types
     Table!(str, long) enum_constants;  // Enum constant values (name -> value)
     Table!(str, CType*) typedef_types; // Typedef aliases (name -> type)
+    Table!(str, CType*) global_var_types; // Global variable types (for sizeof in const exprs)
 
     void error(CToken token, str message){
         ERROR_OCCURRED = true;
@@ -91,6 +92,7 @@ struct CParser {
         enum_types.data.allocator = allocator;
         enum_constants.data.allocator = allocator;
         typedef_types.data.allocator = allocator;
+        global_var_types.data.allocator = allocator;
 
         while(!at_end){
             // Handle #pragma (emitted as # pragma library ( "..." ) tokens)
@@ -1002,8 +1004,13 @@ struct CParser {
             // Primary expression (identifier, number, etc.)
             if(check(CTokenType.IDENTIFIER)){
                 CToken id = advance();
-                // Look up variable type - for now just return int
-                current_type = &TYPE_INT;
+                // Look up variable type in global_var_types
+                if(CType** vtype = id.lexeme in global_var_types){
+                    current_type = *vtype;
+                } else {
+                    error(id, "Unknown variable in sizeof expression");
+                    return null;
+                }
             } else if(check(CTokenType.NUMBER) || check(CTokenType.HEX)){
                 advance();
                 current_type = &TYPE_INT;
@@ -1394,7 +1401,7 @@ struct CParser {
                 // Parse array size expression (simplified: expect a number)
                 if(check(CTokenType.NUMBER)){
                     CToken size_tok = advance();
-                    size_t array_size = 1;  // default
+                    size_t array_size = 0;
                     // Parse the number
                     foreach(c; size_tok.lexeme){
                         if(c >= '0' && c <= '9'){
@@ -1856,6 +1863,9 @@ struct CParser {
                 }
             }
         }
+
+        // Register variable type for sizeof lookups in constant expressions
+        global_var_types[name.lexeme] = gvar.var_type;
 
         // Don't consume semicolon here - caller handles comma-separated declarations
         return 0;
@@ -2419,6 +2429,16 @@ struct CParser {
             StructField field;
             field.name = field_name.lexeme;
             field.type = decl_type;
+
+            // Align the offset to the field's alignment requirement
+            size_t field_align = decl_type.align_of();
+            if(!is_union && field_align > 0){
+                size_t misalign = current_offset % field_align;
+                if(misalign != 0){
+                    current_offset += field_align - misalign;  // Add padding
+                }
+            }
+
             field.offset = is_union ? 0 : current_offset;
             *fields ~= field;
 
@@ -2426,7 +2446,7 @@ struct CParser {
             if(!is_union){
                 current_offset += field_size;
             }
-            *total_field_size += field_size;
+            *total_field_size = current_offset - base_offset;  // Return delta including padding
 
         } while(match(CTokenType.COMMA));
 

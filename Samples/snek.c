@@ -4,8 +4,12 @@
   #include <string.h>
   #include <stdio.h>
   #include <time.h>
+#ifdef __linux__
+#pragma include_path push "/usr/include/SDL2"
+#endif
 #pragma library("SDL2")
   #include <SDL2/SDL.h>
+
 
 #ifdef __DDASM__
 void abort(void){ __dasm { dump; abort } }
