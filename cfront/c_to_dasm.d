@@ -858,19 +858,9 @@ struct CDasmWriter {
             // Skip extern objects - they're defined in external libraries
             if(gvar.is_extern) continue;
 
-            // Generate var declaration
-            sb.writef("var % ", gvar.name.lexeme);
-            if(gvar.initializer !is null){
-                // Only support constant initializers for now
-                if(CLiteral* lit = gvar.initializer.as_literal()){
-                    sb.writef("%\n", lit.value.lexeme);
-                } else {
-                    // Non-constant initializer - initialize to 0, will set in start
-                    sb.write("0\n");
-                }
-            } else {
-                sb.write("0\n");
-            }
+            // Generate var declaration with new syntax: var name N init... end
+            if(int err = gen_global_var(&gvar))
+                return err;
             emitted_any_vars = true;
         }
         if(emitted_any_vars) sb.write("\n");
@@ -1085,6 +1075,244 @@ struct CDasmWriter {
             }
         }
         return count;
+    }
+
+    // =========================================================================
+    // Global Variable Generation
+    // =========================================================================
+
+    // Try to evaluate a constant expression and return its value
+    // Returns true if successful, false if not a constant
+    bool try_eval_const(CExpr* expr, out long value){
+        if(expr is null) return false;
+
+        if(CLiteral* lit = expr.as_literal()){
+            if(lit.value.type == CTokenType.CHAR_LITERAL){
+                value = parse_char_literal(lit.value.lexeme);
+                return true;
+            } else if(lit.value.type == CTokenType.NUMBER ||
+                      lit.value.type == CTokenType.HEX){
+                // Strip suffix
+                str lex = lit.value.lexeme;
+                while(lex.length > 0){
+                    ubyte last = lex[$ - 1];
+                    if(last == 'u' || last == 'U' || last == 'l' || last == 'L'){
+                        lex = lex[0 .. $ - 1];
+                    } else break;
+                }
+                auto parsed = parse_unsigned_human(lex);
+                if(!parsed.errored){
+                    value = cast(long)parsed.value;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        if(CUnary* unary = expr.as_unary()){
+            long operand_val;
+            if(!try_eval_const(unary.operand, operand_val)) return false;
+            switch(unary.op) with(CTokenType){
+                case MINUS: value = -operand_val; return true;
+                case PLUS:  value = operand_val; return true;
+                case TILDE: value = ~operand_val; return true;
+                case BANG:  value = operand_val == 0 ? 1 : 0; return true;
+                default: return false;
+            }
+        }
+
+        if(CBinary* bin = expr.as_binary()){
+            long lhs, rhs;
+            if(!try_eval_const(bin.left, lhs)) return false;
+            if(!try_eval_const(bin.right, rhs)) return false;
+            switch(bin.op) with(CTokenType){
+                case PLUS:  value = lhs + rhs; return true;
+                case MINUS: value = lhs - rhs; return true;
+                case STAR:  value = lhs * rhs; return true;
+                case SLASH: if(rhs == 0) return false; value = lhs / rhs; return true;
+                case PERCENT: if(rhs == 0) return false; value = lhs % rhs; return true;
+                case AMP:   value = lhs & rhs; return true;
+                case PIPE:  value = lhs | rhs; return true;
+                case CARET: value = lhs ^ rhs; return true;
+                case LESS_LESS: value = lhs << rhs; return true;
+                case GREATER_GREATER: value = lhs >> rhs; return true;
+                default: return false;
+            }
+        }
+
+        if(CCast* cast_expr = expr.as_cast()){
+            return try_eval_const(cast_expr.operand, value);
+        }
+
+        // Check for enum constants
+        if(CIdentifier* ident = expr.as_identifier()){
+            if(long* ec = ident.name.lexeme in enum_constants){
+                value = *ec;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // Get the base scalar type for an array (e.g., int for int[2][3])
+    CType* get_scalar_type(CType* t){
+        while(t !is null && t.is_array()){
+            t = t.pointed_to;
+        }
+        return t;
+    }
+
+    // Count total scalar elements in a type (e.g., 6 for int[2][3])
+    size_t count_scalar_elements(CType* t){
+        size_t count = 1;
+        while(t !is null && t.is_array()){
+            count *= t.array_size;
+            t = t.pointed_to;
+        }
+        return count;
+    }
+
+    // Flatten nested initializers and emit packed words
+    // Returns number of scalar values emitted
+    size_t emit_init_values(CExpr* init, CType* target_type, size_t scalar_size,
+                            ref ulong word_val, ref size_t byte_offset, size_t size_words){
+        size_t count = 0;
+
+        if(CInitList* ilist = init.as_init_list()){
+            // Nested init list - recurse into each element
+            CType* elem_type = target_type.is_array() ? target_type.pointed_to : target_type;
+            foreach(ref elem; ilist.elements[]){
+                count += emit_init_values(elem.value, elem_type, scalar_size,
+                                         word_val, byte_offset, size_words);
+            }
+        } else if(CLiteral* lit = init.as_literal()){
+            // Check for string literal initializing char array
+            if(lit.value.type == CTokenType.STRING && target_type.is_array() &&
+               target_type.pointed_to !is null && target_type.pointed_to.kind == CTypeKind.CHAR){
+                str s = lit.value.lexeme;
+                if(s.length >= 2) s = s[1 .. $ - 1];  // Remove quotes
+                size_t i = 0;
+                while(i < s.length){
+                    long char_val = 0;
+                    if(s[i] == '\\' && i + 1 < s.length){
+                        switch(s[i + 1]){
+                            case 'n': char_val = '\n'; break;
+                            case 't': char_val = '\t'; break;
+                            case 'r': char_val = '\r'; break;
+                            case '0': char_val = '\0'; break;
+                            case '\\': char_val = '\\'; break;
+                            default: char_val = s[i + 1]; break;
+                        }
+                        i += 2;
+                    } else {
+                        char_val = s[i];
+                        i++;
+                    }
+                    // Pack this byte
+                    size_t word_idx = byte_offset / 8;
+                    size_t bit_offset = (byte_offset % 8) * 8;
+                    if(word_idx * 8 == byte_offset && word_idx > 0){
+                        // Emit previous word
+                        sb.writef("% ", word_val);
+                        word_val = 0;
+                    }
+                    word_val |= (cast(ulong)char_val & 0xFF) << bit_offset;
+                    byte_offset++;
+                    count++;
+                }
+                // Add null terminator
+                size_t word_idx = byte_offset / 8;
+                size_t bit_offset = (byte_offset % 8) * 8;
+                if(word_idx * 8 == byte_offset && word_idx > 0){
+                    sb.writef("% ", word_val);
+                    word_val = 0;
+                }
+                // null terminator is 0, already there
+                byte_offset++;
+                count++;
+            } else {
+                // Scalar literal
+                long val = 0;
+                try_eval_const(init, val);
+                ulong mask = (scalar_size >= 8) ? ulong.max : ((1UL << (scalar_size * 8)) - 1);
+                size_t word_idx = byte_offset / 8;
+                size_t bit_offset = (byte_offset % 8) * 8;
+                if(word_idx * 8 == byte_offset && word_idx > 0){
+                    // Emit previous word
+                    sb.writef("% ", word_val);
+                    word_val = 0;
+                }
+                word_val |= (cast(ulong)val & mask) << bit_offset;
+                byte_offset += scalar_size;
+                count++;
+            }
+        } else {
+            // Try to evaluate as constant expression
+            long val = 0;
+            try_eval_const(init, val);
+            ulong mask = (scalar_size >= 8) ? ulong.max : ((1UL << (scalar_size * 8)) - 1);
+            size_t word_idx = byte_offset / 8;
+            size_t bit_offset = (byte_offset % 8) * 8;
+            if(word_idx * 8 == byte_offset && word_idx > 0){
+                sb.writef("% ", word_val);
+                word_val = 0;
+            }
+            word_val |= (cast(ulong)val & mask) << bit_offset;
+            byte_offset += scalar_size;
+            count++;
+        }
+        return count;
+    }
+
+    int gen_global_var(CGlobalVar* gvar){
+        CType* vtype = gvar.var_type;
+        size_t size_bytes = vtype.size_of();
+        size_t size_words = (size_bytes + 7) / 8;  // Round up to words
+        if(size_words == 0) size_words = 1;
+
+        sb.writef("var % % ", gvar.name.lexeme, size_words);
+
+        // Check if we have an initializer
+        if(gvar.initializer !is null){
+            // Handle array initializers
+            if(vtype.is_array() && vtype.pointed_to !is null){
+                CType* scalar_type = get_scalar_type(vtype);
+                size_t scalar_size = scalar_type ? scalar_type.size_of() : 1;
+                size_t total_scalars = count_scalar_elements(vtype);
+
+                ulong word_val = 0;
+                size_t byte_offset = 0;
+                size_t emitted = emit_init_values(gvar.initializer, vtype, scalar_size,
+                                                  word_val, byte_offset, size_words);
+
+                // Emit final word
+                sb.writef("% ", word_val);
+
+                // Emit remaining zero words if needed
+                size_t words_emitted = (byte_offset + 7) / 8;
+                for(size_t w = words_emitted; w < size_words; w++){
+                    sb.write("0 ");
+                }
+            } else {
+                // Scalar variable
+                long val = 0;
+                if(CLiteral* lit = gvar.initializer.as_literal()){
+                    try_eval_const(&lit.expr, val);
+                } else {
+                    try_eval_const(gvar.initializer, val);
+                }
+                sb.writef("% ", val);
+            }
+        } else {
+            // No initializer - emit zeros
+            for(size_t w = 0; w < size_words; w++){
+                sb.write("0 ");
+            }
+        }
+
+        sb.write("end\n");
+        return 0;
     }
 
     // =========================================================================
@@ -1918,6 +2146,65 @@ struct CDasmWriter {
                 size_t arr_size = stmt.var_type.array_size;
                 stack_offset += cast(int)arr_size;
 
+                // Helper to recursively initialize nested arrays
+                int gen_nested_array_init(CInitList* init_list, CType* arr_type, int base_slot, size_t base_offset,
+                                         int addr_reg, int val_reg){
+                    if(!arr_type.is_array()) return 1;
+                    CType* elem_type = arr_type.pointed_to;
+                    size_t elem_size = elem_type ? elem_type.size_of() : 1;
+                    size_t arr_size_ = arr_type.array_size;
+                    size_t num_elems = init_list.elements.length;
+                    if(num_elems > arr_size_) num_elems = arr_size_;
+
+                    for(size_t i = 0; i < num_elems; i++){
+                        auto elem = init_list.elements[i];
+                        size_t elem_offset = base_offset + i * elem_size;
+
+                        if(CInitList* nested = elem.value.as_init_list()){
+                            if(elem_type.is_array()){
+                                // Recurse for deeper nesting
+                                int err = gen_nested_array_init(nested, elem_type, base_slot, elem_offset, addr_reg, val_reg);
+                                if(err) return err;
+                            } else if(elem_type.is_struct()){
+                                // Handle struct initialization
+                                auto fields = elem_type.fields;
+                                size_t num_fields = nested.elements.length;
+                                if(num_fields > fields.length) num_fields = fields.length;
+                                for(size_t fi = 0; fi < num_fields; fi++){
+                                    auto field_elem = nested.elements[fi];
+                                    size_t field_offset = elem_offset + fields[fi].offset;
+                                    size_t field_size = fields[fi].type.size_of();
+                                    int field_slot = base_slot + cast(int)(field_offset / 8);
+
+                                    int err = gen_expression(field_elem.value, val_reg);
+                                    if(err) return err;
+
+                                    sb.writef("    add r% rbp %\n", addr_reg, P(field_slot));
+                                    if(field_offset % 8 != 0){
+                                        sb.writef("    add r% r% %\n", addr_reg, addr_reg, field_offset % 8);
+                                    }
+                                    sb.writef("    % r% r%\n", write_instr_for_size(field_size), addr_reg, val_reg);
+                                }
+                            } else {
+                                error(elem.value.token, "Nested initializer for non-array/non-struct element");
+                                return 1;
+                            }
+                        } else {
+                            // Scalar value
+                            int elem_slot = base_slot + cast(int)(elem_offset / 8);
+                            int err = gen_expression(elem.value, val_reg);
+                            if(err) return err;
+
+                            sb.writef("    add r% rbp %\n", addr_reg, P(elem_slot));
+                            if(elem_offset % 8 != 0){
+                                sb.writef("    add r% r% %\n", addr_reg, addr_reg, elem_offset % 8);
+                            }
+                            sb.writef("    % r% r%\n", write_instr_for_size(elem_size), addr_reg, val_reg);
+                        }
+                    }
+                    return 0;
+                }
+
                 // Handle array initializer
                 if(stmt.initializer !is null){
                     if(CLiteral* lit = stmt.initializer.as_literal()){
@@ -2103,8 +2390,13 @@ struct CDasmWriter {
                                         sb.writef("    % r% r%\n", write_instr_for_size(field_size), addr_reg, val_reg);
                                         field_idx++;
                                     }
+                                } else if(elem_type.is_array()){
+                                    // Initialize nested array (for multi-dimensional arrays)
+                                    // Recursively flatten and write scalar values
+                                    int err = gen_nested_array_init(nested_init, elem_type, slot, offset, addr_reg, val_reg);
+                                    if(err) return err;
                                 } else {
-                                    error(elem.value.token, "Nested initializer for non-struct array element");
+                                    error(elem.value.token, "Nested initializer for non-struct/non-array element");
                                     return 1;
                                 }
                             } else {
@@ -2444,10 +2736,23 @@ struct CDasmWriter {
         if(CType** vt = name in var_types){
             if((*vt).is_array()){
                 if(int* offset = name in stacklocals){
-                    // Array-to-pointer decay: compute address of first element
+                    // Local array-to-pointer decay: compute address of first element
                     sb.writef("    add r% rbp %\n", target, P(*offset));
                     return 0;
                 }
+            }
+        }
+
+        // Global array-to-pointer decay: just return the address
+        if(CType** gtype = name in global_types){
+            if((*gtype) && (*gtype).is_array()){
+                // For extern objects, use qualified name with module alias
+                if(str* mod_alias = name in extern_objs){
+                    sb.writef("    move r% var %.%\n", target, *mod_alias, name);
+                } else {
+                    sb.writef("    move r% var %\n", target, name);
+                }
+                return 0;
             }
         }
 
@@ -4086,7 +4391,12 @@ struct CDasmWriter {
         sb.writef("    add r% r% r%\n", arr_reg, arr_reg, idx_reg);
 
         if(target != TARGET_IS_NOTHING){
-            sb.writef("    % r% r%\n", read_instr_for_size(elem_size, is_unsigned), target, arr_reg);
+            // If element type is an array, don't dereference - arrays decay to pointers
+            if(elem_type !is null && elem_type.is_array()){
+                sb.writef("    move r% r%\n", target, arr_reg);
+            } else {
+                sb.writef("    % r% r%\n", read_instr_for_size(elem_size, is_unsigned), target, arr_reg);
+            }
         }
 
         regallocator.reset_to(before);

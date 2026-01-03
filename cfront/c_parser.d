@@ -1746,16 +1746,30 @@ struct CParser {
         gvar.is_extern = is_extern;
         gvar.library = library;
 
-        // Handle array declarations: type name[size]
+        // Handle array declarations: type name[size1][size2]...
+        // In C, int arr[2][3] means array[2] of array[3] of int
+        // We need to collect dimensions and apply in reverse order
+        size_t[8] dims;  // Support up to 8 dimensions
+        size_t num_dims = 0;
         while(check(CTokenType.LEFT_BRACKET)){
             advance();  // consume '['
-            // Skip array size expression
-            while(!check(CTokenType.RIGHT_BRACKET) && !at_end){
-                advance();
+            // Parse array size if present
+            size_t dim = 0;
+            if(!check(CTokenType.RIGHT_BRACKET)){
+                auto size_result = parse_enum_const_expr();
+                if(!size_result.err && size_result.value > 0){
+                    dim = cast(size_t)size_result.value;
+                }
             }
-            if(check(CTokenType.RIGHT_BRACKET)) advance();
-            // Treat as pointer type for simplicity
-            gvar.var_type = make_pointer_type(allocator, gvar.var_type);
+            consume(CTokenType.RIGHT_BRACKET, "Expected ']' after array size");
+            if(ERROR_OCCURRED) return 1;
+            if(num_dims < 8){
+                dims[num_dims++] = dim;
+            }
+        }
+        // Apply dimensions in reverse order (rightmost is innermost)
+        for(size_t i = num_dims; i > 0; i--){
+            gvar.var_type = make_array_type(allocator, gvar.var_type, dims[i - 1]);
         }
 
         // Skip __asm("symbol") renaming
@@ -1781,6 +1795,35 @@ struct CParser {
             if(gvar.initializer is null) return 1;
             // If there's an initializer, this is a definition, not an extern declaration
             gvar.is_extern = false;
+
+            // Infer array size from initializer
+            if(gvar.var_type.is_array() && gvar.var_type.array_size == 0){
+                // String literal initializer for char[]
+                if(gvar.var_type.pointed_to && gvar.var_type.pointed_to.kind == CTypeKind.CHAR){
+                    if(CLiteral* lit = gvar.initializer.as_literal()){
+                        if(lit.value.type == CTokenType.STRING){
+                            // Count actual characters including escapes plus null terminator
+                            str s = lit.value.lexeme;
+                            if(s.length >= 2) s = s[1 .. $ - 1];  // Remove quotes
+                            size_t char_count = 0;
+                            for(size_t i = 0; i < s.length; ){
+                                if(s[i] == '\\' && i + 1 < s.length){
+                                    i += 2;  // Skip escape sequence
+                                } else {
+                                    i++;
+                                }
+                                char_count++;
+                            }
+                            char_count++;  // Add null terminator
+                            gvar.var_type.array_size = char_count;
+                        }
+                    }
+                }
+                // Brace-enclosed initializer list
+                if(CInitList* ilist = gvar.initializer.as_init_list()){
+                    gvar.var_type.array_size = ilist.elements.length;
+                }
+            }
         }
 
         // Don't consume semicolon here - caller handles comma-separated declarations
@@ -3360,8 +3403,11 @@ struct CParser {
             CToken name = consume(CTokenType.IDENTIFIER, "Expected variable name");
             if(ERROR_OCCURRED) return null;
 
-            // Check for array declaration: int arr[10] or int arr[SIZE]
-            if(match(CTokenType.LEFT_BRACKET)){
+            // Check for array declaration: int arr[2][3] etc.
+            // Collect dimensions and apply in reverse order (rightmost is innermost)
+            size_t[8] dims;
+            size_t num_dims = 0;
+            while(match(CTokenType.LEFT_BRACKET)){
                 auto size_result = parse_enum_const_expr();
                 if(size_result.err) return null;
                 if(size_result.value <= 0){
@@ -3372,8 +3418,13 @@ struct CParser {
                 consume(CTokenType.RIGHT_BRACKET, "Expected ']' after array size");
                 if(ERROR_OCCURRED) return null;
 
-                // Create array type
-                var_type = make_array_type(allocator, var_type, cast(size_t) size_result.value);
+                if(num_dims < 8){
+                    dims[num_dims++] = cast(size_t) size_result.value;
+                }
+            }
+            // Apply dimensions in reverse order
+            for(size_t i = num_dims; i > 0; i--){
+                var_type = make_array_type(allocator, var_type, dims[i - 1]);
             }
 
             CExpr* initializer = null;

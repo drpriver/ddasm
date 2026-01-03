@@ -181,8 +181,8 @@ struct CType {
     // Number of stack slots needed for this type (for local allocation)
     size_t stack_slots(){
         if(kind == CTypeKind.ARRAY){
-            // Array needs one slot per element
-            return array_size;
+            // Array needs enough slots for its total size (8 bytes per slot)
+            return (size_of() + 7) / 8;
         }
         if(kind == CTypeKind.STRUCT || kind == CTypeKind.UNION){
             // Struct/union needs enough slots for its size (8 bytes per slot)
