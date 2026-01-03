@@ -27,7 +27,7 @@ str normalize_lib(str lib){
 }
 import dlib.allocator : Allocator;
 import dlib.barray : Barray, make_barray;
-import dlib.stringbuilder : StringBuilder, P;
+import dlib.stringbuilder : StringBuilder, P, H;
 import dlib.table : Table;
 import dlib.parse_numbers : parse_unsigned_human;
 
@@ -1214,7 +1214,7 @@ struct CDasmWriter {
                     size_t bit_offset = (byte_offset % 8) * 8;
                     if(word_idx * 8 == byte_offset && word_idx > 0){
                         // Emit previous word
-                        sb.writef("% ", word_val);
+                        sb.writef("% ", H(word_val));
                         word_val = 0;
                     }
                     word_val |= (cast(ulong)char_val & 0xFF) << bit_offset;
@@ -1225,7 +1225,7 @@ struct CDasmWriter {
                 size_t word_idx = byte_offset / 8;
                 size_t bit_offset = (byte_offset % 8) * 8;
                 if(word_idx * 8 == byte_offset && word_idx > 0){
-                    sb.writef("% ", word_val);
+                    sb.writef("% ", H(word_val));
                     word_val = 0;
                 }
                 // null terminator is 0, already there
@@ -1240,7 +1240,7 @@ struct CDasmWriter {
                 size_t bit_offset = (byte_offset % 8) * 8;
                 if(word_idx * 8 == byte_offset && word_idx > 0){
                     // Emit previous word
-                    sb.writef("% ", word_val);
+                    sb.writef("% ", H(word_val));
                     word_val = 0;
                 }
                 word_val |= (cast(ulong)val & mask) << bit_offset;
@@ -1255,7 +1255,7 @@ struct CDasmWriter {
             size_t word_idx = byte_offset / 8;
             size_t bit_offset = (byte_offset % 8) * 8;
             if(word_idx * 8 == byte_offset && word_idx > 0){
-                sb.writef("% ", word_val);
+                sb.writef("% ", H(word_val));
                 word_val = 0;
             }
             word_val |= (cast(ulong)val & mask) << bit_offset;
@@ -1287,7 +1287,7 @@ struct CDasmWriter {
                                                   word_val, byte_offset, size_words);
 
                 // Emit final word
-                sb.writef("% ", word_val);
+                sb.writef("% ", H(word_val));
 
                 // Emit remaining zero words if needed
                 size_t words_emitted = (byte_offset + 7) / 8;
@@ -1302,7 +1302,7 @@ struct CDasmWriter {
                 } else {
                     try_eval_const(gvar.initializer, val);
                 }
-                sb.writef("% ", val);
+                sb.writef("% ", H(cast(ulong)val));
             }
         } else {
             // No initializer - emit zeros
