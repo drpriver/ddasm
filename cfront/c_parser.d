@@ -1388,6 +1388,37 @@ struct CParser {
             CToken typedef_name = consume(CTokenType.IDENTIFIER, "Expected typedef name");
             if(ERROR_OCCURRED) return 1;
 
+            // Check for array dimensions (e.g., typedef struct X name[1])
+            if(check(CTokenType.LEFT_BRACKET)){
+                advance();  // consume '['
+                // Parse array size expression (simplified: expect a number)
+                if(check(CTokenType.NUMBER)){
+                    CToken size_tok = advance();
+                    size_t array_size = 1;  // default
+                    // Parse the number
+                    foreach(c; size_tok.lexeme){
+                        if(c >= '0' && c <= '9'){
+                            array_size = array_size * 10 + (c - '0');
+                        } else {
+                            break;
+                        }
+                    }
+                    consume(CTokenType.RIGHT_BRACKET, "Expected ']'");
+                    if(ERROR_OCCURRED) return 1;
+
+                    // Create array type
+                    struct_type = make_array_type(allocator, struct_type, array_size);
+                } else {
+                    // Skip to ]
+                    while(!check(CTokenType.RIGHT_BRACKET) && !at_end){
+                        advance();
+                    }
+                    consume(CTokenType.RIGHT_BRACKET, "Expected ']'");
+                    if(ERROR_OCCURRED) return 1;
+                    struct_type = make_array_type(allocator, struct_type, 1);
+                }
+            }
+
             // Skip __attribute__((xxx)) after typedef name
             if(check(CTokenType.IDENTIFIER) && peek().lexeme == "__attribute__"){
                 advance();
@@ -2720,6 +2751,7 @@ struct CParser {
             } else if(match(CTokenType.DOUBLE)){
                 // long double - treat as double for simplicity
                 result = &TYPE_DOUBLE;
+                match(CTokenType.COMPLEX);  // consume trailing _Complex if present
             } else {
                 // Consume trailing unsigned/signed/int (e.g., 'long unsigned int')
                 while(match(CTokenType.UNSIGNED)) is_unsigned = true;
@@ -2729,11 +2761,28 @@ struct CParser {
             }
         } else if(match(CTokenType.FLOAT)){
             result = &TYPE_FLOAT;
+            match(CTokenType.COMPLEX);  // consume trailing _Complex if present (stub)
         } else if(match(CTokenType.DOUBLE)){
             result = &TYPE_DOUBLE;
+            match(CTokenType.COMPLEX);  // consume trailing _Complex if present (stub)
         } else if(match(CTokenType.FLOAT16)){
             // _Float16 - treat as float for now
             result = &TYPE_FLOAT;
+        } else if(match(CTokenType.FLOAT32)){
+            // _Float32 - treat as float
+            result = &TYPE_FLOAT;
+        } else if(match(CTokenType.FLOAT64)){
+            // _Float64 - treat as double
+            result = &TYPE_DOUBLE;
+        } else if(match(CTokenType.FLOAT128)){
+            // _Float128 - stub as double for now
+            result = &TYPE_DOUBLE;
+        } else if(match(CTokenType.FLOAT32X)){
+            // _Float32x - stub as double for now
+            result = &TYPE_DOUBLE;
+        } else if(match(CTokenType.FLOAT64X)){
+            // _Float64x - stub as double for now
+            result = &TYPE_DOUBLE;
         } else if(match(CTokenType.BOOL)){
             // _Bool - treat as unsigned char for now
             result = &TYPE_UCHAR;

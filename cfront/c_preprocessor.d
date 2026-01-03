@@ -138,7 +138,39 @@ struct CPreprocessor {
         else
             enum DEFAULT_COMPILER_IS_GCC = false;
         if(DEFAULT_COMPILER_IS_GCC){
-            // macros for stdint.h
+            // macros for stdint.h - exact-width types
+            define_object_macro("__INT8_TYPE__", "signed char");
+            define_object_macro("__INT16_TYPE__", "short int");
+            define_object_macro("__INT32_TYPE__", "int");
+            define_object_macro("__UINT8_TYPE__", "unsigned char");
+            define_object_macro("__UINT16_TYPE__", "short unsigned int");
+            define_object_macro("__UINT32_TYPE__", "unsigned int");
+
+            // Character type macros (for stdatomic.h, wchar.h)
+            define_object_macro("__CHAR16_TYPE__", "short unsigned int");
+            define_object_macro("__CHAR32_TYPE__", "unsigned int");
+            define_object_macro("__WCHAR_TYPE__", "int");
+            define_object_macro("__WINT_TYPE__", "unsigned int");
+
+            // Other type macros
+            define_object_macro("__SIG_ATOMIC_TYPE__", "int");
+            version(D_LP64){
+                define_object_macro("__SIZE_TYPE__", "long unsigned int");
+                define_object_macro("__PTRDIFF_TYPE__", "long int");
+            } else {
+                define_object_macro("__SIZE_TYPE__", "unsigned int");
+                define_object_macro("__PTRDIFF_TYPE__", "int");
+            }
+            version(D_LP64){
+                define_object_macro("__INT64_TYPE__", "long int");
+                define_object_macro("__UINT64_TYPE__", "long unsigned int");
+            }
+            else{
+                define_object_macro("__INT64_TYPE__", "long long int");
+                define_object_macro("__UINT64_TYPE__", "long long unsigned int");
+            }
+
+            // least-width types
             define_object_macro("__INT_LEAST8_TYPE__", "signed char");
             define_object_macro("__INT_FAST8_TYPE__", "signed char");
             define_object_macro("__INT_LEAST16_TYPE__", "short");
@@ -217,10 +249,10 @@ struct CPreprocessor {
             define_object_macro("__arm__", "1");
         }
 
-        // GCC compatibility
-        define_object_macro("__GNUC__", "4");
-        define_object_macro("__GNUC_MINOR__", "2");
-        define_object_macro("__GNUC_PATCHLEVEL__", "1");
+        // GCC compatibility (claim GCC 9.4 for better header support)
+        define_object_macro("__GNUC__", "9");
+        define_object_macro("__GNUC_MINOR__", "4");
+        define_object_macro("__GNUC_PATCHLEVEL__", "0");
 
         // DDASM compiler identification
         define_object_macro("__DDASM__", "1");
@@ -267,14 +299,10 @@ struct CPreprocessor {
         if(value.length > 0){
             Barray!PPToken value_tokens = make_barray!PPToken(allocator);
             pp_tokenize(cast(const(ubyte)[])value, "<builtin>", &value_tokens, allocator);
-            // Remove EOF token
-            if(value_tokens.count > 0 && value_tokens[value_tokens.count - 1].type == PPTokenType.PP_EOF){
-                value_tokens.count--;
-            }
-            // Remove whitespace tokens
+            // Remove EOF and newline tokens, but keep whitespace for proper spacing
             Barray!PPToken filtered = make_barray!PPToken(allocator);
             foreach(tok; value_tokens[]){
-                if(tok.type != PPTokenType.PP_WHITESPACE && tok.type != PPTokenType.PP_NEWLINE){
+                if(tok.type != PPTokenType.PP_EOF && tok.type != PPTokenType.PP_NEWLINE){
                     filtered ~= tok;
                 }
             }
@@ -2786,40 +2814,151 @@ struct CPreprocessor {
                     if(k < repl.length){
                         // Get left token (possibly parameter)
                         PPToken left = tok;
+                        bool left_empty = false;
+                        PPToken[] left_prefix;  // Tokens before the last one (for multi-token args)
                         if(tok.type == PPTokenType.PP_IDENTIFIER){
                             int param_idx = macro_def.find_param(tok.lexeme);
-                            if(param_idx >= 0 && param_idx < args.length && args[param_idx].length > 0){
-                                // Get last non-whitespace token
+                            if(param_idx >= 0 && param_idx < args.length){
                                 PPToken[] arg = args[param_idx];
+                                // Find last non-whitespace token
+                                bool found_nonws = false;
+                                size_t last_idx = arg.length;
                                 for(size_t ai = arg.length; ai > 0; ai--){
                                     if(arg[ai - 1].type != PPTokenType.PP_WHITESPACE){
                                         left = arg[ai - 1];
+                                        last_idx = ai - 1;
+                                        found_nonws = true;
                                         break;
                                     }
+                                }
+                                if(found_nonws){
+                                    // Output all tokens before the last non-whitespace one
+                                    if(last_idx > 0){
+                                        left_prefix = arg[0 .. last_idx];
+                                    }
+                                } else {
+                                    // Argument is empty or whitespace-only
+                                    left_empty = true;
                                 }
                             }
                         }
 
                         // Get right token (possibly parameter)
                         PPToken right = repl[k];
+                        bool right_empty = false;
+                        PPToken[] right_suffix;  // Tokens after the first one (for multi-token args)
                         if(right.type == PPTokenType.PP_IDENTIFIER){
                             int param_idx = macro_def.find_param(right.lexeme);
-                            if(param_idx >= 0 && param_idx < args.length && args[param_idx].length > 0){
-                                // Get first non-whitespace token
+                            if(param_idx >= 0 && param_idx < args.length){
                                 PPToken[] arg = args[param_idx];
-                                foreach(argtok; arg){
+                                // Find first non-whitespace token
+                                bool found_nonws = false;
+                                size_t first_idx = 0;
+                                foreach(ai, argtok; arg){
                                     if(argtok.type != PPTokenType.PP_WHITESPACE){
                                         right = argtok;
+                                        first_idx = ai;
+                                        found_nonws = true;
                                         break;
                                     }
+                                }
+                                if(found_nonws){
+                                    // Keep tokens after the first non-whitespace one
+                                    if(first_idx + 1 < arg.length){
+                                        right_suffix = arg[first_idx + 1 .. $];
+                                    }
+                                } else {
+                                    // Argument is empty or whitespace-only
+                                    right_empty = true;
                                 }
                             }
                         }
 
-                        // Paste tokens
-                        PPToken pasted = paste_tokens(left, right);
-                        *output ~= pasted;
-                        i = k + 1;
+                        // Output prefix tokens from left side
+                        foreach(ptok; left_prefix){
+                            *output ~= ptok;
+                        }
+
+                        // Paste tokens, handling empty sides
+                        PPToken result;
+                        bool have_result = false;
+                        if(left_empty && right_empty){
+                            // Both empty - produce nothing
+                        } else if(left_empty){
+                            // Only right side
+                            result = right;
+                            have_result = true;
+                        } else if(right_empty){
+                            // Only left side
+                            result = left;
+                            have_result = true;
+                        } else {
+                            // Paste both
+                            result = paste_tokens(left, right);
+                            have_result = true;
+                        }
+
+                        // Check for chained ## (e.g., a ## b ## c)
+                        size_t next_k = k + 1;
+                        while(have_result && next_k < repl.length){
+                            // Skip whitespace
+                            while(next_k < repl.length && repl[next_k].type == PPTokenType.PP_WHITESPACE) next_k++;
+
+                            // Check for another ##
+                            if(next_k < repl.length && repl[next_k].is_punct("##")){
+                                // Find the next operand
+                                size_t next_right_idx = next_k + 1;
+                                while(next_right_idx < repl.length && repl[next_right_idx].type == PPTokenType.PP_WHITESPACE) next_right_idx++;
+
+                                if(next_right_idx < repl.length){
+                                    // Get the next right operand
+                                    PPToken next_right = repl[next_right_idx];
+                                    bool next_right_empty = false;
+
+                                    if(next_right.type == PPTokenType.PP_IDENTIFIER){
+                                        int param_idx2 = macro_def.find_param(next_right.lexeme);
+                                        if(param_idx2 >= 0 && param_idx2 < args.length){
+                                            PPToken[] arg2 = args[param_idx2];
+                                            bool found2 = false;
+                                            foreach(argtok2; arg2){
+                                                if(argtok2.type != PPTokenType.PP_WHITESPACE){
+                                                    next_right = argtok2;
+                                                    found2 = true;
+                                                    break;
+                                                }
+                                            }
+                                            if(!found2){
+                                                next_right_empty = true;
+                                            }
+                                        }
+                                    }
+
+                                    // Paste result with next_right
+                                    if(!next_right_empty){
+                                        result = paste_tokens(result, next_right);
+                                    }
+                                    // If next_right_empty, result stays the same
+
+                                    next_k = next_right_idx + 1;
+                                    continue;
+                                }
+                            }
+                            break;
+                        }
+
+                        if(have_result){
+                            *output ~= result;
+                        }
+
+                        // Output suffix tokens from right side (only if no chained ##)
+                        // Note: with chained ##, suffixes would have been processed above
+                        if(next_k == k + 1){
+                            foreach(stok; right_suffix){
+                                *output ~= stok;
+                            }
+                        }
+
+                        i = next_k;
                         continue;
                     }
                 }
@@ -2830,11 +2969,27 @@ struct CPreprocessor {
                 int param_idx = macro_def.find_param(tok.lexeme);
                 if(param_idx >= 0){
                     if(param_idx < args.length){
-                        // Expand argument before substitution
-                        foreach(arg_tok; args[param_idx]){
-                            if(arg_tok.type != PPTokenType.PP_WHITESPACE){
-                                *output ~= arg_tok;
+                        // Pre-expand argument (macros in args are expanded for regular substitution)
+                        // Use a fresh hide set for argument expansion
+                        Barray!PPToken expanded_arg = make_barray!PPToken(allocator);
+                        size_t aj = 0;
+                        while(aj < args[param_idx].length){
+                            PPToken arg_tok = args[param_idx][aj];
+                            if(arg_tok.type == PPTokenType.PP_IDENTIFIER){
+                                PPMacroDef nested = get_macro(arg_tok);
+                                if(!nested.is_null && !hs.is_hidden(arg_tok.lexeme)){
+                                    // Expand the macro in the argument
+                                    HideSet arg_hs = HideSet.create(allocator);
+                                    aj = expand_macro_invocation(args[param_idx], aj, nested, arg_hs, &expanded_arg);
+                                    continue;
+                                }
                             }
+                            expanded_arg ~= arg_tok;
+                            aj++;
+                        }
+                        // Output expanded argument
+                        foreach(exp_tok; expanded_arg[]){
+                            *output ~= exp_tok;
                         }
                     }
                     i++;

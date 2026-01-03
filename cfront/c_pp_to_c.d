@@ -93,6 +93,11 @@ enum CTokenType : uint {
     DECIMAL64 = 636,
     DECIMAL128 = 637,
     GENERIC = 638,
+    FLOAT32 = 639,
+    FLOAT64 = 640,
+    FLOAT128 = 641,
+    FLOAT32X = 642,
+    FLOAT64X = 643,
 
     // Control flow keywords
     IF = 700,
@@ -341,6 +346,8 @@ struct PPToCConverter {
             if(name == "register") return CTokenType.REGISTER;
             if(name == "restrict") return CTokenType.RESTRICT;
             if(name == "_Float16") return CTokenType.FLOAT16;
+            if(name == "_Float32") return CTokenType.FLOAT32;
+            if(name == "_Float64") return CTokenType.FLOAT64;
             if(name == "__inline") return CTokenType.INLINE;
             if(name == "_Complex") return CTokenType.COMPLEX;
             if(name == "_Generic") return CTokenType.GENERIC;
@@ -348,6 +355,9 @@ struct PPToCConverter {
         }
         if(name.length == 9){
             if(name == "_Noreturn") return CTokenType.NORETURN;
+            if(name == "_Float128") return CTokenType.FLOAT128;
+            if(name == "_Float32x") return CTokenType.FLOAT32X;
+            if(name == "_Float64x") return CTokenType.FLOAT64X;
         }
         if(name.length == 10){
             if(name == "__restrict") return CTokenType.RESTRICT;
