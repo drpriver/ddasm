@@ -1,0 +1,44 @@
+# Test non-varargs call with 8 arguments (exceeds 6 register args on x86-64)
+dlimport Libc
+    path "libc.so.6"
+    function printf 1 1 varargs
+end
+
+function add8 8
+    # a=r0, b=r1, c=r2, d=r3, e=r4, f=r5, g=r6, h=r7
+    add r15 r0 r1
+    add r15 r15 r2
+    add r15 r15 r3
+    add r15 r15 r4
+    add r15 r15 r5
+    add r15 r15 r6
+    add r15 r15 r7
+    ret
+end
+
+function main 0
+    move r0 1
+    move r1 2
+    move r2 3
+    move r3 4
+    move r4 5
+    move r5 6
+    move r6 7
+    move r7 8
+    call function add8 8
+    move r8 rout1
+    push r8
+    move r0 "sum=%ld\n"
+    call function Libc.printf 2
+    sub rsp rsp 8
+    move r15 0
+    ret
+end
+
+import misc
+function start 0
+    call function main 0
+    move rarg1 rout1
+    call function misc.exit 1
+    ret
+end
