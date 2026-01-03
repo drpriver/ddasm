@@ -3300,6 +3300,7 @@ struct CParser {
         if(match(CTokenType.SWITCH)) return parse_switch();
         if(match(CTokenType.GOTO)) return parse_goto();
         if(match(CTokenType.DASM)) return parse_dasm();
+        if(match(CTokenType.ASM)) return parse_asm();
 
         // Handle case/default labels inside switch (including nested statements like Duff's device)
         if(switch_depth > 0){
@@ -3637,6 +3638,40 @@ struct CParser {
         if(ERROR_OCCURRED) return null;
 
         return CDasmStmt.make(allocator, sb.borrow(), keyword);
+    }
+
+    // GCC inline assembly: __asm__ [volatile] ( "template" [: outputs [: inputs [: clobbers]]] );
+    CStmt* parse_asm(){
+        CToken keyword = previous();
+
+        // Skip optional 'volatile' or '__volatile__'
+        if(check(CTokenType.VOLATILE) ||
+           (check(CTokenType.IDENTIFIER) && (peek().lexeme == "__volatile__" || peek().lexeme == "volatile"))){
+            advance();
+        }
+
+        consume(CTokenType.LEFT_PAREN, "Expected '(' after asm");
+        if(ERROR_OCCURRED) return null;
+
+        // Skip everything inside the parentheses (handles nested parens)
+        int depth = 1;
+        while(depth > 0 && !at_end){
+            if(check(CTokenType.LEFT_PAREN)){
+                depth++;
+            } else if(check(CTokenType.RIGHT_PAREN)){
+                depth--;
+                if(depth == 0) break;
+            }
+            advance();
+        }
+
+        consume(CTokenType.RIGHT_PAREN, "Expected ')' after asm");
+        if(ERROR_OCCURRED) return null;
+
+        consume(CTokenType.SEMICOLON, "Expected ';' after asm statement");
+        if(ERROR_OCCURRED) return null;
+
+        return CAsmStmt.make(allocator, keyword);
     }
 
     // (6.8.2) labeled-statement:

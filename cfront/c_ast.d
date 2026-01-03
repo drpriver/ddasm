@@ -811,6 +811,7 @@ enum CStmtKind {
     LABEL,
     DASM,
     CASE_LABEL,
+    ASM,  // GCC inline assembly (__asm__)
 }
 
 struct CStmt {
@@ -1065,6 +1066,19 @@ struct CDasmStmt {
         result.stmt.kind = CStmtKind.DASM;
         result.stmt.token = t;
         result.code = code;
+        return &result.stmt;
+    }
+}
+
+// GCC inline assembly statement: __asm__("..." : outputs : inputs : clobbers)
+struct CAsmStmt {
+    CStmt stmt;
+
+    static CStmt* make(Allocator a, CToken t){
+        auto data = a.zalloc(typeof(this).sizeof);
+        auto result = cast(typeof(this)*)data.ptr;
+        result.stmt.kind = CStmtKind.ASM;
+        result.stmt.token = t;
         return &result.stmt;
     }
 }

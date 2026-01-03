@@ -163,6 +163,7 @@ struct CAnalyzer {
             case CONTINUE:
             case EMPTY:
             case DASM:
+            case ASM:
                 break;
         }
     }
@@ -410,6 +411,7 @@ struct CDasmWriter {
             case CONTINUE:
             case EMPTY:
             case DASM:
+            case ASM:
                 break;
         }
         return max_slots;
@@ -1640,6 +1642,7 @@ struct CDasmWriter {
             case LABEL:      return gen_label(cast(CLabelStmt*)stmt);
             case DASM:       return gen_dasm(cast(CDasmStmt*)stmt);
             case CASE_LABEL: return gen_case_label(cast(CCaseLabelStmt*)stmt);
+            case ASM:        return gen_asm(cast(CAsmStmt*)stmt);
         }
     }
 
@@ -1922,6 +1925,7 @@ struct CDasmWriter {
             case EMPTY:
             case GOTO:
             case DASM:
+            case ASM:
                 break;
         }
     }
@@ -2050,6 +2054,11 @@ struct CDasmWriter {
         sb.write(stmt.code);
         sb.write('\n');
         return 0;
+    }
+
+    int gen_asm(CAsmStmt* stmt){
+        error(stmt.stmt.token, "GCC inline assembly (__asm__) is not supported");
+        return 1;
     }
 
     int gen_block(CBlock* stmt){
