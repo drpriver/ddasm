@@ -51,6 +51,16 @@ struct CPreprocessor {
     int line_offset_base = 0; // Token line where #line was issued
     str file_override;        // Override for __FILE__ (null = use token's file)
 
+    // #pragma watch state
+    enum WatchFlags : ubyte {
+        NONE   = 0,
+        DEFINE = 1 << 0,
+        UNDEF  = 1 << 1,
+        EXPAND = 1 << 2,
+        ALL    = DEFINE | UNDEF | EXPAND,
+    }
+    Table!(str, ubyte) watched_macros;  // Macros being watched (flags indicate which events)
+
     // Initialize with predefined macros
     void initialize(){
         macros.data.allocator = allocator;
@@ -60,6 +70,7 @@ struct CPreprocessor {
         pragma_once_files.data.allocator = allocator;
         include_guards.data.allocator = allocator;
         named_counters.data.allocator = allocator;
+        watched_macros.data.allocator = allocator;
 
         // Set base_file from current_file (must be set before initialize())
         base_file = current_file;
@@ -1162,6 +1173,31 @@ struct CPreprocessor {
         def.replacement = replacement[];
         macros[name] = def;
 
+        // Log if this macro is being watched for define
+        if(auto p = name in watched_macros){ if(*p & WatchFlags.DEFINE){
+            int def_line = line.length > 0 ? line[0].line : 0;
+            StringBuilder def_sb;
+            def_sb.allocator = allocator;
+            def_sb.write("#define ");
+            def_sb.write(name);
+            if(def.is_function_like){
+                def_sb.write("(");
+                foreach(pi, param; def.params){
+                    if(pi > 0) def_sb.write(", ");
+                    def_sb.write(param);
+                }
+                if(def.is_variadic) def_sb.write(", ...");
+                def_sb.write(")");
+            }
+            def_sb.write(" ");
+            foreach(tok; def.replacement){
+                def_sb.write(tok.lexeme);
+            }
+            fprintf(stderr, "%.*s:%d: [watch] %.*s\n",
+                    cast(int)current_file.length, current_file.ptr,
+                    def_line,
+                    cast(int)def_sb.cursor, def_sb.borrow().ptr);
+        }}
     }
 
     // Handle #undef
@@ -1173,6 +1209,15 @@ struct CPreprocessor {
             return;
         }
         str name = line[i].lexeme;
+        int undef_line = line.length > 0 ? line[0].line : 0;
+
+        // Log if this macro is being watched for undef
+        if(auto p = name in watched_macros){ if(*p & WatchFlags.UNDEF){
+            fprintf(stderr, "%.*s:%d: [watch] #undef %.*s\n",
+                    cast(int)current_file.length, current_file.ptr,
+                    undef_line,
+                    cast(int)name.length, name.ptr);
+        }}
 
         // Mark as undefined
         foreach(ref item; macros.items){
@@ -1771,6 +1816,43 @@ struct CPreprocessor {
                             fprintf(stderr, "  %.*s\n",
                                     cast(int)p.length, p.ptr);
                         }
+                    }
+                }
+
+            } else if(line[i].lexeme == "watch"){
+                // #pragma watch[(define, undef, expand)] MACRO
+                i++;
+
+                // Parse optional flags: (define, undef, expand)
+                ubyte flags = WatchFlags.ALL;  // Default: watch everything
+                if(i < line.length && line[i].is_punct("(")){
+                    flags = WatchFlags.NONE;
+                    i++;
+                    while(i < line.length && !line[i].is_punct(")")){
+                        if(line[i].type == PPTokenType.PP_IDENTIFIER){
+                            if(line[i].lexeme == "define") flags |= WatchFlags.DEFINE;
+                            else if(line[i].lexeme == "undef") flags |= WatchFlags.UNDEF;
+                            else if(line[i].lexeme == "expand") flags |= WatchFlags.EXPAND;
+                        }
+                        i++;
+                    }
+                    if(i < line.length) i++;  // skip )
+                }
+
+                while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+
+                if(i < line.length && line[i].type == PPTokenType.PP_IDENTIFIER){
+                    watched_macros[line[i].lexeme] = flags;
+                }
+
+            } else if(line[i].lexeme == "unwatch"){
+                // #pragma unwatch MACRO - stop tracing macro
+                i++;
+                while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+
+                if(i < line.length && line[i].type == PPTokenType.PP_IDENTIFIER){
+                    if(auto p = line[i].lexeme in watched_macros){
+                        *p = WatchFlags.NONE;  // Mark as unwatched
                     }
                 }
             }
@@ -2539,6 +2621,31 @@ struct CPreprocessor {
             Barray!PPToken substituted = make_barray!PPToken(allocator);
             substitute(macro_def, args[], hs, &substituted);
 
+            // Log if this macro is being watched for expand
+            if(auto p = macro_def.name in watched_macros){ if(*p & WatchFlags.EXPAND){
+                StringBuilder inv_sb;
+                inv_sb.allocator = allocator;
+                inv_sb.write(macro_def.name);
+                inv_sb.write("(");
+                foreach(ai, arg; args[]){
+                    if(ai > 0) inv_sb.write(", ");
+                    foreach(tok; arg)
+                        inv_sb.write(tok.lexeme);
+                }
+                inv_sb.write(")");
+
+                StringBuilder exp_sb;
+                exp_sb.allocator = allocator;
+                foreach(tok; substituted[])
+                    exp_sb.write(tok.lexeme);
+
+                fprintf(stderr, "%.*s:%d: [watch] %.*s -> %.*s\n",
+                        cast(int)invocation.file.length, invocation.file.ptr,
+                        invocation.line,
+                        cast(int)inv_sb.cursor, inv_sb.borrow().ptr,
+                        cast(int)exp_sb.cursor, exp_sb.borrow().ptr);
+            }}
+
             // Set expansion location on all substituted tokens so nested macros
             // have the right invocation point
             foreach(ref tok; substituted[]){
@@ -2574,6 +2681,20 @@ struct CPreprocessor {
             Barray!PPToken substituted = make_barray!PPToken(allocator);
             PPToken[][] empty_args;
             substitute(macro_def, empty_args, hs, &substituted);
+
+            // Log if this macro is being watched for expand
+            if(auto p = macro_def.name in watched_macros){ if(*p & WatchFlags.EXPAND){
+                StringBuilder exp_sb;
+                exp_sb.allocator = allocator;
+                foreach(tok; substituted[])
+                    exp_sb.write(tok.lexeme);
+
+                fprintf(stderr, "%.*s:%d: [watch] %.*s -> %.*s\n",
+                        cast(int)invocation.file.length, invocation.file.ptr,
+                        invocation.line,
+                        cast(int)macro_def.name.length, macro_def.name.ptr,
+                        cast(int)exp_sb.cursor, exp_sb.borrow().ptr);
+            }}
 
             // Set expansion location on all substituted tokens so nested macros
             // have the right invocation point

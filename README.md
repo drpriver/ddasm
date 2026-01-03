@@ -247,6 +247,24 @@ Prints a message during preprocessing (GCC/Clang compatible, but with macro expa
 #pragma message "Compiling version " VERSION  // file.c:2: note: Compiling version 2
 ```
 
+#### `#pragma watch[(events)] NAME` / `#pragma unwatch NAME`
+Traces macro events for debugging. Watch can be set before the macro is defined.
+
+Optional event filter: `(define)`, `(undef)`, `(expand)`, or combinations like `(define, undef)`. Default is all events.
+
+```c
+#pragma watch MAX
+#define MAX(a,b) ((a)>(b)?(a):(b))   // [watch] #define MAX(a, b) ((a)>(b)?(a):(b))
+int x = MAX(1, 2);                   // [watch] MAX(1, 2) -> ((1)>(2)?(1):(2))
+#undef MAX                           // [watch] #undef MAX
+#pragma unwatch MAX
+
+#pragma watch(define, undef) FOO     // only log define/undef, not expansions
+#define FOO 42                       // [watch] #define FOO 42
+int y = FOO;                         // (no output - expand filtered)
+#undef FOO                           // [watch] #undef FOO
+```
+
 All pragma output goes to stderr with file:line prefix.
 
 ### Include Path Pragmas
