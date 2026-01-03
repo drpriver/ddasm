@@ -3367,6 +3367,13 @@ struct CParser {
         if(match(CTokenType.DASM)) return parse_dasm();
         if(match(CTokenType.ASM)) return parse_asm();
 
+        // Handle static_assert in statement context (C11)
+        if(match(CTokenType.STATIC_ASSERT)){
+            int err = parse_static_assert();
+            if(err) return null;
+            return CEmptyStmt.get();  // Evaluated at compile-time, no runtime effect
+        }
+
         // Handle case/default labels inside switch (including nested statements like Duff's device)
         if(switch_depth > 0){
             if(match(CTokenType.CASE)) return parse_case_label();
@@ -4402,6 +4409,32 @@ struct CParser {
         return CCall.make(allocator, callee, args[], paren);
     }
 
+    // GNU statement expression: ({ stmt; stmt; expr; })
+    // The value of the expression is the value of the last expression
+    CExpr* parse_statement_expr(CToken tok){
+        consume(CTokenType.LEFT_BRACE, "Expected '{' after '(' in statement expression");
+        if(ERROR_OCCURRED) return null;
+
+        auto statements = make_barray!(CStmt*)(allocator);
+        CExpr* result_expr = null;
+
+        while(!check(CTokenType.RIGHT_BRACE) && !at_end){
+            // Try to parse a statement
+            CStmt* stmt = parse_statement();
+            if(stmt is null) return null;
+            statements ~= stmt;
+        }
+
+        consume(CTokenType.RIGHT_BRACE, "Expected '}' in statement expression");
+        if(ERROR_OCCURRED) return null;
+        consume(CTokenType.RIGHT_PAREN, "Expected ')' after statement expression");
+        if(ERROR_OCCURRED) return null;
+
+        // The result is the last expression statement if any
+        // For now, we don't extract it specially - codegen will handle it
+        return CStmtExpr.make(allocator, statements[], result_expr, tok);
+    }
+
     // (6.5.2) primary-expression:
     //     identifier
     //     constant
@@ -4590,6 +4623,11 @@ struct CParser {
         }
 
         if(match(CTokenType.LEFT_PAREN)){
+            // Check for GNU statement expression: ({ ... })
+            if(check(CTokenType.LEFT_BRACE)){
+                return parse_statement_expr(tok);
+            }
+
             // Check if this is a cast expression: (type)value or compound literal: (type){...}
             if(is_type_specifier(peek())){
                 // It's a cast or compound literal - use parse_type_name for full abstract declarators

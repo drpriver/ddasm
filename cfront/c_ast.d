@@ -300,6 +300,7 @@ enum CExprKind {
     COMPOUND_LITERAL,
     GENERIC,
     EMBED,
+    STMT_EXPR,  // GNU statement expression ({ ... })
 }
 
 struct CExpr {
@@ -790,6 +791,24 @@ struct CEmbed {
     }
 }
 
+// GNU statement expression: ({ stmt; stmt; expr; })
+// The value is the last expression in the block
+struct CStmtExpr {
+    CExpr expr;
+    CStmt*[] statements;  // The statements in the block
+    CExpr* result_expr;   // The final expression (value of the whole thing), may be null
+
+    static CExpr* make(Allocator a, CStmt*[] stmts, CExpr* result, CToken tok){
+        auto data = a.zalloc(typeof(this).sizeof);
+        auto result_ptr = cast(typeof(this)*)data.ptr;
+        result_ptr.expr.kind = CExprKind.STMT_EXPR;
+        result_ptr.expr.token = tok;
+        result_ptr.statements = stmts;
+        result_ptr.result_expr = result;
+        return &result_ptr.expr;
+    }
+}
+
 // =============================================================================
 // Statements
 // =============================================================================
@@ -817,6 +836,10 @@ enum CStmtKind {
 struct CStmt {
     CStmtKind kind;
     CToken token;  // For error reporting
+
+    inout(CExprStmt)* as_expr_stmt() inout {
+        return kind == CStmtKind.EXPR ? cast(typeof(return))&this : null;
+    }
 }
 
 struct CExprStmt {

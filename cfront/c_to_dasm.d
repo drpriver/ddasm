@@ -255,6 +255,11 @@ struct CAnalyzer {
                 break;
             case EMBED:
                 break;  // Nothing to analyze
+            case STMT_EXPR:
+                auto e = cast(CStmtExpr*)expr;
+                foreach(stmt; e.statements)
+                    analyze_stmt(stmt);
+                break;
         }
     }
 
@@ -521,6 +526,14 @@ struct CDasmWriter {
                 break;
             case EMBED:
                 break;  // No calls in embed
+            case STMT_EXPR:
+                auto e = cast(CStmtExpr*)expr;
+                foreach(stmt; e.statements){
+                    if(auto expr_stmt = stmt.as_expr_stmt()){
+                        update(scan_expr_for_calls(expr_stmt.expression));
+                    }
+                }
+                break;
         }
         return max_slots;
     }
@@ -636,6 +649,16 @@ struct CDasmWriter {
             case EMBED:
                 // Embed expands to bytes, type determined by context
                 return null;
+            case STMT_EXPR:
+                // Statement expression: type is the type of the last expression
+                auto se = cast(CStmtExpr*)e;
+                if(se.statements.length > 0){
+                    auto last = se.statements[$-1];
+                    if(auto expr_stmt = last.as_expr_stmt()){
+                        return get_expr_type(expr_stmt.expression);
+                    }
+                }
+                return &TYPE_VOID;
         }
     }
 
@@ -2653,6 +2676,8 @@ struct CDasmWriter {
             case EMBED:
                 error(e.token, "#embed not yet supported in code generation (requires dasm incbin)");
                 return 1;
+            case STMT_EXPR:
+                return gen_stmt_expr(cast(CStmtExpr*)e, target);
         }
     }
 
@@ -2825,6 +2850,30 @@ struct CDasmWriter {
         // Return address of the compound literal
         if(target != TARGET_IS_NOTHING){
             sb.writef("    add r% rbp %\n", target, P(slot));
+        }
+        return 0;
+    }
+
+    // GNU statement expression: ({ stmt; stmt; expr; })
+    // The value is the last expression statement's value
+    int gen_stmt_expr(CStmtExpr* expr, int target){
+        // Generate all statements
+        foreach(stmt; expr.statements){
+            // Check if this is the last statement and it's an expression statement
+            // In that case, we want to capture its value
+            if(&stmt is &expr.statements[$-1]){
+                if(auto expr_stmt = stmt.as_expr_stmt()){
+                    // Last statement is an expression - its value is the result
+                    return gen_expression(expr_stmt.expression, target);
+                }
+            }
+            // Generate the statement normally
+            int err = gen_statement(stmt);
+            if(err) return err;
+        }
+        // No result expression (empty block or last was not an expression)
+        if(target != TARGET_IS_NOTHING){
+            sb.writef("    move r% 0\n", target);
         }
         return 0;
     }
