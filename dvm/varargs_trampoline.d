@@ -249,19 +249,20 @@ else version(X86_64) {
                 "movq %rsp, %rbx\n" ~
                 // Allocate stack space
                 "subq %r13, %rsp\n" ~
-                // Push args right-to-left (stack_args[n-1] first)
+                // Copy stack args left-to-right (first stack arg at lowest address)
                 "testq %r12, %r12\n" ~
                 "jz 2f\n" ~                         // skip if no stack args
-                // r14 = index (start at n_stack_args - 1)
-                "leaq -1(%r12), %r14\n" ~
+                // r14 = index (start at 0)
+                "xorq %r14, %r14\n" ~
                 // r15 = dest on stack
                 "movq %rsp, %r15\n" ~
                 "1:\n" ~
                 "movq (%r11, %r14, 8), %rax\n" ~    // load arg[index]
                 "movq %rax, (%r15)\n" ~             // store to stack
                 "addq $$8, %r15\n" ~                // advance dest
-                "subq $$1, %r14\n" ~
-                "jns 1b\n" ~                        // loop while index >= 0
+                "addq $$1, %r14\n" ~                // increment index
+                "cmpq %r12, %r14\n" ~               // compare to n_stack_args
+                "jb 1b\n" ~                         // loop while index < n
                 "2:\n" ~
                 // Set al = 0 (no floating point variadic args)
                 "xorl %eax, %eax\n" ~
@@ -321,19 +322,20 @@ else version(X86_64) {
                 "movq %rdx, 8(%rsp)\n" ~
                 "movq %r8, 16(%rsp)\n" ~
                 "movq %r9, 24(%rsp)\n" ~
-                // Copy extra args to stack (after shadow space)
+                // Copy stack args left-to-right (after shadow space)
                 "testq %r12, %r12\n" ~
                 "jz 2f\n" ~                         // skip if no stack args
-                // r14 = index (start at n_stack_args - 1)
-                "leaq -1(%r12), %r14\n" ~
+                // r14 = index (start at 0)
+                "xorq %r14, %r14\n" ~
                 // r15 = dest on stack (after shadow space)
                 "leaq 32(%rsp), %r15\n" ~
                 "1:\n" ~
                 "movq (%r11, %r14, 8), %rax\n" ~    // load arg[index]
                 "movq %rax, (%r15)\n" ~             // store to stack
                 "addq $$8, %r15\n" ~                // advance dest
-                "subq $$1, %r14\n" ~
-                "jns 1b\n" ~                        // loop while index >= 0
+                "addq $$1, %r14\n" ~                // increment index
+                "cmpq %r12, %r14\n" ~               // compare to n_stack_args
+                "jb 1b\n" ~                         // loop while index < n
                 "2:\n" ~
                 // Call the function
                 "callq *%r10\n" ~
