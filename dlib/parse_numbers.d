@@ -212,8 +212,12 @@ bool is_float_literal(const char[] s){
     return false;
 }
 
-// Parse a float literal
+// Parse a float literal using C library for accuracy
+// FIXME: use port of fast_float to avoid platform dependency.
+// FIXME: this should be templated on float vs double.
 FloatResult parse_float(const char[] s){ with(ParseNumberError){
+    import core.stdc.stdlib : strtod;
+
     if(!s.length) return FloatResult(0.0, UNEXPECTED_END);
 
     // Strip suffix (f, F, l, L)
@@ -225,60 +229,17 @@ FloatResult parse_float(const char[] s){ with(ParseNumberError){
     }
     if(!num.length) return FloatResult(0.0, UNEXPECTED_END);
 
-    // Parse the float manually
-    double result = 0.0;
-    bool negative = false;
-    size_t i = 0;
+    // Need null-terminated string for strtod
+    char[64] buf = void;
+    if(num.length >= buf.length) return FloatResult(0.0, OVERFLOWED_VALUE);
+    for(size_t i = 0; i < num.length; i++) buf[i] = num[i];
+    buf[num.length] = 0;
 
-    // Handle sign
-    if(num[i] == '-'){
-        negative = true;
-        i++;
-    } else if(num[i] == '+'){
-        i++;
-    }
+    char* endptr;
+    double result = strtod(buf.ptr, &endptr);
 
-    // Parse integer part
-    while(i < num.length && num[i] >= '0' && num[i] <= '9'){
-        result = result * 10.0 + (num[i] - '0');
-        i++;
-    }
+    // Check if parsing consumed any characters
+    if(endptr == buf.ptr) return FloatResult(0.0, INVALID_CHARACTER);
 
-    // Parse fractional part
-    if(i < num.length && num[i] == '.'){
-        i++;
-        double fraction = 0.1;
-        while(i < num.length && num[i] >= '0' && num[i] <= '9'){
-            result += (num[i] - '0') * fraction;
-            fraction *= 0.1;
-            i++;
-        }
-    }
-
-    // Parse exponent
-    if(i < num.length && (num[i] == 'e' || num[i] == 'E')){
-        i++;
-        bool exp_negative = false;
-        if(i < num.length && num[i] == '-'){
-            exp_negative = true;
-            i++;
-        } else if(i < num.length && num[i] == '+'){
-            i++;
-        }
-        int exp = 0;
-        while(i < num.length && num[i] >= '0' && num[i] <= '9'){
-            exp = exp * 10 + (num[i] - '0');
-            i++;
-        }
-        if(exp_negative) exp = -exp;
-        // Apply exponent
-        if(exp > 0){
-            while(exp-- > 0) result *= 10.0;
-        } else {
-            while(exp++ < 0) result *= 0.1;
-        }
-    }
-
-    if(negative) result = -result;
     return FloatResult(result, NO_ERROR);
 }}

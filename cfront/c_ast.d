@@ -205,6 +205,9 @@ struct CType {
     bool is_float(){
         return kind == CTypeKind.FLOAT || kind == CTypeKind.DOUBLE;
     }
+    bool is_float32(){
+        return kind == CTypeKind.FLOAT;
+    }
     bool is_arithmetic(){
         return is_integer() || is_float();
     }

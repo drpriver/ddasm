@@ -295,6 +295,10 @@ struct CPreprocessor {
         define_object_macro("__GNUC_MINOR__", "4");
         define_object_macro("__GNUC_PATCHLEVEL__", "0");
 
+        // Floating-point evaluation method (C99 5.2.4.2.2)
+        // 1 = evaluate float and double as double
+        define_object_macro("__FLT_EVAL_METHOD__", "1");
+
         // DDASM compiler identification
         define_object_macro("__DDASM__", "1");
 

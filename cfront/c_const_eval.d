@@ -7,20 +7,25 @@
 module cfront.c_const_eval;
 
 import dlib.aliases : str;
-import dlib.parse_numbers : parse_unsigned_human;
+import dlib.parse_numbers : parse_unsigned_human, parse_float;
+import dlib.table : Table;
 import cfront.c_ast;
 import cfront.c_pp_to_c : CTokenType;
+
+// Alias for enum constants table type
+alias EnumTable = Table!(str, long);
 
 struct ConstValue {
     enum Kind {
         NOT_CONST,  // Expression cannot be evaluated at compile time
         INTEGER,    // Signed/unsigned integer value
-        // Future: FLOAT for floating point constants
+        FLOAT,      // Floating point value (double precision)
     }
     Kind kind = Kind.NOT_CONST;
     union {
         long int_val;
         ulong uint_val;
+        double float_val;
     }
     bool is_unsigned;
 
@@ -44,23 +49,47 @@ struct ConstValue {
         return cv;
     }
 
+    static ConstValue from_double(double v) {
+        ConstValue cv;
+        cv.kind = Kind.FLOAT;
+        cv.float_val = v;
+        cv.is_unsigned = false;
+        return cv;
+    }
+
     bool is_const() const { return kind != Kind.NOT_CONST; }
-    bool is_zero() const { return kind == Kind.INTEGER && int_val == 0; }
+    bool is_integer() const { return kind == Kind.INTEGER; }
+    bool is_float() const { return kind == Kind.FLOAT; }
+    bool is_zero() const {
+        if (kind == Kind.INTEGER) return int_val == 0;
+        if (kind == Kind.FLOAT) return float_val == 0.0;
+        return false;
+    }
 
     // Get value as signed long
     long as_long() const {
+        if (kind == Kind.FLOAT) return cast(long)float_val;
         return is_unsigned ? cast(long)uint_val : int_val;
     }
 
     // Get value as unsigned long
     ulong as_ulong() const {
+        if (kind == Kind.FLOAT) return cast(ulong)float_val;
         return is_unsigned ? uint_val : cast(ulong)int_val;
+    }
+
+    // Get value as double
+    double as_double() const {
+        if (kind == Kind.FLOAT) return float_val;
+        if (is_unsigned) return cast(double)uint_val;
+        return cast(double)int_val;
     }
 }
 
 // Try to evaluate an expression at compile time
 // Returns NOT_CONST if the expression cannot be evaluated
-ConstValue try_eval_constant(CExpr* expr) {
+// enum_constants: optional table of enum constant names to their values
+ConstValue try_eval_constant(CExpr* expr, EnumTable* enum_constants = null) {
     if (expr is null) return ConstValue.not_const();
 
     // Unwrap grouping parentheses
@@ -71,18 +100,16 @@ ConstValue try_eval_constant(CExpr* expr) {
             return eval_literal(expr.as_literal);
 
         case IDENTIFIER:
-            // Identifiers are not constant 
-            // FIXME: (except enum constants)
-            return ConstValue.not_const();
+            return eval_identifier(expr.as_identifier, enum_constants);
 
         case BINARY:
-            return eval_binary(expr.as_binary);
+            return eval_binary(expr.as_binary, enum_constants);
 
         case UNARY:
-            return eval_unary(expr.as_unary);
+            return eval_unary(expr.as_unary, enum_constants);
 
         case CAST:
-            return eval_cast(expr.as_cast);
+            return eval_cast(expr.as_cast, enum_constants);
 
         case SIZEOF:
             return eval_sizeof(expr.as_sizeof);
@@ -94,7 +121,7 @@ ConstValue try_eval_constant(CExpr* expr) {
             return eval_countof(expr.as_countof);
 
         case TERNARY:
-            return eval_ternary(expr.as_ternary);
+            return eval_ternary(expr.as_ternary, enum_constants);
 
         case GROUPING:
             // Already handled by ungroup()
@@ -106,6 +133,18 @@ ConstValue try_eval_constant(CExpr* expr) {
             // FIXME: some of these are constant evaluable.
             return ConstValue.not_const();
     }
+}
+
+// Evaluate identifier - only enum constants are compile-time constant
+ConstValue eval_identifier(CIdentifier* ident, EnumTable* enum_constants) {
+    if (ident is null) return ConstValue.not_const();
+    if (enum_constants is null) return ConstValue.not_const();
+
+    if (long* val = ident.name.lexeme in *enum_constants) {
+        return ConstValue.from_int(*val);
+    }
+
+    return ConstValue.not_const();
 }
 
 ConstValue eval_literal(CLiteral* lit) {
@@ -129,33 +168,44 @@ ConstValue eval_literal(CLiteral* lit) {
         }
     }
 
+    if (lit.value.type == CTokenType.FLOAT_LITERAL) {
+        auto parsed = parse_float(lexeme);
+        if (parsed.errored) return ConstValue.not_const();
+        return ConstValue.from_double(parsed.value);
+    }
+
     // String literals are not integer constants
     return ConstValue.not_const();
 }
 
-ConstValue eval_binary(CBinary* expr) {
-    auto left = try_eval_constant(expr.left);
+ConstValue eval_binary(CBinary* expr, EnumTable* enum_constants) {
+    auto left = try_eval_constant(expr.left, enum_constants);
     if (!left.is_const()) return ConstValue.not_const();
 
     // Short-circuit evaluation for && and ||
     if (expr.op == CTokenType.AMP_AMP) {
         if (left.is_zero()) return ConstValue.from_int(0);
-        auto right = try_eval_constant(expr.right);
+        auto right = try_eval_constant(expr.right, enum_constants);
         if (!right.is_const()) return ConstValue.not_const();
         return ConstValue.from_int(right.is_zero() ? 0 : 1);
     }
 
     if (expr.op == CTokenType.PIPE_PIPE) {
         if (!left.is_zero()) return ConstValue.from_int(1);
-        auto right = try_eval_constant(expr.right);
+        auto right = try_eval_constant(expr.right, enum_constants);
         if (!right.is_const()) return ConstValue.not_const();
         return ConstValue.from_int(right.is_zero() ? 0 : 1);
     }
 
-    auto right = try_eval_constant(expr.right);
+    auto right = try_eval_constant(expr.right, enum_constants);
     if (!right.is_const()) return ConstValue.not_const();
 
-    // Determine if result should be unsigned
+    // If either operand is a float, use float arithmetic
+    if (left.is_float() || right.is_float()) {
+        return eval_binary_float(expr.op, left, right);
+    }
+
+    // Integer arithmetic
     bool is_unsigned = left.is_unsigned || right.is_unsigned;
     ulong lhs = left.as_ulong();
     ulong rhs = right.as_ulong();
@@ -235,13 +285,45 @@ ConstValue eval_binary(CBinary* expr) {
         return ConstValue.from_int(cast(long)result);
 }
 
-ConstValue eval_unary(CUnary* expr) {
-    auto operand = try_eval_constant(expr.operand);
+// Float binary operations
+ConstValue eval_binary_float(CTokenType op, ConstValue left, ConstValue right) {
+    double lhs = left.as_double();
+    double rhs = right.as_double();
+
+    switch (op) with (CTokenType) {
+        case PLUS:  return ConstValue.from_double(lhs + rhs);
+        case MINUS: return ConstValue.from_double(lhs - rhs);
+        case STAR:  return ConstValue.from_double(lhs * rhs);
+        case SLASH:
+            if (rhs == 0.0) return ConstValue.not_const();
+            return ConstValue.from_double(lhs / rhs);
+
+        // Comparison operators return integer 0 or 1
+        case EQUAL_EQUAL:   return ConstValue.from_int(lhs == rhs ? 1 : 0);
+        case BANG_EQUAL:    return ConstValue.from_int(lhs != rhs ? 1 : 0);
+        case LESS:          return ConstValue.from_int(lhs < rhs ? 1 : 0);
+        case LESS_EQUAL:    return ConstValue.from_int(lhs <= rhs ? 1 : 0);
+        case GREATER:       return ConstValue.from_int(lhs > rhs ? 1 : 0);
+        case GREATER_EQUAL: return ConstValue.from_int(lhs >= rhs ? 1 : 0);
+
+        // Bitwise and modulo operations are not valid for floats
+        case AMP, PIPE, CARET, LESS_LESS, GREATER_GREATER, PERCENT:
+            return ConstValue.not_const();
+
+        default:
+            return ConstValue.not_const();
+    }
+}
+
+ConstValue eval_unary(CUnary* expr, EnumTable* enum_constants) {
+    auto operand = try_eval_constant(expr.operand, enum_constants);
     if (!operand.is_const()) return ConstValue.not_const();
 
     switch (expr.op) with (CTokenType) {
         case MINUS:
-            if (operand.is_unsigned)
+            if (operand.is_float())
+                return ConstValue.from_double(-operand.float_val);
+            else if (operand.is_unsigned)
                 return ConstValue.from_uint(-operand.uint_val);
             else
                 return ConstValue.from_int(-operand.int_val);
@@ -250,6 +332,9 @@ ConstValue eval_unary(CUnary* expr) {
             return operand;
 
         case TILDE:
+            // Bitwise NOT is not valid for floats
+            if (operand.is_float())
+                return ConstValue.not_const();
             if (operand.is_unsigned)
                 return ConstValue.from_uint(~operand.uint_val);
             else
@@ -271,14 +356,19 @@ ConstValue eval_unary(CUnary* expr) {
     }
 }
 
-ConstValue eval_cast(CCast* expr) {
-    auto operand = try_eval_constant(expr.operand);
+ConstValue eval_cast(CCast* expr, EnumTable* enum_constants) {
+    auto operand = try_eval_constant(expr.operand, enum_constants);
     if (!operand.is_const()) return ConstValue.not_const();
 
     CType* t = expr.cast_type;
     if (t is null) return ConstValue.not_const();
 
-    // Only integer casts can be constant evaluated
+    // Handle float casts
+    if (t.is_float()) {
+        return ConstValue.from_double(operand.as_double());
+    }
+
+    // Only integer/enum casts can be constant evaluated beyond this point
     if (!t.is_integer() && !t.is_enum()) return ConstValue.not_const();
 
     // Apply truncation/sign extension based on target type
@@ -351,15 +441,15 @@ ConstValue eval_countof(CCountof* expr) {
     return ConstValue.not_const();
 }
 
-ConstValue eval_ternary(CTernary* expr) {
-    auto cond = try_eval_constant(expr.condition);
+ConstValue eval_ternary(CTernary* expr, EnumTable* enum_constants) {
+    auto cond = try_eval_constant(expr.condition, enum_constants);
     if (!cond.is_const()) return ConstValue.not_const();
 
     // Only evaluate the branch that will be taken
     if (!cond.is_zero()) {
-        return try_eval_constant(expr.if_true);
+        return try_eval_constant(expr.if_true, enum_constants);
     } else {
-        return try_eval_constant(expr.if_false);
+        return try_eval_constant(expr.if_false, enum_constants);
     }
 }
 

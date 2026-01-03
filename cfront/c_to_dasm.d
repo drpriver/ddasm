@@ -33,7 +33,7 @@ import dlib.parse_numbers : parse_unsigned_human;
 
 import cfront.c_pp_to_c : CToken, CTokenType;
 import cfront.c_ast;
-import cfront.c_const_eval : try_eval_constant, ConstValue;
+import cfront.c_const_eval : try_eval_constant, ConstValue, EnumTable;
 
 struct RegisterAllocator {
     // Start allocating from R8 onwards to avoid RARG1-8 (R0-R7)
@@ -2599,6 +2599,10 @@ struct CDasmWriter {
                     int temp = regallocator.allocate();
                     int err = gen_expression(stmt.initializer, temp);
                     if(err) return err;
+                    // Convert double to float32 before storing
+                    if(stmt.var_type.is_float32()){
+                        sb.writef("    dtof r% r%\n", temp, temp);
+                    }
                     sb.writef("    local_write % r%\n", P(slot), temp);
                     regallocator.reset_to(before);
                 } else {
@@ -2652,11 +2656,18 @@ struct CDasmWriter {
         // have side-effects, so just handle that in the specific handler function.
         e = e.ungroup();
 
-        // Try constant folding
-        ConstValue cv = try_eval_constant(e);
+        // Try constant folding (pass enum_constants for enum constant lookups)
+        ConstValue cv = try_eval_constant(e, &enum_constants);
         if(cv.is_const()){
-            if(target != TARGET_IS_NOTHING)
-                sb.writef("    move r% %\n", target, cv.as_long);
+            if(target != TARGET_IS_NOTHING) {
+                if (cv.is_float()) {
+                    // Emit float as bit-cast hex value
+                    ulong bits = *cast(ulong*)&cv.float_val;
+                    sb.writef("    move r% %\n", target, H(bits));
+                } else {
+                    sb.writef("    move r% %\n", target, cv.as_long);
+                }
+            }
             return 0;
         }
 
@@ -2758,11 +2769,11 @@ struct CDasmWriter {
             bool dst_is_float = dst_type && dst_type.is_float();
 
             if(src_is_float && !dst_is_float){
-                // float -> int: use ftoi
-                sb.writef("    ftoi r% r%\n", target, target);
+                // float -> int: use dtoi
+                sb.writef("    dtoi r% r%\n", target, target);
             } else if(!src_is_float && dst_is_float){
-                // int -> float: use itof
-                sb.writef("    itof r% r%\n", target, target);
+                // int -> float: use itod
+                sb.writef("    itod r% r%\n", target, target);
             }
         }
 
@@ -3027,6 +3038,12 @@ struct CDasmWriter {
         if(int* offset = name in stacklocals){
             // Read from stack
             sb.writef("    local_read r% %\n", target, P(*offset));
+            // Convert float32 to double after reading
+            if(CType** vtype = name in var_types){
+                if(*vtype && (*vtype).is_float32()){
+                    sb.writef("    ftod r% r%\n", target, target);
+                }
+            }
             return 0;
         }
 
@@ -3230,51 +3247,51 @@ struct CDasmWriter {
             }
             // Convert non-float operand to float if needed
             if(left_is_float && !right_is_float){
-                sb.writef("    itof r% r%\n", rhs, rhs);
+                sb.writef("    itod r% r%\n", rhs, rhs);
             } else if(!left_is_float && right_is_float){
-                sb.writef("    itof r% r%\n", lhs, lhs);
+                sb.writef("    itod r% r%\n", lhs, lhs);
             }
             // Generate float operation
             switch(expr.op) with (CTokenType){
                 case PLUS:
-                    sb.writef("    fadd r% r% r%\n", target, lhs, rhs);
+                    sb.writef("    dadd r% r% r%\n", target, lhs, rhs);
                     break;
                 case MINUS:
-                    sb.writef("    fsub r% r% r%\n", target, lhs, rhs);
+                    sb.writef("    dsub r% r% r%\n", target, lhs, rhs);
                     break;
                 case STAR:
-                    sb.writef("    fmul r% r% r%\n", target, lhs, rhs);
+                    sb.writef("    dmul r% r% r%\n", target, lhs, rhs);
                     break;
                 case SLASH:
-                    sb.writef("    fdiv r% r% r%\n", target, lhs, rhs);
+                    sb.writef("    ddiv r% r% r%\n", target, lhs, rhs);
                     break;
                 case EQUAL_EQUAL:
-                    sb.writef("    fcmp r% r%\n", lhs, rhs);
+                    sb.writef("    dcmp r% r%\n", lhs, rhs);
                     sb.writef("    move r% 0\n", target);
                     sb.writef("    cmov eq r% 1\n", target);
                     break;
                 case BANG_EQUAL:
-                    sb.writef("    fcmp r% r%\n", lhs, rhs);
+                    sb.writef("    dcmp r% r%\n", lhs, rhs);
                     sb.writef("    move r% 0\n", target);
                     sb.writef("    cmov ne r% 1\n", target);
                     break;
                 case LESS:
-                    sb.writef("    fcmp r% r%\n", lhs, rhs);
+                    sb.writef("    dcmp r% r%\n", lhs, rhs);
                     sb.writef("    move r% 0\n", target);
                     sb.writef("    cmov lt r% 1\n", target);
                     break;
                 case LESS_EQUAL:
-                    sb.writef("    fcmp r% r%\n", lhs, rhs);
+                    sb.writef("    dcmp r% r%\n", lhs, rhs);
                     sb.writef("    move r% 0\n", target);
                     sb.writef("    cmov le r% 1\n", target);
                     break;
                 case GREATER:
-                    sb.writef("    fcmp r% r%\n", lhs, rhs);
+                    sb.writef("    dcmp r% r%\n", lhs, rhs);
                     sb.writef("    move r% 0\n", target);
                     sb.writef("    cmov gt r% 1\n", target);
                     break;
                 case GREATER_EQUAL:
-                    sb.writef("    fcmp r% r%\n", lhs, rhs);
+                    sb.writef("    dcmp r% r%\n", lhs, rhs);
                     sb.writef("    move r% 0\n", target);
                     sb.writef("    cmov ge r% 1\n", target);
                     break;
@@ -3854,7 +3871,7 @@ struct CDasmWriter {
                     break;
                 case MINUS:
                     if(is_float_op)
-                        sb.writef("    fneg r% r%\n", target, target);
+                        sb.writef("    dneg r% r%\n", target, target);
                     else
                         sb.writef("    neg r% r%\n", target, target);
                     break;
@@ -3881,6 +3898,7 @@ struct CDasmWriter {
         bool callee_uses_hidden_ptr = false;
         bool callee_is_varargs = false;
         int n_fixed_args = 0;  // Number of fixed args for varargs functions
+        uint varargs_float_mask = 0;  // Bitmask of which args are floats (for varargs calls)
         CType* callee_return_type = null;
         if(CIdentifier* id = expr.callee.as_identifier()){
             if(CType** rt = id.name.lexeme in func_return_types){
@@ -3960,9 +3978,17 @@ struct CDasmWriter {
             }
 
             // Push varargs (those beyond n_fixed_args)
+            // Also build float mask: 2 bits per arg, 0b10 = double (floats promoted to double)
             for(size_t i = n_fixed_args; i < expr.args.length; i++){
                 CExpr* arg = expr.args[i];
                 CType* arg_type = get_expr_type(arg);
+
+                // Track if this arg is a float/double (for calling convention)
+                if(arg_type && arg_type.is_float() && i < 16){
+                    // Set bits for this arg position: 0b10 = double (float promoted to double)
+                    varargs_float_mask |= (0b10 << (i * 2));
+                }
+
                 if(arg_type && arg_type.is_struct_or_union()){
                     if(struct_fits_in_registers(arg_type)){
                         // Small struct: push each word
@@ -3995,6 +4021,11 @@ struct CDasmWriter {
                 int slot = get_arg_slot(i);
                 CType* arg_type = get_expr_type(arg);
                 int num_slots = arg_slots(arg);
+
+                // Track if this fixed arg is a float/double (for calling convention)
+                if(arg_type && arg_type.is_float() && i < 16){
+                    varargs_float_mask |= (0b10 << (i * 2));
+                }
 
                 if(arg_type && arg_type.is_struct_or_union()){
                     if(struct_fits_in_registers(arg_type)){
@@ -4183,12 +4214,21 @@ struct CDasmWriter {
             }
 
             // Direct call - use qualified name for extern functions
+            // For varargs with float args, emit float mask as third argument
             if(str* mod_alias = id.name.lexeme in extern_funcs){
                 used_funcs[id.name.lexeme] = true;  // Mark as used
-                sb.writef("    call function %.% %\n", *mod_alias, id.name.lexeme, total_args);
+                if(callee_is_varargs && varargs_float_mask != 0){
+                    sb.writef("    call function %.% % %\n", *mod_alias, id.name.lexeme, total_args, H(varargs_float_mask));
+                } else {
+                    sb.writef("    call function %.% %\n", *mod_alias, id.name.lexeme, total_args);
+                }
             } else {
                 called_funcs[id.name.lexeme] = true;  // Track internal call (for inline function generation)
-                sb.writef("    call function % %\n", id.name.lexeme, total_args);
+                if(callee_is_varargs && varargs_float_mask != 0){
+                    sb.writef("    call function % % %\n", id.name.lexeme, total_args, H(varargs_float_mask));
+                } else {
+                    sb.writef("    call function % %\n", id.name.lexeme, total_args);
+                }
             }
 
             // Restore registers (for non-varargs; varargs restores after stack cleanup)
@@ -4419,6 +4459,10 @@ struct CDasmWriter {
                     // Compound assignment - read current value first
                     int cur_reg = regallocator.allocate();
                     sb.writef("    local_read r% %\n", cur_reg, P(*offset));
+                    // Convert float32 to double after reading
+                    if(var_type_ptr && (*var_type_ptr).is_float32()){
+                        sb.writef("    ftod r% r%\n", cur_reg, cur_reg);
+                    }
 
                     int err = gen_expression(expr.value, val_reg);
                     if(err) return err;
@@ -4460,6 +4504,10 @@ struct CDasmWriter {
                     }
                 }
 
+                // Convert double to float32 before storing
+                if(var_type_ptr && (*var_type_ptr).is_float32()){
+                    sb.writef("    dtof r% r%\n", val_reg, val_reg);
+                }
                 sb.writef("    local_write % r%\n", P(*offset), val_reg);
 
                 if(target != TARGET_IS_NOTHING){

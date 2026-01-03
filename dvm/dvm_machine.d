@@ -69,7 +69,7 @@ struct Machine {
     }
 
     int
-    do_call(Function* func, size_t n_args){with(RegisterNames){
+    do_call(Function* func, size_t n_args, uint call_floats = 0){with(RegisterNames){
         switch(func.type) with(FunctionType){
             default:
                 return 1;
@@ -83,13 +83,13 @@ struct Machine {
                 return call_native(func);
             }
             case NATIVE_VARARGS:{
-                return call_native_varargs(func, n_args);
+                return call_native_varargs(func, n_args, call_floats);
             }
         }
     }}
 
     int
-    call_native_varargs(Function* func, size_t n_total){with(RegisterNames){
+    call_native_varargs(Function* func, size_t n_total, uint call_floats = 0){with(RegisterNames){
         uintptr_t[16] args = void;
         size_t n_fixed = func.n_args;
         size_t n_variadic = n_total > n_fixed ? n_total - n_fixed : 0;
@@ -109,15 +109,19 @@ struct Machine {
             // Caller cleanup - don't pop here
         }
 
+        // Combine function-declared arg types with call-site float mask
+        // call_floats provides per-call info about which variadic args are floats
+        uint arg_types = func.arg_types | call_floats;
+
         // Use float-aware trampoline if any args or returns are floats
-        if (func.arg_types != 0 || func.ret_types != 0) {
+        if (arg_types != 0 || func.ret_types != 0) {
             import dvm.varargs_trampoline_float: call_varargs_float;
             registers[ROUT1] = call_varargs_float(
                 cast(void*)func.native_function_,
                 args.ptr,
                 n_fixed,
                 n_total,
-                func.arg_types,
+                arg_types,
                 func.ret_types
             );
         } else {
@@ -558,17 +562,36 @@ struct Machine {
                     uintptr_t val = get_unsigned();
                     *dst = val;
                 }break;
-                case ITOF:{
-                    if(int b = begin(ITOF)) return b;
+                case ITOD:{
+                    if(int b = begin(ITOD)) return b;
                     float_t* dst = cast(float_t*)get_reg;
                     uintptr_t* rhs = get_reg;
                     *dst = cast(typeof(*dst))*rhs;
                 }break;
-                case FTOI:{
-                    if(int b = begin(FTOI)) return b;
+                case DTOI:{
+                    if(int b = begin(DTOI)) return b;
                     uintptr_t* dst = get_reg;
                     float_t* rhs = cast(float_t*)get_reg;
                     *dst = cast(typeof(*dst))*rhs;
+                }break;
+                case DTOF:{
+                    // Double to float: truncate 64-bit double to 32-bit float
+                    // Result stored in lower 32 bits of register
+                    if(int b = begin(DTOF)) return b;
+                    uintptr_t* dst = get_reg;
+                    float_t* rhs = cast(float_t*)get_reg;
+                    float f = cast(float)*rhs;  // Truncate double to float
+                    *dst = *cast(uint*)&f;      // Store as 32-bit value
+                }break;
+                case FTOD:{
+                    // Float to double: expand 32-bit float to 64-bit double
+                    // Input is 32-bit float in lower bits of register
+                    if(int b = begin(FTOD)) return b;
+                    float_t* dst = cast(float_t*)get_reg;
+                    uintptr_t* rhs = get_reg;
+                    uint f_bits = cast(uint)*rhs;
+                    float f = *cast(float*)&f_bits;
+                    *dst = cast(double)f;       // Expand float to double
                 }break;
                 case NOT:{
                     if(int b = begin(NOT)) return b;
@@ -588,64 +611,64 @@ struct Machine {
                     uintptr_t* rhs = get_reg;
                     *dst = ~*rhs;
                 }break;
-                case FADD_I:{
-                    if(int b = begin(FADD_I)) return b;
+                case DADD_I:{
+                    if(int b = begin(DADD_I)) return b;
                     float_t* dst = cast(float_t*)get_reg;
                     float_t* lhs = cast(float_t*)get_reg;
                     float_t rhs = get_float;
                     *dst = *lhs + rhs;
                 }break;
-                case FADD_R:{
-                    if(int b = begin(FADD_R)) return b;
+                case DADD_R:{
+                    if(int b = begin(DADD_R)) return b;
                     float_t* dst = cast(float_t*)get_reg;
                     float_t* lhs = cast(float_t*)get_reg;
                     float_t* rhs = cast(float_t*)get_reg;
                     *dst = *lhs + *rhs;
                 }break;
-                case FSUB_I:{
-                    if(int b = begin(FSUB_I)) return b;
+                case DSUB_I:{
+                    if(int b = begin(DSUB_I)) return b;
                     float_t* dst = cast(float_t*)get_reg;
                     float_t* lhs = cast(float_t*)get_reg;
                     float_t rhs = get_float;
                     *dst = *lhs - rhs;
                 }break;
-                case FSUB_R:{
-                    if(int b = begin(FSUB_R)) return b;
+                case DSUB_R:{
+                    if(int b = begin(DSUB_R)) return b;
                     float_t* dst = cast(float_t*)get_reg;
                     float_t* lhs = cast(float_t*)get_reg;
                     float_t* rhs = cast(float_t*)get_reg;
                     *dst = *lhs - *rhs;
                 }break;
-                case FMUL_I:{
-                    if(int b = begin(FMUL_I)) return b;
+                case DMUL_I:{
+                    if(int b = begin(DMUL_I)) return b;
                     float_t* dst = cast(float_t*)get_reg;
                     float_t* lhs = cast(float_t*)get_reg;
                     float_t rhs = get_float;
                     *dst = *lhs * rhs;
                 }break;
-                case FMUL_R:{
-                    if(int b = begin(FMUL_R)) return b;
+                case DMUL_R:{
+                    if(int b = begin(DMUL_R)) return b;
                     float_t* dst = cast(float_t*)get_reg;
                     float_t* lhs = cast(float_t*)get_reg;
                     float_t* rhs = cast(float_t*)get_reg;
                     *dst = *lhs * *rhs;
                 }break;
-                case FDIV_I:{
-                    if(int b = begin(FDIV_I)) return b;
+                case DDIV_I:{
+                    if(int b = begin(DDIV_I)) return b;
                     float_t* dst = cast(float_t*)get_reg;
                     float_t* lhs = cast(float_t*)get_reg;
                     float_t rhs = get_float;
                     *dst = *lhs / rhs;
                 }break;
-                case FDIV_R:{
-                    if(int b = begin(FDIV_R)) return b;
+                case DDIV_R:{
+                    if(int b = begin(DDIV_R)) return b;
                     float_t* dst = cast(float_t*)get_reg;
                     float_t* lhs = cast(float_t*)get_reg;
                     float_t* rhs = cast(float_t*)get_reg;
                     *dst = *lhs / *rhs;
                 }break;
-                case FCMP_I:{
-                    if(int b = begin(FCMP_I)) return b;
+                case DCMP_I:{
+                    if(int b = begin(DCMP_I)) return b;
                     registers[RFLAGS] = 0;
                     float_t lhs = float_read_reg;
                     float_t rhs = get_float;
@@ -656,8 +679,8 @@ struct Machine {
                         registers[RFLAGS] = CmpFlags.CARRY;
                     }
                 }break;
-                case FCMP_R:{
-                    if(int b = begin(FCMP_R)) return b;
+                case DCMP_R:{
+                    if(int b = begin(DCMP_R)) return b;
                     registers[RFLAGS] = 0;
                     float_t lhs = float_read_reg;
                     float_t rhs = float_read_reg;
@@ -668,8 +691,8 @@ struct Machine {
                         registers[RFLAGS] = CmpFlags.CARRY;
                     }
                 }break;
-                case FNEG:{
-                    if(int b = begin(FNEG)) return b;
+                case DNEG:{
+                    if(int b = begin(DNEG)) return b;
                     float_t* dst = cast(float_t*)get_reg;
                     float_t* rhs = cast(float_t*)get_reg;
                     *dst = -*rhs;
@@ -871,6 +894,18 @@ struct Machine {
                     Function* f = cast(Function*)get_unsigned;
                     size_t n_args = cast(size_t)get_unsigned;
                     int err = do_call(f, n_args);
+                    if(err) {
+                        backtrace;
+                        badend = true;
+                        return err;
+                    }
+                }break;
+                case CALL_I_NARGS_FLOATS:{
+                    if(int b = begin(CALL_I_NARGS_FLOATS)) return b;
+                    Function* f = cast(Function*)get_unsigned;
+                    size_t n_args = cast(size_t)get_unsigned;
+                    uint call_floats = cast(uint)get_unsigned;
+                    int err = do_call(f, n_args, call_floats);
                     if(err) {
                         backtrace;
                         badend = true;

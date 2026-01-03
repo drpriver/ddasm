@@ -26,6 +26,33 @@ int gpaused;
 void main_loop(void);
 void render_and_present(int sx, int sy, int dx, int dy);
 enum {BOARD_SIZE=10, HALF_BOARD_SIZE=5};
+void open_window_and_renderer(int width, int height){
+    SDL_Init(SDL_INIT_VIDEO);
+    SDL_Window *window = SDL_CreateWindow(
+        "Snek!",
+        SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
+        width, height,
+        SDL_WINDOW_SHOWN | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE
+    );
+    if(!window){
+        printf("No window!\n");
+        abort();
+    }
+    SDL_Renderer *renderer = SDL_CreateRenderer(window, -1, 0);
+    if(!renderer) {printf("No renderer!\n"); abort();}
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    int ww, wh;
+    SDL_GetWindowSize(window, &ww, &wh);
+    int rw, rh;
+    SDL_GetRendererOutputSize(renderer, &rw, &rh);
+    if(rw != ww || rh != wh){
+        printf("rw: %d, ww: %d\n", rw, ww);
+        printf("rh: %d, wh: %d\n", rh, wh);
+        SDL_RenderSetScale(renderer, (float)rw/ww, (float)rh/wh);
+    }
+    gwindow = window;
+    grenderer = renderer;
+}
 int start(int width, int height){
   srand(time(NULL));
   void* window;
@@ -34,19 +61,7 @@ int start(int width, int height){
   if(width > 1200) width = 1200;
   if(height < 400) height = 400;
   if(height > 1200) height = 1200;
-  SDL_Init(SDL_INIT_VIDEO);
-  window = SDL_CreateWindow(
-    "Snek!",
-    SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
-    width, height,
-    SDL_WINDOW_SHOWN | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE
-  );
-  if(!window) {printf("no window\n"); abort();}
-  renderer = SDL_CreateRenderer(window, -1, 0);
-  if(!renderer) {printf("no renderer\n"); abort();}
-  SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-  gwindow = window;
-  grenderer = renderer;
+  open_window_and_renderer(width, height);
   Tile* board = calloc(BOARD_SIZE*BOARD_SIZE, sizeof *board);
   gboard = board;
   Tile** snake = calloc(BOARD_SIZE*BOARD_SIZE, sizeof *snake);
