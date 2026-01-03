@@ -250,6 +250,8 @@ struct CAnalyzer {
                 compound_literal_slots += cast(int)((size + 7) / 8);
                 analyze_expr(e.initializer);
                 break;
+            case EMBED:
+                break;  // Nothing to analyze
         }
     }
 
@@ -506,6 +508,8 @@ struct CDasmWriter {
                     update(scan_expr_for_calls(assoc.result));
                 }
                 break;
+            case EMBED:
+                break;  // No calls in embed
         }
         return max_slots;
     }
@@ -618,6 +622,9 @@ struct CDasmWriter {
                 // Compound literal has an explicit type
                 auto cl = cast(CCompoundLiteral*)e;
                 return cl.literal_type;
+            case EMBED:
+                // Embed expands to bytes, type determined by context
+                return null;
         }
     }
 
@@ -2216,6 +2223,9 @@ struct CDasmWriter {
                 return gen_compound_literal(cast(CCompoundLiteral*)e, target);
             case GENERIC:
                 return gen_generic(cast(CGeneric*)e, target);
+            case EMBED:
+                error(e.token, "#embed not yet supported in code generation (requires dasm incbin)");
+                return 1;
         }
     }
 

@@ -92,6 +92,12 @@ struct Barray(T){
         count += values.length;
     }
     void
+    extend(scope const T[] values){
+        ensure_additional(values.length);
+        memcpy(bdata.data.ptr+count, values.ptr, values.length*T.sizeof);
+        count += values.length;
+    }
+    void
     extend(R)(scope R range){
         static if(__traits(hasMember, range, "length")){
             ensure_additional(range.length);

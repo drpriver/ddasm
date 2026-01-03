@@ -295,6 +295,7 @@ enum CExprKind {
     INIT_LIST,
     COMPOUND_LITERAL,
     GENERIC,
+    EMBED,
 }
 
 struct CExpr {
@@ -343,6 +344,9 @@ struct CExpr {
     }
     inout(CGeneric)* as_generic() inout {
         return kind == CExprKind.GENERIC ? cast(typeof(return))&this : null;
+    }
+    inout(CEmbed)* as_embed() inout {
+        return kind == CExprKind.EMBED ? cast(typeof(return))&this : null;
     }
 
     CExpr* ungroup(){
@@ -758,6 +762,25 @@ struct CGeneric {
         result.expr.token = tok;
         result.controlling_ = ctrl;
         result.associations = assocs;
+        return &result.expr;
+    }
+}
+
+// __embed("path", offset, length) - emitted by preprocessor for #embed
+struct CEmbed {
+    CExpr expr;
+    str path;       // Resolved file path
+    long offset;    // Byte offset into file
+    long length;    // Number of bytes
+
+    static CExpr* make(Allocator a, str path, long offset, long length, CToken tok){
+        auto data = a.zalloc(typeof(this).sizeof);
+        auto result = cast(typeof(this)*)data.ptr;
+        result.expr.kind = CExprKind.EMBED;
+        result.expr.token = tok;
+        result.path = path;
+        result.offset = offset;
+        result.length = length;
         return &result.expr;
     }
 }

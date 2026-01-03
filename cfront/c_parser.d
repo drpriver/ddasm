@@ -4074,6 +4074,48 @@ struct CParser {
                 // Return a dummy literal 0
                 return CLiteral.make_int(allocator, 0, va_tok);
             }
+            // __embed("path", offset, length) - emitted by preprocessor for #embed
+            if(peek().lexeme == "__embed"){
+                CToken embed_tok = advance();
+                consume(CTokenType.LEFT_PAREN, "Expected '(' after __embed");
+                if(ERROR_OCCURRED) return null;
+
+                // Parse path string
+                if(!check(CTokenType.STRING)){
+                    error("Expected string literal for __embed path");
+                    return null;
+                }
+                str path = advance().lexeme;
+                // Strip quotes from path
+                if(path.length >= 2 && path[0] == '"' && path[$-1] == '"')
+                    path = path[1..$-1];
+
+                consume(CTokenType.COMMA, "Expected ',' after __embed path");
+                if(ERROR_OCCURRED) return null;
+
+                // Parse offset
+                if(!check(CTokenType.NUMBER)){
+                    error("Expected number for __embed offset");
+                    return null;
+                }
+                import core.stdc.stdlib : strtol;
+                long offset = strtol(advance().lexeme.ptr, null, 10);
+
+                consume(CTokenType.COMMA, "Expected ',' after __embed offset");
+                if(ERROR_OCCURRED) return null;
+
+                // Parse length
+                if(!check(CTokenType.NUMBER)){
+                    error("Expected number for __embed length");
+                    return null;
+                }
+                long length = strtol(advance().lexeme.ptr, null, 10);
+
+                consume(CTokenType.RIGHT_PAREN, "Expected ')' after __embed");
+                if(ERROR_OCCURRED) return null;
+
+                return CEmbed.make(allocator, path, offset, length, embed_tok);
+            }
             return CIdentifier.make(allocator, advance());
         }
 
