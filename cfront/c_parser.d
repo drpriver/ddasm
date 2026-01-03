@@ -20,6 +20,7 @@ struct CParser {
     int current = 0;
     bool ERROR_OCCURRED = false;
     str current_library;  // Set by #pragma library("...")
+    int switch_depth = 0;  // Track nesting level in switch statements for case/default
     Table!(str, CType*) struct_types;  // Defined struct types
     Table!(str, CType*) union_types;   // Defined union types
     Table!(str, CType*) enum_types;    // Defined enum types
@@ -2287,6 +2288,14 @@ struct CParser {
     // (6.7.3.2) member-declaration-list:
     //     member-declaration
     //     member-declaration-list member-declaration
+    // Bitfield packing state
+    struct BitfieldState {
+        size_t storage_start;  // Byte offset where current storage unit starts
+        size_t storage_size;   // Size of current storage unit (e.g., 4 for int)
+        size_t bits_used;      // Bits used in current storage unit
+        bool active;           // Whether we're in a bitfield sequence
+    }
+
     //
     // Parses all member declarations in a struct/union body.
     // Returns the total size (accumulated offset for structs, max size for unions).
@@ -2296,10 +2305,11 @@ struct CParser {
     int parse_member_declaration_list(Barray!StructField* fields, size_t* total_size, bool is_union){
         size_t offset = 0;
         size_t max_size = 0;
+        BitfieldState bf_state;
 
         while(!check(CTokenType.RIGHT_BRACE) && !at_end){
             size_t field_size = 0;
-            int err = parse_member_declaration(fields, is_union ? 0 : offset, &field_size, is_union);
+            int err = parse_member_declaration(fields, is_union ? 0 : offset, &field_size, is_union, &bf_state);
             if(err) return err;
 
             if(is_union){
@@ -2307,6 +2317,12 @@ struct CParser {
             } else {
                 offset += field_size;
             }
+        }
+
+        // Finalize any active bitfield storage unit
+        if(!is_union && bf_state.active){
+            // The last bitfield group may need its storage unit accounted for
+            // (already handled in parse_member_declaration when transitioning)
         }
 
         size_t raw_size = is_union ? max_size : offset;
@@ -2330,12 +2346,18 @@ struct CParser {
     // Parses a single member declaration line (which may declare multiple fields via comma).
     // base_offset: starting offset for fields in this declaration
     // total_field_size: output - total size of all fields declared
-    int parse_member_declaration(Barray!StructField* fields, size_t base_offset, size_t* total_field_size, bool is_union){
+    // bf_state: bitfield packing state (tracks current storage unit)
+    int parse_member_declaration(Barray!StructField* fields, size_t base_offset, size_t* total_field_size, bool is_union, BitfieldState* bf_state){
         *total_field_size = 0;
 
         // Check for inline struct/union: struct { ... } field_name; or struct { ... };
         if((check(CTokenType.UNION) || check(CTokenType.STRUCT)) &&
             peek_at(1).type == CTokenType.LEFT_BRACE){
+            // Non-bitfield member: finalize any active bitfield group
+            if(!is_union && bf_state.active){
+                bf_state.active = false;
+            }
+
             bool is_inline_union = check(CTokenType.UNION);
             advance();  // consume union/struct
             advance();  // consume {
@@ -2395,6 +2417,11 @@ struct CParser {
 
         // Check for anonymous enum field: enum { ... } field_name;
         if(check(CTokenType.ENUM) && peek_at(1).type == CTokenType.LEFT_BRACE){
+            // Non-bitfield member: finalize any active bitfield group
+            if(!is_union && bf_state.active){
+                bf_state.active = false;
+            }
+
             advance();  // consume 'enum'
             advance();  // consume '{'
             // Parse and register enum values
@@ -2433,6 +2460,10 @@ struct CParser {
 
         // Check for function pointer field: type (CONV * name) (params)
         if(check(CTokenType.LEFT_PAREN)){
+            // Non-bitfield member: finalize any active bitfield group
+            if(!is_union && bf_state.active){
+                bf_state.active = false;
+            }
             return parse_function_pointer_member(fields, base_offset, total_field_size, base_type);
         }
 
@@ -2455,7 +2486,40 @@ struct CParser {
                 advance();  // consume :
                 auto width_result = parse_enum_const_expr();
                 if(width_result.err) return 1;
-                // Skip anonymous bit fields - they're just padding
+                long width = width_result.value;
+                size_t type_size = base_type.size_of();
+                size_t type_bits = type_size * 8;
+
+                if(width == 0){
+                    // Zero-width: force alignment to next storage unit
+                    if(bf_state.active){
+                        // Finish current storage unit
+                        current_offset = bf_state.storage_start + bf_state.storage_size;
+                        *total_field_size = current_offset - base_offset;
+                        bf_state.active = false;
+                    }
+                } else if(!is_union){
+                    // Anonymous bitfield still consumes bits
+                    if(!bf_state.active || bf_state.storage_size != type_size ||
+                       bf_state.bits_used + width > type_bits){
+                        // Start new storage unit
+                        if(bf_state.active){
+                            current_offset = bf_state.storage_start + bf_state.storage_size;
+                        }
+                        // Align to type alignment
+                        size_t align_req = base_type.align_of();
+                        size_t misalign = current_offset % align_req;
+                        if(misalign != 0) current_offset += align_req - misalign;
+
+                        bf_state.storage_start = current_offset;
+                        bf_state.storage_size = type_size;
+                        bf_state.bits_used = cast(size_t)width;
+                        bf_state.active = true;
+                    } else {
+                        bf_state.bits_used += width;
+                    }
+                    *total_field_size = bf_state.storage_start + bf_state.storage_size - base_offset;
+                }
                 first_declarator = false;
                 continue;
             }
@@ -2496,10 +2560,59 @@ struct CParser {
 
             // Handle bit fields (e.g., unsigned int field:2;)
             if(match(CTokenType.COLON)){
-                // Just skip the bit width - we'll use the full type size
                 auto width_result = parse_enum_const_expr();
                 if(width_result.err) return 1;
-                // Bit field - just use the underlying type (imprecise but ok for now)
+                long width = width_result.value;
+                size_t type_size = decl_type.size_of();
+                size_t type_bits = type_size * 8;
+
+                if(!is_union){
+                    // Check if bitfield fits in current storage unit
+                    if(!bf_state.active || bf_state.storage_size != type_size ||
+                       bf_state.bits_used + width > type_bits){
+                        // Start new storage unit
+                        if(bf_state.active){
+                            current_offset = bf_state.storage_start + bf_state.storage_size;
+                        }
+                        // Align to type alignment
+                        size_t align_req = decl_type.align_of();
+                        size_t misalign = current_offset % align_req;
+                        if(misalign != 0) current_offset += align_req - misalign;
+
+                        bf_state.storage_start = current_offset;
+                        bf_state.storage_size = type_size;
+                        bf_state.bits_used = cast(size_t)width;
+                        bf_state.active = true;
+                    } else {
+                        bf_state.bits_used += width;
+                    }
+
+                    // Add field pointing to storage unit start
+                    StructField field;
+                    field.name = field_name.lexeme;
+                    field.type = decl_type;
+                    field.offset = bf_state.storage_start;
+                    *fields ~= field;
+
+                    *total_field_size = bf_state.storage_start + bf_state.storage_size - base_offset;
+                } else {
+                    // Union bitfields: each at offset 0
+                    StructField field;
+                    field.name = field_name.lexeme;
+                    field.type = decl_type;
+                    field.offset = 0;
+                    *fields ~= field;
+                    if(type_size > *total_field_size){
+                        *total_field_size = type_size;
+                    }
+                }
+                continue;  // Don't do normal field processing
+            }
+
+            // Non-bitfield member: finalize any active bitfield group
+            if(!is_union && bf_state.active){
+                current_offset = bf_state.storage_start + bf_state.storage_size;
+                bf_state.active = false;
             }
 
             // Add the field
@@ -3188,6 +3301,12 @@ struct CParser {
         if(match(CTokenType.GOTO)) return parse_goto();
         if(match(CTokenType.DASM)) return parse_dasm();
 
+        // Handle case/default labels inside switch (including nested statements like Duff's device)
+        if(switch_depth > 0){
+            if(match(CTokenType.CASE)) return parse_case_label();
+            if(match(CTokenType.DEFAULT)) return parse_default_label();
+        }
+
         // Check for label: identifier followed by colon
         if(check(CTokenType.IDENTIFIER) && peek_at(1).type == CTokenType.COLON){
             return parse_label();
@@ -3394,8 +3513,8 @@ struct CParser {
     }
 
     // (6.8.5.1) switch statement:
-    //     switch( expression ){ switch-body }
-    // switch-body contains case/default labels followed by statements
+    //     switch( expression ) statement
+    // The body can contain case/default labels at any nesting level (Duff's device)
     CStmt* parse_switch(){
         CToken keyword = previous();
 
@@ -3408,63 +3527,48 @@ struct CParser {
         consume(CTokenType.RIGHT_PAREN, "Expected ')' after switch condition");
         if(ERROR_OCCURRED) return null;
 
-        consume(CTokenType.LEFT_BRACE, "Expected '{' for switch body");
+        // Track that we're inside a switch so case/default are allowed
+        switch_depth++;
+        scope(exit) switch_depth--;
+
+        // Parse the body - usually a block, but can be any statement
+        CStmt* body_ = parse_statement();
+        if(body_ is null) return null;
+
+        return CSwitchStmt.make(allocator, condition, body_, keyword);
+    }
+
+    // (6.8.1) case labeled-statement:
+    //     case constant-expression : statement
+    CStmt* parse_case_label(){
+        CToken keyword = previous();
+
+        CExpr* case_val = parse_expression();
+        if(case_val is null) return null;
+
+        consume(CTokenType.COLON, "Expected ':' after case value");
         if(ERROR_OCCURRED) return null;
 
-        auto cases = make_barray!CSwitchCase(allocator);
+        // Parse the labeled statement
+        CStmt* stmt = parse_statement();
+        if(stmt is null) return null;
 
-        while(!check(CTokenType.RIGHT_BRACE) && !at_end){
-            // Parse case/default labels
-            if(match(CTokenType.CASE)){
-                // Parse case constant expression
-                CExpr* case_val = parse_expression();
-                if(case_val is null) return null;
+        return CCaseLabelStmt.make(allocator, case_val, stmt, false, keyword);
+    }
 
-                consume(CTokenType.COLON, "Expected ':' after case value");
-                if(ERROR_OCCURRED) return null;
+    // (6.8.1) default labeled-statement:
+    //     default : statement
+    CStmt* parse_default_label(){
+        CToken keyword = previous();
 
-                // Parse statements until next case/default/}
-                auto stmts = make_barray!(CStmt*)(allocator);
-                while(!check(CTokenType.CASE) && !check(CTokenType.DEFAULT) &&
-                       !check(CTokenType.RIGHT_BRACE) && !at_end){
-                    CStmt* stmt = parse_statement();
-                    if(stmt is null) return null;
-                    stmts ~= stmt;
-                }
-
-                CSwitchCase c;
-                c.case_value = case_val;
-                c.statements = stmts[];
-                c.is_default = false;
-                cases ~= c;
-            } else if(match(CTokenType.DEFAULT)){
-                consume(CTokenType.COLON, "Expected ':' after 'default'");
-                if(ERROR_OCCURRED) return null;
-
-                // Parse statements until next case/default/}
-                auto stmts = make_barray!(CStmt*)(allocator);
-                while(!check(CTokenType.CASE) && !check(CTokenType.DEFAULT) &&
-                       !check(CTokenType.RIGHT_BRACE) && !at_end){
-                    CStmt* stmt = parse_statement();
-                    if(stmt is null) return null;
-                    stmts ~= stmt;
-                }
-
-                CSwitchCase c;
-                c.case_value = null;
-                c.statements = stmts[];
-                c.is_default = true;
-                cases ~= c;
-            } else {
-                error("Expected 'case' or 'default' in switch body");
-                return null;
-            }
-        }
-
-        consume(CTokenType.RIGHT_BRACE, "Expected '}' after switch body");
+        consume(CTokenType.COLON, "Expected ':' after 'default'");
         if(ERROR_OCCURRED) return null;
 
-        return CSwitchStmt.make(allocator, condition, cases[], keyword);
+        // Parse the labeled statement
+        CStmt* stmt = parse_statement();
+        if(stmt is null) return null;
+
+        return CCaseLabelStmt.make(allocator, null, stmt, true, keyword);
     }
 
     // (6.8.7.1) goto statement:

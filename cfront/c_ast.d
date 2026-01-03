@@ -810,6 +810,7 @@ enum CStmtKind {
     GOTO,
     LABEL,
     DASM,
+    CASE_LABEL,
 }
 
 struct CStmt {
@@ -981,25 +982,41 @@ struct CEmptyStmt {
     }
 }
 
-// (6.8.4.2) switch statement case clause
-struct CSwitchCase {
-    CExpr* case_value;  // null for default case
-    CStmt*[] statements;
-    bool is_default;
-}
-
+// (6.8.4.2) switch statement
+// Switch body can contain case/default labels at any nesting level (Duff's device)
 struct CSwitchStmt {
     CStmt stmt;
     CExpr* condition;
-    CSwitchCase[] cases;
+    CStmt* body_;  // Usually a block containing case labels
 
-    static CStmt* make(Allocator a, CExpr* cond, CSwitchCase[] case_list, CToken t){
+    static CStmt* make(Allocator a, CExpr* cond, CStmt* body__, CToken t){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.stmt.kind = CStmtKind.SWITCH;
         result.stmt.token = t;
         result.condition = cond;
-        result.cases = case_list;
+        result.body_ = body__;
+        return &result.stmt;
+    }
+}
+
+// (6.8.1) case/default labeled statement:
+//     case constant-expression : statement
+//     default : statement
+struct CCaseLabelStmt {
+    CStmt stmt;
+    CExpr* case_value;  // null for default
+    CStmt* statement;   // The labeled statement
+    bool is_default;
+
+    static CStmt* make(Allocator a, CExpr* case_val, CStmt* s, bool is_def, CToken t){
+        auto data = a.zalloc(typeof(this).sizeof);
+        auto result = cast(typeof(this)*)data.ptr;
+        result.stmt.kind = CStmtKind.CASE_LABEL;
+        result.stmt.token = t;
+        result.case_value = case_val;
+        result.statement = s;
+        result.is_default = is_def;
         return &result.stmt;
     }
 }

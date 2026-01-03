@@ -146,16 +146,18 @@ struct CAnalyzer {
             case SWITCH:
                 auto s = cast(CSwitchStmt*)stmt;
                 analyze_expr(s.condition);
-                foreach(ref c; s.cases){
-                    if(c.case_value) analyze_expr(c.case_value);
-                    foreach(cs; c.statements) analyze_stmt(cs);
-                }
+                analyze_stmt(s.body_);
                 break;
             case GOTO:
                 break;  // goto doesn't need analysis
             case LABEL:
-                auto s = cast(CLabelStmt*)stmt;
-                analyze_stmt(s.statement);
+                auto l = cast(CLabelStmt*)stmt;
+                analyze_stmt(l.statement);
+                break;
+            case CASE_LABEL:
+                auto c = cast(CCaseLabelStmt*)stmt;
+                if(c.case_value) analyze_expr(c.case_value);
+                analyze_stmt(c.statement);
                 break;
             case BREAK:
             case CONTINUE:
@@ -292,6 +294,11 @@ struct CDasmWriter {
     // Goto/label support
     Table!(str, int) label_table;  // Map label names to label numbers
 
+    // Switch case label tracking (for Duff's device support)
+    // Parallel arrays: case statements and their label numbers
+    Barray!(CCaseLabelStmt*) case_label_stmts;
+    Barray!(int) case_label_nums;
+
     // Current function info
     CType* current_return_type = null;  // Return type of current function
     bool returns_struct = false;         // True if current function returns a struct
@@ -386,16 +393,18 @@ struct CDasmWriter {
             case SWITCH:
                 auto s = cast(CSwitchStmt*)stmt;
                 update(scan_expr_for_calls(s.condition));
-                foreach(ref c; s.cases){
-                    if(c.case_value) update(scan_expr_for_calls(c.case_value));
-                    foreach(cs; c.statements) update(scan_stmt_for_calls(cs));
-                }
+                update(scan_stmt_for_calls(s.body_));
                 break;
             case GOTO:
                 break;  // goto doesn't contain expressions
             case LABEL:
-                auto s = cast(CLabelStmt*)stmt;
-                update(scan_stmt_for_calls(s.statement));
+                auto l = cast(CLabelStmt*)stmt;
+                update(scan_stmt_for_calls(l.statement));
+                break;
+            case CASE_LABEL:
+                auto c = cast(CCaseLabelStmt*)stmt;
+                if(c.case_value) update(scan_expr_for_calls(c.case_value));
+                update(scan_stmt_for_calls(c.statement));
                 break;
             case BREAK:
             case CONTINUE:
@@ -728,6 +737,8 @@ struct CDasmWriter {
         arrays.data.allocator = a;
         global_types.data.allocator = a;
         label_table.data.allocator = a;
+        case_label_stmts.bdata.allocator = a;
+        case_label_nums.bdata.allocator = a;
     }
 
     void cleanup(){
@@ -1613,21 +1624,22 @@ struct CDasmWriter {
 
     int gen_statement(CStmt* stmt){
         final switch(stmt.kind) with (CStmtKind){
-            case EXPR:     return gen_expr_stmt(cast(CExprStmt*)stmt);
-            case RETURN:   return gen_return(cast(CReturnStmt*)stmt);
-            case IF:       return gen_if(cast(CIfStmt*)stmt);
-            case WHILE:    return gen_while(cast(CWhileStmt*)stmt);
-            case DO_WHILE: return gen_do_while(cast(CDoWhileStmt*)stmt);
-            case FOR:      return gen_for(cast(CForStmt*)stmt);
-            case BLOCK:    return gen_block(cast(CBlock*)stmt);
-            case VAR_DECL: return gen_var_decl(cast(CVarDecl*)stmt);
-            case BREAK:    return gen_break(cast(CBreakStmt*)stmt);
-            case CONTINUE: return gen_continue(cast(CContinueStmt*)stmt);
-            case EMPTY:    return 0;
-            case SWITCH:   return gen_switch(cast(CSwitchStmt*)stmt);
-            case GOTO:     return gen_goto(cast(CGotoStmt*)stmt);
-            case LABEL:    return gen_label(cast(CLabelStmt*)stmt);
-            case DASM:     return gen_dasm(cast(CDasmStmt*)stmt);
+            case EXPR:       return gen_expr_stmt(cast(CExprStmt*)stmt);
+            case RETURN:     return gen_return(cast(CReturnStmt*)stmt);
+            case IF:         return gen_if(cast(CIfStmt*)stmt);
+            case WHILE:      return gen_while(cast(CWhileStmt*)stmt);
+            case DO_WHILE:   return gen_do_while(cast(CDoWhileStmt*)stmt);
+            case FOR:        return gen_for(cast(CForStmt*)stmt);
+            case BLOCK:      return gen_block(cast(CBlock*)stmt);
+            case VAR_DECL:   return gen_var_decl(cast(CVarDecl*)stmt);
+            case BREAK:      return gen_break(cast(CBreakStmt*)stmt);
+            case CONTINUE:   return gen_continue(cast(CContinueStmt*)stmt);
+            case EMPTY:      return 0;
+            case SWITCH:     return gen_switch(cast(CSwitchStmt*)stmt);
+            case GOTO:       return gen_goto(cast(CGotoStmt*)stmt);
+            case LABEL:      return gen_label(cast(CLabelStmt*)stmt);
+            case DASM:       return gen_dasm(cast(CDasmStmt*)stmt);
+            case CASE_LABEL: return gen_case_label(cast(CCaseLabelStmt*)stmt);
         }
     }
 
@@ -1851,6 +1863,69 @@ struct CDasmWriter {
         return 0;
     }
 
+    // Recursively collect all case labels from a statement tree
+    void collect_case_labels(CStmt* stmt, ref Barray!(CCaseLabelStmt*) cases){
+        if(stmt is null) return;
+
+        final switch(stmt.kind) with (CStmtKind){
+            case CASE_LABEL:
+                auto c = cast(CCaseLabelStmt*)stmt;
+                cases ~= c;
+                // Also collect from the labeled statement
+                collect_case_labels(c.statement, cases);
+                break;
+
+            case BLOCK:
+                auto b = cast(CBlock*)stmt;
+                foreach(s; b.statements)
+                    collect_case_labels(s, cases);
+                break;
+
+            case IF:
+                auto i = cast(CIfStmt*)stmt;
+                collect_case_labels(i.then_branch, cases);
+                collect_case_labels(i.else_branch, cases);
+                break;
+
+            case WHILE:
+                auto w = cast(CWhileStmt*)stmt;
+                collect_case_labels(w.body, cases);
+                break;
+
+            case DO_WHILE:
+                auto d = cast(CDoWhileStmt*)stmt;
+                collect_case_labels(d.body, cases);
+                break;
+
+            case FOR:
+                auto f = cast(CForStmt*)stmt;
+                collect_case_labels(f.init_stmt, cases);
+                collect_case_labels(f.body_, cases);
+                break;
+
+            case SWITCH:
+                auto s = cast(CSwitchStmt*)stmt;
+                collect_case_labels(s.body_, cases);
+                break;
+
+            case LABEL:
+                auto l = cast(CLabelStmt*)stmt;
+                collect_case_labels(l.statement, cases);
+                break;
+
+            // These don't contain nested statements
+            case EXPR:
+            case RETURN:
+            case VAR_DECL:
+            case BREAK:
+            case CONTINUE:
+            case EMPTY:
+            case GOTO:
+            case DASM:
+                break;
+        }
+    }
+
     int gen_switch(CSwitchStmt* stmt){
         int prev_break = current_break_target;
         scope(exit){
@@ -1860,26 +1935,32 @@ struct CDasmWriter {
         int end_label = labelallocator.allocate();
         current_break_target = end_label;
 
+        // First pass: collect all case labels from the body
+        auto cases = make_barray!(CCaseLabelStmt*)(allocator);
+        collect_case_labels(stmt.body_, cases);
+
+        // Remember where our case labels start (for cleanup/lookup)
+        size_t case_start = case_label_stmts.count;
+
+        // Allocate labels for each case and register them
+        int default_label = -1;
+        foreach(c; cases[]){
+            int lbl = labelallocator.allocate();
+            case_label_stmts ~= c;
+            case_label_nums ~= lbl;
+            if(c.is_default){
+                default_label = lbl;
+            }
+        }
+
         // Evaluate switch expression once
         int before = regallocator.alloced;
         int cond_reg = regallocator.allocate();
         int err = gen_expression(stmt.condition, cond_reg);
         if(err) return err;
 
-        // Allocate labels for each case
-        auto case_labels = make_barray!int(allocator);
-        int default_label = -1;  // -1 means no default
-
-        foreach(ref c; stmt.cases){
-            int lbl = labelallocator.allocate();
-            case_labels ~= lbl;
-            if(c.is_default){
-                default_label = lbl;
-            }
-        }
-
         // Generate jump table: compare and jump to matching case
-        foreach(i, ref c; stmt.cases){
+        foreach(i, c; cases[]){
             if(!c.is_default){
                 // Generate comparison
                 int case_reg = regallocator.allocate();
@@ -1887,7 +1968,7 @@ struct CDasmWriter {
                 if(err) return err;
 
                 sb.writef("    cmp r% r%\n", cond_reg, case_reg);
-                sb.writef("    jump eq label L%\n", case_labels[i]);
+                sb.writef("    jump eq label L%\n", case_label_nums[case_start + i]);
                 regallocator.reset_to(before + 1);  // Keep cond_reg
             }
         }
@@ -1901,18 +1982,38 @@ struct CDasmWriter {
 
         regallocator.reset_to(before);
 
-        // Generate case bodies (fallthrough behavior)
-        foreach(i, ref c; stmt.cases){
-            sb.writef("  label L%\n", case_labels[i]);
-            foreach(s; c.statements){
-                err = gen_statement(s);
-                if(err) return err;
-            }
-            // Note: no implicit jump here - fallthrough to next case
-        }
+        // Generate the body - case labels will emit their labels via gen_case_label
+        err = gen_statement(stmt.body_);
+        if(err) return err;
 
         sb.writef("  label L%\n", end_label);
+
+        // Clean up case label tracking for this switch
+        case_label_stmts.count = case_start;
+        case_label_nums.count = case_start;
+
         return 0;
+    }
+
+    int gen_case_label(CCaseLabelStmt* stmt){
+        // Find the label number for this case statement
+        int lbl = -1;
+        foreach(i, s; case_label_stmts[]){
+            if(s is stmt){
+                lbl = case_label_nums[i];
+                break;
+            }
+        }
+
+        if(lbl < 0){
+            error(stmt.stmt.token, "case label not in switch");
+            return 1;
+        }
+
+        sb.writef("  label L%\n", lbl);
+
+        // Generate the labeled statement (fallthrough behavior)
+        return gen_statement(stmt.statement);
     }
 
     // Get or allocate a label number for a named label

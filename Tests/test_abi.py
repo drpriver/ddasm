@@ -83,7 +83,7 @@ HEADER_TYPES = [
     # Resource types
     ("sys/resource.h", ["struct rusage", "struct rlimit", "rlim_t"], False, "Resource"),
     # Regex types
-    ("regex.h", ["regmatch_t", "regoff_t"], False, "Regex"),  # regex_t skipped: has bitfields
+    ("regex.h", ["regex_t", "regmatch_t", "regoff_t"], False, "Regex"),
 ]
 
 # Struct offset tests
