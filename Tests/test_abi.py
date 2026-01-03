@@ -32,109 +32,97 @@ BASIC_TYPES = [
     "int*",
 ]
 
-# Types from <stdint.h>
-STDINT_TYPES = [
+# All header types to test
+# Format: (header, types, skip, category)
+HEADER_TYPES = [
+    # Standard C types
     ("stdint.h", [
-        "int8_t",
-        "int16_t",
-        "int32_t",
-        "int64_t",
-        "uint8_t",
-        "uint16_t",
-        "uint32_t",
-        "uint64_t",
-        "intptr_t",
-        "uintptr_t",
-        "size_t",
-        "ptrdiff_t",
-        "intmax_t",
-        "uintmax_t",
-    ]),
+        "int8_t", "int16_t", "int32_t", "int64_t",
+        "uint8_t", "uint16_t", "uint32_t", "uint64_t",
+        "intptr_t", "uintptr_t", "size_t", "ptrdiff_t",
+        "intmax_t", "uintmax_t",
+    ], False, "Standard C"),
+    ("stddef.h", ["size_t", "ptrdiff_t", "wchar_t"], False, "Standard C"),
+    ("time.h", ["time_t", "clock_t", "struct tm", "struct timespec"], False, "Standard C"),
+    ("signal.h", ["sig_atomic_t"], False, "Standard C"),
+    ("setjmp.h", ["jmp_buf"], False, "Standard C"),
+    ("stdio.h", ["FILE", "fpos_t"], False, "Standard C"),
+    ("wchar.h", ["wint_t", "mbstate_t"], False, "Standard C"),
+    ("stdlib.h", ["div_t", "ldiv_t", "lldiv_t"], False, "Standard C"),
+    # POSIX types
+    ("sys/types.h", [
+        "off_t", "ssize_t", "pid_t", "uid_t", "gid_t",
+        "mode_t", "dev_t", "ino_t", "nlink_t",
+    ], False, "POSIX"),
+    ("pthread.h", [
+        "pthread_t", "pthread_mutex_t", "pthread_cond_t", "pthread_attr_t",
+    ], False, "POSIX"),
+    # Network types
+    ("sys/socket.h", ["socklen_t", "sa_family_t"], False, "Network"),
+    ("netinet/in.h", [
+        "in_port_t", "in_addr_t", "struct in_addr", "struct in6_addr",
+        "struct sockaddr_in", "struct sockaddr_in6",
+    ], False, "Network"),
+    # File/stat types
+    ("sys/stat.h", ["struct stat"], True, "File/Stat"),  # Skip: complex preprocessor
+    ("dirent.h", ["struct dirent"], False, "File/Stat"),
+    # Signal extended types
+    ("signal.h", ["sigset_t", "struct sigaction", "siginfo_t", "stack_t"], True, "Signal Extended"),  # Skip: needs feature macros
+    # Poll/Select types
+    ("poll.h", ["struct pollfd", "nfds_t"], False, "Poll/Select"),
+    ("sys/select.h", ["fd_set"], False, "Poll/Select"),
+    ("sys/time.h", ["struct timeval"], False, "Poll/Select"),
+    # Terminal types
+    ("termios.h", ["struct termios", "speed_t", "tcflag_t", "cc_t"], False, "Terminal"),
+    # IPC types
+    ("sys/uio.h", ["struct iovec"], False, "IPC"),
+    ("sys/socket.h", ["struct msghdr", "struct cmsghdr"], False, "IPC"),
+    # User/Group types
+    ("pwd.h", ["struct passwd"], False, "User/Group"),
+    ("grp.h", ["struct group"], False, "User/Group"),
+    # Resource types
+    ("sys/resource.h", ["struct rusage", "struct rlimit", "rlim_t"], False, "Resource"),
+    # Regex types
+    ("regex.h", ["regex_t", "regmatch_t", "regoff_t"], True, "Regex"),  # Skip: complex preprocessor
 ]
 
-# Types from <stddef.h>
-STDDEF_TYPES = [
-    ("stddef.h", [
-        "size_t",
-        "ptrdiff_t",
-        "wchar_t",
-    ]),
-]
-
-# Types from <time.h>
-TIME_TYPES = [
-    ("time.h", [
-        "time_t",
-        "clock_t",
-        "struct tm",
-        "struct timespec",
-    ]),
-]
-
-# Types from <signal.h>
-SIGNAL_TYPES = [
-    ("signal.h", [
-        "sig_atomic_t",
-    ]),
-]
-
-# Types from <setjmp.h>
-SETJMP_TYPES = [
-    ("setjmp.h", [
-        "jmp_buf",
-    ]),
-]
-
-# Types from <stdio.h>
-STDIO_TYPES = [
-    ("stdio.h", [
-        "FILE",
-        "fpos_t",
-    ]),
-]
-
-# Types from <wchar.h>
-WCHAR_TYPES = [
-    ("wchar.h", [
-        "wint_t",
-        "mbstate_t",
-    ]),
-]
-
-# Struct types with known members to test offsetof
-STRUCT_TYPES = [
+# Struct offset tests
+# Format: (header, struct_type, members, skip)
+STRUCT_OFFSET_TYPES = [
+    # Standard C structs
     ("time.h", "struct tm", [
         "tm_sec", "tm_min", "tm_hour", "tm_mday", "tm_mon",
         "tm_year", "tm_wday", "tm_yday", "tm_isdst"
-    ]),
-    ("time.h", "struct timespec", ["tv_sec", "tv_nsec"]),
+    ], False),
+    ("time.h", "struct timespec", ["tv_sec", "tv_nsec"], False),
+    # POSIX structs
+    ("sys/stat.h", "struct stat", [
+        "st_dev", "st_ino", "st_mode", "st_nlink", "st_uid", "st_gid",
+        "st_rdev", "st_size", "st_blksize", "st_blocks",
+    ], True),  # Skip: complex preprocessor
+    ("netinet/in.h", "struct sockaddr_in", ["sin_family", "sin_port", "sin_addr"], False),
+    ("netinet/in.h", "struct sockaddr_in6", [
+        "sin6_family", "sin6_port", "sin6_flowinfo", "sin6_addr", "sin6_scope_id",
+    ], False),
+    ("poll.h", "struct pollfd", ["fd", "events", "revents"], False),
+    ("sys/time.h", "struct timeval", ["tv_sec", "tv_usec"], False),
+    ("sys/uio.h", "struct iovec", ["iov_base", "iov_len"], False),
+    ("sys/resource.h", "struct rlimit", ["rlim_cur", "rlim_max"], False),
+    ("regex.h", "regmatch_t", ["rm_so", "rm_eo"], True),  # Skip: complex preprocessor
+    ("signal.h", "struct sigaction", ["sa_handler", "sa_mask", "sa_flags"], True),  # Skip: needs feature macros
+    ("signal.h", "stack_t", ["ss_sp", "ss_flags", "ss_size"], True),  # Skip: needs feature macros
+    ("termios.h", "struct termios", ["c_iflag", "c_oflag", "c_cflag", "c_lflag"], False),
+    ("pwd.h", "struct passwd", ["pw_name", "pw_uid", "pw_gid", "pw_dir", "pw_shell"], False),
+    ("grp.h", "struct group", ["gr_name", "gr_gid", "gr_mem"], False),
 ]
 
-# POSIX types (may not be available on all systems)
-POSIX_TYPES = [
-    ("sys/types.h", [
-        "off_t",
-        "ssize_t",
-        "pid_t",
-        "uid_t",
-        "gid_t",
-        "mode_t",
-        "dev_t",
-        "ino_t",
-        "nlink_t",
-    ]),
-    ("pthread.h", [
-        "pthread_t",
-        "pthread_mutex_t",
-        "pthread_cond_t",
-        "pthread_attr_t",
-    ]),
-]
 
-
-def generate_size_align_code(headers, types):
+def generate_size_align_code(headers, types, feature_macro=None):
     """Generate C code to print sizeof and alignof for types."""
-    code = '#include <stdio.h>\n#include <stddef.h>\n'
+    code = ''
+    if feature_macro:
+        code += f'#define {feature_macro}\n'
+    code += '#include <stdio.h>\n#include <stddef.h>\n'
     for h in headers:
         code += f'#include <{h}>\n'
     code += '\nint main(void) {\n'
@@ -148,9 +136,10 @@ def generate_size_align_code(headers, types):
     return code
 
 
-def generate_offsetof_code(header, struct_type, members):
+def generate_offsetof_code(header, struct_type, members, feature_macro=None):
     """Generate C code to print offsetof for struct members."""
-    code = f'''#include <stdio.h>
+    macro_def = f'#define {feature_macro}\n' if feature_macro else ''
+    code = f'''{macro_def}#include <stdio.h>
 #include <stddef.h>
 #include <{header}>
 
@@ -307,10 +296,10 @@ def test_basic_types():
         return 1, 0
 
 
-def test_header_types(header, types, name):
+def test_header_types(header, types, name, feature_macro=None):
     """Test types from a specific header."""
     print(f"Testing {name}...")
-    code = generate_size_align_code([header], types)
+    code = generate_size_align_code([header], types, feature_macro)
 
     gcc_out, gcc_err = compile_and_run_gcc(code)
     if gcc_err:
@@ -336,11 +325,11 @@ def test_header_types(header, types, name):
         return 1, 0, 0
 
 
-def test_struct_offsets(header, struct_type, members):
+def test_struct_offsets(header, struct_type, members, feature_macro=None):
     """Test offsetof for struct members."""
     safe_name = struct_type.replace(' ', '_')
     print(f"Testing {safe_name} offsets...")
-    code = generate_offsetof_code(header, struct_type, members)
+    code = generate_offsetof_code(header, struct_type, members, feature_macro)
 
     gcc_out, gcc_err = compile_and_run_gcc(code)
     if gcc_err:
@@ -382,70 +371,41 @@ def main():
     total_fail += f
     print()
 
-    # Test stdint types
-    for header, types in STDINT_TYPES:
-        p, f, s = test_header_types(header, types, f"<{header}> types")
-        total_pass += p
-        total_fail += f
-        total_skip += s
-    print()
+    # Group header types by category
+    categories = {}
+    for header, types, skip, category in HEADER_TYPES:
+        if category not in categories:
+            categories[category] = []
+        categories[category].append((header, types, skip))
 
-    # Test stddef types
-    for header, types in STDDEF_TYPES:
-        p, f, s = test_header_types(header, types, f"<{header}> types")
-        total_pass += p
-        total_fail += f
-        total_skip += s
-    print()
-
-    # Test time types
-    for header, types in TIME_TYPES:
-        p, f, s = test_header_types(header, types, f"<{header}> types")
-        total_pass += p
-        total_fail += f
-        total_skip += s
-    print()
-
-    # Test signal types
-    for header, types in SIGNAL_TYPES:
-        p, f, s = test_header_types(header, types, f"<{header}> types")
-        total_pass += p
-        total_fail += f
-        total_skip += s
-    print()
-
-    # Test setjmp types
-    for header, types in SETJMP_TYPES:
-        p, f, s = test_header_types(header, types, f"<{header}> types")
-        total_pass += p
-        total_fail += f
-        total_skip += s
-    print()
-
-    # Test wchar types
-    for header, types in WCHAR_TYPES:
-        p, f, s = test_header_types(header, types, f"<{header}> types")
-        total_pass += p
-        total_fail += f
-        total_skip += s
-    print()
+    # Test header types by category
+    for category, items in categories.items():
+        print(f"=== {category} Types ===")
+        for header, types, skip in items:
+            if skip:
+                print(f"Testing <{header}> types...")
+                print(f"  SKIP: marked as skipped")
+                total_skip += 1
+            else:
+                p, f, s = test_header_types(header, types, f"<{header}> types")
+                total_pass += p
+                total_fail += f
+                total_skip += s
+        print()
 
     # Test struct offsets
-    print("Testing struct member offsets...")
-    for header, struct_type, members in STRUCT_TYPES:
-        p, f, s = test_struct_offsets(header, struct_type, members)
-        total_pass += p
-        total_fail += f
-        total_skip += s
-    print()
-
-    # Test POSIX types (optional)
-    print("Testing POSIX types (may not be available on all systems)...")
-    for header, types in POSIX_TYPES:
-        p, f, s = test_header_types(header, types, f"<{header}> types")
-        total_pass += p
-        total_fail += f
-        total_skip += s
+    print("=== Struct Member Offsets ===")
+    for header, struct_type, members, skip in STRUCT_OFFSET_TYPES:
+        if skip:
+            safe_name = struct_type.replace(' ', '_')
+            print(f"Testing {safe_name} offsets...")
+            print(f"  SKIP: marked as skipped")
+            total_skip += 1
+        else:
+            p, f, s = test_struct_offsets(header, struct_type, members)
+            total_pass += p
+            total_fail += f
+            total_skip += s
     print()
 
     # Summary

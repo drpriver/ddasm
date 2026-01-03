@@ -2292,6 +2292,7 @@ struct CParser {
     // Returns the total size (accumulated offset for structs, max size for unions).
     // For structs: is_union=false, offset accumulates
     // For unions: is_union=true, all offsets are 0, returns max field size
+    // Total size is padded to be a multiple of struct alignment (max field alignment).
     int parse_member_declaration_list(Barray!StructField* fields, size_t* total_size, bool is_union){
         size_t offset = 0;
         size_t max_size = 0;
@@ -2308,7 +2309,17 @@ struct CParser {
             }
         }
 
-        *total_size = is_union ? max_size : offset;
+        size_t raw_size = is_union ? max_size : offset;
+
+        // Compute struct alignment (max alignment of all fields)
+        size_t max_align = 1;
+        foreach(ref f; (*fields)[]){
+            size_t a = f.type.align_of();
+            if(a > max_align) max_align = a;
+        }
+
+        // Pad total size to be a multiple of struct alignment
+        *total_size = (raw_size + max_align - 1) & ~(max_align - 1);
         return 0;
     }
 
@@ -2463,8 +2474,15 @@ struct CParser {
             CToken field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
             if(ERROR_OCCURRED) return 1;
 
-            // Handle arrays (including multi-dimensional)
+            // Handle arrays (including multi-dimensional and flexible arrays)
             while(match(CTokenType.LEFT_BRACKET)){
+                // Check for flexible array member: type name[]
+                if(check(CTokenType.RIGHT_BRACKET)){
+                    advance();  // consume ']'
+                    // Flexible array member - treat as zero-size array
+                    decl_type = make_array_type(allocator, decl_type, 0);
+                    continue;
+                }
                 auto size_result = parse_enum_const_expr();
                 if(size_result.err) return 1;
                 if(size_result.value <= 0){
@@ -2920,7 +2938,13 @@ struct CParser {
 
                             CType* decl_type = base_type;
 
-                            if(match(CTokenType.LEFT_BRACKET)){
+                            while(match(CTokenType.LEFT_BRACKET)){
+                                // Check for flexible array member
+                                if(check(CTokenType.RIGHT_BRACKET)){
+                                    advance();
+                                    decl_type = make_array_type(allocator, decl_type, 0);
+                                    continue;
+                                }
                                 auto size_result = parse_enum_const_expr();
                                 if(size_result.err) return null;
                                 if(size_result.value <= 0){
@@ -3021,7 +3045,13 @@ struct CParser {
 
                             CType* decl_type = base_type;
 
-                            if(match(CTokenType.LEFT_BRACKET)){
+                            while(match(CTokenType.LEFT_BRACKET)){
+                                // Check for flexible array member
+                                if(check(CTokenType.RIGHT_BRACKET)){
+                                    advance();
+                                    decl_type = make_array_type(allocator, decl_type, 0);
+                                    continue;
+                                }
                                 auto size_result = parse_enum_const_expr();
                                 if(size_result.err) return null;
                                 if(size_result.value <= 0){
