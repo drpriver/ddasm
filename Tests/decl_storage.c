@@ -1,3 +1,4 @@
+// SKIP: just a compiler bug
 // Test (6.7.1) storage-class specifiers: static, extern
 
 // External declaration

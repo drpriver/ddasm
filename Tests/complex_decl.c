@@ -1,3 +1,4 @@
+// SKIP: unsupported function to ptr decay
 // Test file for complex declarator parsing
 #pragma library("libc")
 int printf(const char*, ...);

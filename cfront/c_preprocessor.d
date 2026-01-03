@@ -218,6 +218,8 @@ struct CPreprocessor {
                 define_object_macro("__SIZEOF_LONG__", "4");
                 define_object_macro("__SIZEOF_POINTER__", "4");
             }
+            // TODO: the other ones
+            define_object_macro("__INT_MAX__", "2147483648");
         }
 
         // OS detection
@@ -277,6 +279,8 @@ struct CPreprocessor {
         define_func_macro_const("__has_extension", 1, "0");
         define_func_macro_const("__has_builtin", 1, "0");
         define_func_macro_const("__has_attribute", 1, "0");
+        // These are supported actually, but we dont' have builtin
+        // function macro.
         define_func_macro_const("__has_include", 1, "0");
         define_func_macro_const("__has_include_next", 1, "0");
 
@@ -360,30 +364,6 @@ struct CPreprocessor {
         PPToken tok;
         tok.type = PPTokenType.PP_NUMBER;
         tok.lexeme = value;
-        repl ~= tok;
-        def.replacement = repl[];
-
-        macros[name] = def;
-    }
-
-    // Define a function-like macro that expands to its argument (identity macro)
-    // e.g., _Atomic(x) -> x
-    void define_identity_macro(str name){
-        PPMacroDef def;
-        def.name = name;
-        def.is_function_like = true;
-        def.is_variadic = false;
-        def.is_undefined = false;
-
-        // Single parameter named "x"
-        static immutable str[1] param_names = ["x"];
-        def.params = cast(str[])param_names;
-
-        // Replacement is just the parameter reference
-        Barray!PPToken repl = make_barray!PPToken(allocator);
-        PPToken tok;
-        tok.type = PPTokenType.PP_IDENTIFIER;
-        tok.lexeme = "x";
         repl ~= tok;
         def.replacement = repl[];
 

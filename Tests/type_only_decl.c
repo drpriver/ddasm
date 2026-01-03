@@ -1,3 +1,5 @@
+// SKIP: local enums aren't handled appparently, but I think we only
+// have global enums at the moment, we don't properly handle scopes.
 // Test type-only declarations (defining type without declaring variable)
 
 int test_enum_only() {

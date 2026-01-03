@@ -1,5 +1,6 @@
 
 
+#define NULL 0
 typedef struct {
     int x, y, w, h;
 } Rect;

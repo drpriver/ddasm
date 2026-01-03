@@ -308,6 +308,8 @@ struct CExpr {
     CType* type;  // Resolved type (set during analysis/codegen)
     CToken token; // For error reporting
 
+    pragma(inline, true);
+
     inout(CLiteral)* as_literal() inout {
         return kind == CExprKind.LITERAL ? cast(typeof(return))&this : null;
     }
@@ -352,6 +354,21 @@ struct CExpr {
     }
     inout(CEmbed)* as_embed() inout {
         return kind == CExprKind.EMBED ? cast(typeof(return))&this : null;
+    }
+    inout(CSizeof)* as_sizeof() inout {
+        return kind == CExprKind.SIZEOF ? cast(typeof(return))&this : null;
+    }
+    inout(CAlignof)* as_alignof() inout {
+        return kind == CExprKind.ALIGNOF ? cast(typeof(return))&this : null;
+    }
+    inout(CCountof)* as_countof() inout {
+        return kind == CExprKind.COUNTOF ? cast(typeof(return))&this : null;
+    }
+    inout(CVaArg)* as_va_arg() inout {
+        return kind == CExprKind.VA_ARG ? cast(typeof(return))&this : null;
+    }
+    inout(CStmtExpr)* as_stmt_expr() inout {
+        return kind == CExprKind.STMT_EXPR ? cast(typeof(return))&this : null;
     }
 
     CExpr* ungroup(){

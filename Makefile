@@ -14,7 +14,9 @@ Bin/%-release: %.d | Bin Deps
 	ldc2 -i $< -betterC -fvisibility=hidden -O3 -g -of $@ -makedeps=Deps/$*-release.deps
 
 .PHONY: ddasm
-ddasm: Bin/ddasm Bin/ddasm-debug Bin/ddasm-release
+ddasm: Bin/ddasm
+.PHONY: ddasm-other
+ddasm-other: Bin/ddasm-debug Bin/ddasm-release
 
 .PHONY: ds2dasm
 ds2dasm: Bin/ds2dasm
@@ -26,7 +28,7 @@ c2dasm: Bin/c2dasm
 cpp: Bin/cpp
 
 .PHONY: all
-all: ds2dasm ddasm c2dasm cpp
+all: ds2dasm ddasm ddasm-other c2dasm cpp
 
 .PHONY: clean
 clean:

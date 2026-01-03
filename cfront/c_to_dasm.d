@@ -1740,8 +1740,8 @@ struct CDasmWriter {
 
         // Generate condition
         int before = regallocator.alloced;
-        int cond = regallocator.allocate();
-        int err = gen_expression(stmt.condition, cond);
+        int cond;
+        int err = generate_expr_maybe_new_reg(stmt.condition, cond);
         if(err) return err;
         regallocator.reset_to(before);
 
@@ -2647,37 +2647,38 @@ struct CDasmWriter {
     // =========================================================================
 
     int gen_expression(CExpr* e, int target){
+        // NOTE: do not handle TARGET_IS_NOTHING here, any of these expressions could
+        // have side-effects, so just handle that in the specific handler function.
         e = e.ungroup();
 
         final switch(e.kind) with (CExprKind){
-            case LITERAL:    return gen_literal(cast(CLiteral*)e, target);
-            case IDENTIFIER: return gen_identifier(cast(CIdentifier*)e, target);
-            case BINARY:     return gen_binary(cast(CBinary*)e, target);
-            case UNARY:      return gen_unary(cast(CUnary*)e, target);
-            case CALL:       return gen_call(cast(CCall*)e, target);
-            case ASSIGN:     return gen_assign(cast(CAssign*)e, target);
-            case SUBSCRIPT:  return gen_subscript(cast(CSubscript*)e, target);
+            case LITERAL:    return gen_literal(e.as_literal, target);
+            case IDENTIFIER: return gen_identifier(e.as_identifier, target);
+            case BINARY:     return gen_binary(e.as_binary, target);
+            case UNARY:      return gen_unary(e.as_unary, target);
+            case CALL:       return gen_call(e.as_call, target);
+            case ASSIGN:     return gen_assign(e.as_assign, target);
+            case SUBSCRIPT:  return gen_subscript(e.as_subscript, target);
             case GROUPING:   assert(0);  // Should be ungrouped
-            case CAST:       return gen_cast(cast(CCast*)e, target);
-            case MEMBER_ACCESS: return gen_member_access(cast(CMemberAccess*)e, target);
-            case SIZEOF:     return gen_sizeof(cast(CSizeof*)e, target);
-            case ALIGNOF:    return gen_alignof(cast(CAlignof*)e, target);
-            case COUNTOF:    return gen_countof(cast(CCountof*)e, target);
-            case VA_ARG:     return gen_va_arg(cast(CVaArg*)e, target);
-            case TERNARY:    return gen_ternary(cast(CTernary*)e, target);
+            case CAST:       return gen_cast(e.as_cast, target);
+            case MEMBER_ACCESS: return gen_member_access(e.as_member_access, target);
+            // FIXME: these are basically literals, they should be merged into one type
+            case SIZEOF:     return gen_sizeof(e.as_sizeof, target);
+            case ALIGNOF:    return gen_alignof(e.as_alignof, target);
+            case COUNTOF:    return gen_countof(e.as_countof, target);
+
+            case VA_ARG:     return gen_va_arg(e.as_va_arg, target);
+            case TERNARY:    return gen_ternary(e.as_ternary, target);
             case INIT_LIST:
                 // Init lists are handled specially in gen_var_decl
                 error(e.token, "Initializer list cannot be used as expression");
                 return 1;
-            case COMPOUND_LITERAL:
-                return gen_compound_literal(cast(CCompoundLiteral*)e, target);
-            case GENERIC:
-                return gen_generic(cast(CGeneric*)e, target);
+            case COMPOUND_LITERAL: return gen_compound_literal(e.as_compound_literal, target);
+            case GENERIC: return gen_generic(e.as_generic, target);
             case EMBED:
-                error(e.token, "#embed not yet supported in code generation (requires dasm incbin)");
+                error(e.token, "#embed not yet supported in code generation as an arbitrary exression");
                 return 1;
-            case STMT_EXPR:
-                return gen_stmt_expr(cast(CStmtExpr*)e, target);
+            case STMT_EXPR: return gen_stmt_expr(e.as_stmt_expr, target);
         }
     }
 
@@ -2722,6 +2723,8 @@ struct CDasmWriter {
     }
 
     int gen_cast(CCast* expr, int target){
+        if(expr.cast_type == &TYPE_VOID)
+            target = TARGET_IS_NOTHING;
         // Cast just generates the operand - type conversion is implicit at this level
         return gen_expression(expr.operand, target);
     }
@@ -2729,6 +2732,10 @@ struct CDasmWriter {
     int gen_compound_literal(CCompoundLiteral* expr, int target){
         // Compound literal: (type){...}
         // Use pre-allocated stack space and initialize, return address
+
+        // TODO: if TARGET_IS_NOTHING we just evaluate initializers for side effects,
+        // but we need that optimization earlier as we are wasting space.
+        // But also, who just writes a compound literal and doesn't use it, so very low priority.
         CType* lit_type = expr.literal_type;
         size_t size = lit_type.size_of();
         size_t num_slots = (size + 7) / 8;
@@ -2858,7 +2865,7 @@ struct CDasmWriter {
     // The value is the last expression statement's value
     int gen_stmt_expr(CStmtExpr* expr, int target){
         // Generate all statements
-        foreach(stmt; expr.statements){
+        foreach(ref stmt; expr.statements){
             // Check if this is the last statement and it's an expression statement
             // In that case, we want to capture its value
             if(&stmt is &expr.statements[$-1]){
@@ -2873,7 +2880,9 @@ struct CDasmWriter {
         }
         // No result expression (empty block or last was not an expression)
         if(target != TARGET_IS_NOTHING){
-            sb.writef("    move r% 0\n", target);
+            // This shouldn't happen, so we error here just in case.
+            error(expr.expr.token, "ICE: void statement expression when value needed");
+            return -1;
         }
         return 0;
     }
@@ -2893,22 +2902,51 @@ struct CDasmWriter {
         return -1;
     }
 
+    int generate_expr_maybe_new_reg(CExpr* expr, out int target){
+        target = get_expr_reg(expr);
+        if(target == -1){
+            target = regallocator.allocate();
+            int err = gen_expression(expr, target);
+            if(err) return err;
+        }
+        return 0;
+    }
+
     // Returns true if evaluating expr won't clobber registers other than target
     // (i.e., it's a single instruction: literal, reglocal, or enum constant)
     bool is_simple_expr(CExpr* expr){
         if(expr is null) return true;
         expr = expr.ungroup();
-        if(expr.as_literal()) return true;
-        if(auto id = expr.as_identifier()){
-            str name = id.name.lexeme;
-            // Arrays need address computation
-            if(CType** vt = name in var_types){
-                if((*vt).is_array()) return false;
+        switch(expr.kind)with(expr.kind){
+            case LITERAL: return true;
+            case IDENTIFIER:{
+                CIdentifier* id = expr.as_identifier();
+                str name = id.name.lexeme;
+                // Arrays need address computation
+                // FIXME: Does that really need more than one reg?
+                if(CType** vt = name in var_types){
+                    if((*vt).is_array()) return false;
+                }
+                if(name in reglocals) return true;
+                if(name in enum_constants) return true;
+                return false; // XXX: what cases is this
+            }break;
+            case BINARY:{
+                CBinary* b = expr.as_binary();
+                if(b.op == CTokenType.COMMA)
+                    return is_simple_expr(b.left) && is_simple_expr(b.right);
+                return false;
             }
-            if(name in reglocals) return true;
-            if(name in enum_constants) return true;
+            case UNARY:{
+                return false;
+                // TODO: figure out if all unary can be done in one reg.
+                // Probably not because of post increment?
+                CUnary *u = expr.as_unary();
+                return is_simple_expr(u.operand);
+            }
+            default:
+                return false; // TODO
         }
-        return false;
     }
 
     int gen_identifier(CIdentifier* expr, int target){
@@ -2965,49 +3003,42 @@ struct CDasmWriter {
         }
 
         // Get the global's type for sized read
-        if(CType** gtype = name in global_types){
-            size_t var_size = (*gtype) ? (*gtype).size_of() : 8;
-            bool is_unsigned = (*gtype) ? (*gtype).is_unsigned : true;
-            // Get address into a temp register, then do sized read
-            int before = regallocator.alloced;
-            int addr_reg = regallocator.allocate();
+        if(CType** gtype_ = name in global_types){
+            if(!*gtype_){
+                // Might be an ICE?
+                error(expr.expr.token, "Read of global with unknown type");
+                return -1;
+            }
+            CType* gtype = *gtype_;
+            size_t var_size = gtype.size_of();
+            bool is_unsigned = gtype.is_unsigned;
+            // Get address into target register, then do sized read
             // For extern objects, use qualified name with module alias
-            if(str* mod_alias = name in extern_objs){
-                sb.writef("    move r% var %.%\n", addr_reg, *mod_alias, name);
-            } else {
-                sb.writef("    move r% var %\n", addr_reg, name);
-            }
-            sb.writef("    % r% r%\n", read_instr_for_size(var_size, is_unsigned), target, addr_reg);
-            regallocator.reset_to(before);
-        } else {
-            // Unknown global (function pointer?) - use regular read
-            if(str* mod_alias = name in extern_objs){
-                sb.writef("    read r% var %.%\n", target, *mod_alias, name);
-            } else {
-                sb.writef("    read r% var %\n", target, name);
-            }
+            if(str* mod_alias = name in extern_objs)
+                sb.writef("    move r% var %.%\n", target, *mod_alias, name);
+            else
+                sb.writef("    move r% var %\n", target, name);
+            sb.writef("    % r% r%\n", read_instr_for_size(var_size, is_unsigned), target, target);
+        }
+        else {
+            error(expr.expr.token, "Read of unknown global");
+            return -1;
         }
         return 0;
     }
 
     int gen_binary(CBinary* expr, int target){
+        // evaluate both sides for side effects
         if(target == TARGET_IS_NOTHING){
-            // Still need to evaluate for side effects
-            int before = regallocator.alloced;
-            int tmp = regallocator.allocate();
-            int err = gen_expression(expr.left, tmp);
+            int err = gen_expression(expr.left, TARGET_IS_NOTHING);
             if(err) return err;
-            err = gen_expression(expr.right, tmp);
-            regallocator.reset_to(before);
+            err = gen_expression(expr.right, TARGET_IS_NOTHING);
             return err;
         }
 
         // Comma operator: evaluate left for side effects, return right value
         if(expr.op == CTokenType.COMMA){
-            int before = regallocator.alloced;
-            int tmp = regallocator.allocate();
-            int err = gen_expression(expr.left, tmp);
-            regallocator.reset_to(before);
+            int err = gen_expression(expr.left, TARGET_IS_NOTHING);
             if(err) return err;
             return gen_expression(expr.right, target);
         }
@@ -3016,6 +3047,9 @@ struct CDasmWriter {
         CLiteral* left_lit = expr.left.as_literal();
         CLiteral* right_lit = expr.right.as_literal();
         if(left_lit !is null && right_lit !is null){
+            // TODO: pseudo literals like sizeof, _Countof, etc.
+            // Probably we shouldn't do this here anyway?
+            // Have a try-constant eval function?
             import dlib.parse_numbers : parse_unsigned_human;
 
             // Check if either operand is unsigned (has u/U suffix)
@@ -3149,6 +3183,7 @@ struct CDasmWriter {
             str rhs = lit.value.lexeme;
 
             // Convert char literals to numeric value
+            // FIXME: This is disgusting, we should have an "optimize" function.
             __gshared char[16] char_lit_buf;
             if(lit.value.type == CTokenType.CHAR_LITERAL){
                 import core.stdc.stdio : snprintf;
@@ -3399,28 +3434,27 @@ struct CDasmWriter {
         if(expr.op == CTokenType.AMP){
             // Address-of operator
             if(CIdentifier* id = expr.operand.as_identifier()){
+                if(target == TARGET_IS_NOTHING) return 0;
                 str name = id.name.lexeme;
-                if(target != TARGET_IS_NOTHING){
-                    if(int* offset = name in stacklocals){
-                        // Compute stack address: rbp + offset * wordsize
-                        // Stack grows up, so locals are at positive offsets from rbp
-                        sb.writef("    add r% rbp %\n", target, P(*offset));
-                        return 0;
-                    }
-                    if(name in reglocals){
-                        error(expr.expr.token, "Cannot take address of register variable");
-                        return 1;
-                    }
-                    // Global variable - track extern object usage
-                    if(name in extern_objs){
-                        used_objs[name] = true;
-                    }
-                    // For extern objects, use qualified name with module alias
-                    if(str* mod_alias = name in extern_objs){
-                        sb.writef("    move r% var %.%\n", target, *mod_alias, name);
-                    } else {
-                        sb.writef("    move r% var %\n", target, name);
-                    }
+                if(int* offset = name in stacklocals){
+                    // Compute stack address: rbp + offset * wordsize
+                    // Stack grows up, so locals are at positive offsets from rbp
+                    sb.writef("    add r% rbp %\n", target, P(*offset));
+                    return 0;
+                }
+                if(name in reglocals){
+                    error(expr.expr.token, "Cannot take address of register variable");
+                    return 1;
+                }
+                // Global variable - track extern object usage
+                if(name in extern_objs){
+                    used_objs[name] = true;
+                }
+                // For extern objects, use qualified name with module alias
+                if(str* mod_alias = name in extern_objs){
+                    sb.writef("    move r% var %.%\n", target, *mod_alias, name);
+                } else {
+                    sb.writef("    move r% var %\n", target, name);
                 }
                 return 0;
             }
@@ -3428,9 +3462,6 @@ struct CDasmWriter {
             // Address of member access: &p.x or &pp->x
             if(CMemberAccess* ma = expr.operand.as_member_access()){
                 if(target == TARGET_IS_NOTHING) return 0;
-
-                int before = regallocator.alloced;
-                int addr_reg = regallocator.allocate();
 
                 // Get the struct type
                 CType* obj_type = get_expr_type(ma.object);
@@ -3462,22 +3493,18 @@ struct CDasmWriter {
 
                 if(ma.is_arrow){
                     // &pp->x: get pointer value, add offset
-                    int err = gen_expression(ma.object, addr_reg);
+                    int err = gen_expression(ma.object, target);
                     if(err) return err;
                 } else {
                     // &p.x: get address of struct, add offset
-                    int err = gen_struct_address(ma.object, addr_reg);
+                    int err = gen_struct_address(ma.object, target);
                     if(err) return err;
                 }
 
                 // Add field offset
                 if(field.offset != 0){
-                    sb.writef("    add r% r% %\n", target, addr_reg, field.offset);
-                } else {
-                    sb.writef("    move r% r%\n", target, addr_reg);
+                    sb.writef("    add r% r% %\n", target, target, field.offset);
                 }
-
-                regallocator.reset_to(before);
                 return 0;
             }
 
@@ -3508,9 +3535,7 @@ struct CDasmWriter {
 
         if(expr.op == CTokenType.STAR){
             // Dereference operator
-            int before = regallocator.alloced;
-            int ptr_reg = target == TARGET_IS_NOTHING ? regallocator.allocate() : target;
-            int err = gen_expression(expr.operand, ptr_reg);
+            int err = gen_expression(expr.operand, target);
             if(err) return err;
             if(target != TARGET_IS_NOTHING){
                 // Get the pointed-to type's size and signedness for proper sized read
@@ -3518,13 +3543,13 @@ struct CDasmWriter {
                 size_t elem_size = (ptr_type && ptr_type.is_pointer()) ? ptr_type.element_size() : 8;
                 CType* elem_type = (ptr_type && ptr_type.is_pointer()) ? ptr_type.element_type() : null;
                 bool is_unsigned = elem_type ? elem_type.is_unsigned : true;
-                sb.writef("    % r% r%\n", read_instr_for_size(elem_size, is_unsigned), target, ptr_reg);
+                sb.writef("    % r% r%\n", read_instr_for_size(elem_size, is_unsigned), target, target);
             }
-            regallocator.reset_to(before);
             return 0;
         }
 
         // Handle increment/decrement specially - they have side effects even when result is discarded
+        // FIXME: the clanker probably broke this, probably we can no-op some stuff with TARGET_IS_NOTHING
         if(expr.op == CTokenType.PLUS_PLUS || expr.op == CTokenType.MINUS_MINUS){
             bool is_inc = expr.op == CTokenType.PLUS_PLUS;
             str op_instr = is_inc ? "add" : "sub";
@@ -3707,35 +3732,29 @@ struct CDasmWriter {
         }
 
         // Other unary operators
-        int before = regallocator.alloced;
-        int operand_reg = target == TARGET_IS_NOTHING ? regallocator.allocate() : target;
-        int err = gen_expression(expr.operand, operand_reg);
+        int err = gen_expression(expr.operand, target);
         if(err) return err;
 
         if(target != TARGET_IS_NOTHING){
             switch(expr.op) with (CTokenType){
                 case PLUS:
-                    // Unary plus is a no-op, just ensure value is in target
-                    if(target != operand_reg)
-                        sb.writef("    move r% r%\n", target, operand_reg);
+                    // Unary plus is a no-op
                     break;
                 case MINUS:
-                    sb.writef("    neg r% r%\n", target, operand_reg);
+                    sb.writef("    neg r% r%\n", target, target);
                     break;
                 case BANG:
-                    sb.writef("    not r% r%\n", target, operand_reg);
+                    sb.writef("    not r% r%\n", target, target);
                     break;
                 case TILDE:
                     // Bitwise NOT - XOR with -1
-                    sb.writef("    xor r% r% -1\n", target, operand_reg);
+                    sb.writef("    xor r% r% -1\n", target, target);
                     break;
                 default:
                     error(expr.expr.token, "Unhandled unary operator");
                     return 1;
             }
         }
-
-        regallocator.reset_to(before);
         return 0;
     }
 
@@ -4808,7 +4827,8 @@ struct CDasmWriter {
             str name = id.name.lexeme;
             // Local variable on stack
             if(int* offset = name in stacklocals){
-                sb.writef("    add r% rbp %\n", target, P(*offset));
+                if(target != TARGET_IS_NOTHING)
+                    sb.writef("    add r% rbp %\n", target, P(*offset));
                 return 0;
             }
             // Global or extern variable
@@ -4816,11 +4836,12 @@ struct CDasmWriter {
                 if(name in extern_objs){
                     used_objs[name] = true;
                 }
-                if(str* mod_alias = name in extern_objs){
-                    sb.writef("    move r% var %.%\n", target, *mod_alias, name);
-                } else {
-                    sb.writef("    move r% var %\n", target, name);
-                }
+                if(target != TARGET_IS_NOTHING)
+                    if(str* mod_alias = name in extern_objs){
+                        sb.writef("    move r% var %.%\n", target, *mod_alias, name);
+                    } else {
+                        sb.writef("    move r% var %\n", target, name);
+                    }
                 return 0;
             }
             error(id.name, "Cannot take address of unknown variable for struct pass-by-value");
@@ -4854,7 +4875,8 @@ struct CDasmWriter {
             if(ma.is_arrow){
                 int err = gen_expression(ma.object, target);
                 if(err) return err;
-            } else {
+            }
+            else {
                 // Recursively get address of the object
                 int err = gen_struct_address(ma.object, target);
                 if(err) return err;

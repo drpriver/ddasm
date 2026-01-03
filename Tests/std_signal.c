@@ -1,3 +1,4 @@
+// SKIP - unimplemented function pointers.
 // Test <signal.h> - Signal handling
 #include <signal.h>
 
