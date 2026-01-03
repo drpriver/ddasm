@@ -347,6 +347,7 @@ struct PPToCConverter {
             if(name == "restrict") return CTokenType.RESTRICT;
             if(name == "_Float16") return CTokenType.FLOAT16;
             if(name == "_Float32") return CTokenType.FLOAT32;
+            if(name == "__int128") return CTokenType.INT128;
             if(name == "_Float64") return CTokenType.FLOAT64;
             if(name == "__inline") return CTokenType.INLINE;
             if(name == "_Complex") return CTokenType.COMPLEX;

@@ -1930,6 +1930,11 @@ struct CParser {
         CType* base = parse_base_type();
         if(base is null) return null;
 
+        // Handle postfix qualifiers (e.g., "int const *" instead of "const int *")
+        while(match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)){
+            // Just skip - we don't track these
+        }
+
         // Handle pointer types
         while(check(CTokenType.STAR)){
             advance();
@@ -1964,6 +1969,10 @@ struct CParser {
         auto data = allocator.alloc(CDeclarator.sizeof);
         CDeclarator* decl = cast(CDeclarator*)data.ptr;
         *decl = CDeclarator.init;
+
+        // Handle postfix qualifiers (e.g., "char const *" instead of "const char *")
+        while(match(CTokenType.CONST) || match(CTokenType.VOLATILE) ||
+               match(CTokenType.RESTRICT) || match(CTokenType.ATOMIC)){}
 
         // Parse pointer prefix
         while(check(CTokenType.STAR)){
@@ -2013,6 +2022,9 @@ struct CParser {
 
     // Parse pointer modifiers and build pointer type
     CType* parse_pointer_modifiers(CType* base){
+        // Handle postfix qualifiers (e.g., "int const *" instead of "const int *")
+        while(match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)){}
+
         while(check(CTokenType.STAR)){
             advance();
             base = make_pointer_type(allocator, base);
@@ -2760,6 +2772,9 @@ struct CParser {
             CParam param;
             param.type = &TYPE_VOID;
 
+            // Handle postfix qualifiers (void const *)
+            while(match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)){}
+
             // Handle pointers
             while(match(CTokenType.STAR)){
                 param.type = make_pointer_type(allocator, param.type);
@@ -3002,7 +3017,7 @@ struct CParser {
             // _Bool - treat as unsigned char for now
             result = &TYPE_UCHAR;
         } else if(match(CTokenType.INT128)){
-            result = &TYPE_INT128;
+            result = is_unsigned ? &TYPE_UINT128 : &TYPE_INT128;
         } else if(match(CTokenType.UINT128)){
             result = &TYPE_UINT128;
         } else if(match(CTokenType.COMPLEX)){
@@ -3234,14 +3249,64 @@ struct CParser {
                 }
             }
         } else if(match(CTokenType.ENUM)){
-            // enum Name
-            CToken name = consume(CTokenType.IDENTIFIER, "Expected enum name");
-            // Look up enum in defined enums
-            if(CType** found = name.lexeme in enum_types){
-                result = *found;
+            // enum Name or enum Name { ... } or enum { ... }
+            CToken name;
+            bool has_name = false;
+            if(check(CTokenType.IDENTIFIER)){
+                name = advance();
+                has_name = true;
+            }
+
+            // Check for inline enum definition
+            if(check(CTokenType.LEFT_BRACE)){
+                advance();  // consume '{'
+
+                // Parse enum constants
+                long next_value = 0;
+                while(!check(CTokenType.RIGHT_BRACE) && !at_end){
+                    CToken const_name = consume(CTokenType.IDENTIFIER, "Expected enum constant name");
+                    if(ERROR_OCCURRED) return null;
+
+                    long value = next_value;
+                    if(match(CTokenType.EQUAL)){
+                        auto expr_result = parse_enum_const_expr();
+                        if(expr_result.err) return null;
+                        value = expr_result.value;
+                    }
+
+                    enum_constants[const_name.lexeme] = value;
+                    next_value = value + 1;
+
+                    if(!check(CTokenType.RIGHT_BRACE)){
+                        if(!match(CTokenType.COMMA)){
+                            if(!check(CTokenType.RIGHT_BRACE)){
+                                error("Expected ',' or '}' after enum constant");
+                                return null;
+                            }
+                        }
+                    }
+                }
+
+                consume(CTokenType.RIGHT_BRACE, "Expected '}' after enum constants");
+                if(ERROR_OCCURRED) return null;
+
+                // Create and register the enum type
+                result = make_enum_type(allocator, has_name ? name.lexeme : "");
+                if(has_name){
+                    enum_types[name.lexeme] = result;
+                }
             } else {
-                error("Unknown enum type");
-                return null;
+                // Just a reference to existing enum
+                if(!has_name){
+                    error("Expected enum name or '{'");
+                    return null;
+                }
+                if(CType** found = name.lexeme in enum_types){
+                    result = *found;
+                } else {
+                    error("Unknown enum type");
+                    return null;
+                }
             }
         } else if(is_unsigned){
             // 'unsigned' by itself means 'unsigned int'
@@ -3695,6 +3760,11 @@ struct CParser {
         CToken type_tok = peek();
         CType* base_type = parse_base_type();
         if(base_type is null) return null;
+
+        // Handle type-only declarations (e.g., "enum Foo { A, B };")
+        if(match(CTokenType.SEMICOLON)){
+            return CEmptyStmt.get();
+        }
 
         auto decls = make_barray!(CStmt*)(allocator);
 
