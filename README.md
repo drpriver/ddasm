@@ -342,9 +342,67 @@ The preprocessor supports C23 (and some C2Y) preprocessing features:
 - `#elifdef` / `#elifndef` - shorthand for `#elif defined(...)`
 - `#warning` - emit warning diagnostic
 - `__has_include(<header>)` / `__has_include("header")` - check if header exists
+- `__has_embed(<header>)` / `__has_embed("header")` - check if file exists for embedding
 - `__VA_OPT__(content)` - conditional expansion in variadic macros
 - `_Pragma("...")` - pragma operator for use in macros
 - `#line` - override `__LINE__` and `__FILE__`
+- `#embed` - embed binary files (see below)
+
+### `#embed` Support
+
+The `#embed` directive (C23) embeds binary file contents directly into an array initializer:
+
+```c
+const unsigned char icon[] = {
+#embed "icon.png"
+};
+```
+
+This is equivalent to writing out all the bytes as comma-separated integers, but without generating megabytes of text for large files.
+
+#### Supported Features
+
+- Basic embedding: `#embed "path"` or `#embed <path>`
+- `limit(N)` parameter: `#embed "file" limit(16)` - embed only first N bytes
+- `__has_embed("path")` - returns 1 if file exists, 0 otherwise
+
+#### Restrictions
+
+Due to the word-oriented nature of DASM variables, `#embed` has some restrictions:
+
+1. **Word-aligned position**: Any initializers before `#embed` must total a multiple of 8 bytes
+   ```c
+   // OK: no prefix
+   const char data[] = { #embed "file.bin" };
+
+   // OK: 8-byte prefix
+   const long data[] = { 0x1234, #embed "file.bin" };
+
+   // ERROR: 3-byte prefix not word-aligned
+   const char data[] = { 1, 2, 3, #embed "file.bin" };
+   ```
+
+2. **Trailing data**: Non-word-aligned embed length is only allowed at the end of the array
+   ```c
+   // OK: 5-byte file at end, zero-padded to 8 bytes
+   const char data[8] = { #embed "5bytes.bin" };
+
+   // ERROR: can't have suffix after non-aligned embed
+   const char data[] = { #embed "5bytes.bin", 0xFF };
+   ```
+
+#### DASM Syntax
+
+At the DASM level, embeds use the `embed` initializer:
+
+```dasm
+var data 1 embed "path/to/file" 0 8 end
+```
+
+Format: `embed "path" offset length`
+- `path` - file path (relative to working directory)
+- `offset` - byte offset into file
+- `length` - number of bytes to embed (zero-padded to word boundary)
 
 ### Magic Macros
 
