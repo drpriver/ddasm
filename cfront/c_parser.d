@@ -21,6 +21,7 @@ struct CParser {
     bool ERROR_OCCURRED = false;
     str current_library;  // Set by #pragma library("...")
     int switch_depth = 0;  // Track nesting level in switch statements for case/default
+    bool debug_types = false;  // Print type info during parsing
     Table!(str, CType*) struct_types;  // Defined struct types
     Table!(str, CType*) union_types;   // Defined union types
     Table!(str, CType*) enum_types;    // Defined enum types
@@ -4448,6 +4449,18 @@ struct CParser {
             return CLiteral.make(allocator, previous(), &TYPE_INT);
         }
 
+        if(match(CTokenType.FLOAT_LITERAL)){
+            // Check suffix to determine float vs double
+            str lex = previous().lexeme;
+            CType* type = &TYPE_DOUBLE;
+            if(lex.length > 0){
+                char last = lex[$-1];
+                if(last == 'f' || last == 'F')
+                    type = &TYPE_FLOAT;
+            }
+            return CLiteral.make(allocator, previous(), type);
+        }
+
         if(match(CTokenType.STRING)){
             // String literal is a char*
             return CLiteral.make(allocator, previous(), make_pointer_type(allocator, &TYPE_CHAR));
@@ -4732,5 +4745,124 @@ struct CParser {
 
     CToken previous(){
         return tokens[current - 1];
+    }
+
+    // Dump all type tables for --debug-types flag
+    void dump_type_tables(){
+        import core.stdc.stdio : fprintf, stderr;
+
+        if(struct_types.count > 0){
+            fprintf(stderr, "\nStruct types (%zu):\n", struct_types.count);
+            foreach(ref entry; struct_types.items()){
+                str name = entry.key;
+                CType* t = entry.value;
+                fprintf(stderr, "  struct %.*s: size=%zu",
+                    cast(int)name.length, name.ptr,
+                    t.struct_size);
+                if(t.fields.length > 0){
+                    fprintf(stderr, " { ");
+                    foreach(i, ref f; t.fields){
+                        if(i > 0) fprintf(stderr, ", ");
+                        fprintf(stderr, "%.*s", cast(int)f.name.length, f.name.ptr);
+                    }
+                    fprintf(stderr, " }");
+                }
+                fprintf(stderr, "\n");
+            }
+        }
+
+        if(union_types.count > 0){
+            fprintf(stderr, "\nUnion types (%zu):\n", union_types.count);
+            foreach(ref entry; union_types.items()){
+                str name = entry.key;
+                CType* t = entry.value;
+                fprintf(stderr, "  union %.*s: size=%zu",
+                    cast(int)name.length, name.ptr,
+                    t.struct_size);
+                if(t.fields.length > 0){
+                    fprintf(stderr, " { ");
+                    foreach(i, ref f; t.fields){
+                        if(i > 0) fprintf(stderr, ", ");
+                        fprintf(stderr, "%.*s", cast(int)f.name.length, f.name.ptr);
+                    }
+                    fprintf(stderr, " }");
+                }
+                fprintf(stderr, "\n");
+            }
+        }
+
+        if(enum_types.count > 0){
+            fprintf(stderr, "\nEnum types (%zu):\n", enum_types.count);
+            foreach(ref entry; enum_types.items()){
+                str name = entry.key;
+                CType* t = entry.value;
+                fprintf(stderr, "  enum %.*s\n", cast(int)name.length, name.ptr);
+            }
+        }
+
+        if(typedef_types.count > 0){
+            fprintf(stderr, "\nTypedef types (%zu):\n", typedef_types.count);
+            foreach(ref entry; typedef_types.items()){
+                str name = entry.key;
+                CType* t = entry.value;
+                fprintf(stderr, "  typedef %.*s -> ", cast(int)name.length, name.ptr);
+                print_type_brief(t);
+                fprintf(stderr, "\n");
+            }
+        }
+    }
+
+    void print_type_brief(CType* t){
+        import core.stdc.stdio : fprintf, stderr;
+        if(t is null){
+            fprintf(stderr, "(null)");
+            return;
+        }
+        final switch(t.kind) with(CTypeKind) {
+            case VOID: fprintf(stderr, "void"); break;
+            case CHAR:
+                if(t.is_unsigned) fprintf(stderr, "unsigned ");
+                fprintf(stderr, "char");
+                break;
+            case SHORT:
+                if(t.is_unsigned) fprintf(stderr, "unsigned ");
+                fprintf(stderr, "short");
+                break;
+            case INT:
+                if(t.is_unsigned) fprintf(stderr, "unsigned ");
+                fprintf(stderr, "int");
+                break;
+            case LONG:
+                if(t.is_unsigned) fprintf(stderr, "unsigned ");
+                fprintf(stderr, "long");
+                break;
+            case INT128:
+                if(t.is_unsigned) fprintf(stderr, "unsigned ");
+                fprintf(stderr, "__int128");
+                break;
+            case FLOAT: fprintf(stderr, "float"); break;
+            case DOUBLE: fprintf(stderr, "double"); break;
+            case LONG_DOUBLE: fprintf(stderr, "long double"); break;
+            case POINTER:
+                print_type_brief(t.pointed_to);
+                fprintf(stderr, "*");
+                break;
+            case ARRAY:
+                print_type_brief(t.pointed_to);
+                fprintf(stderr, "[%zu]", t.array_size);
+                break;
+            case STRUCT:
+                fprintf(stderr, "struct %.*s", cast(int)t.struct_name.length, t.struct_name.ptr);
+                break;
+            case UNION:
+                fprintf(stderr, "union %.*s", cast(int)t.struct_name.length, t.struct_name.ptr);
+                break;
+            case ENUM:
+                fprintf(stderr, "enum %.*s", cast(int)t.struct_name.length, t.struct_name.ptr);
+                break;
+            case FUNCTION:
+                fprintf(stderr, "function");
+                break;
+        }
     }
 }

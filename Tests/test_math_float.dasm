@@ -1,0 +1,361 @@
+module test_math_float
+
+import io
+
+# Type encoding: 0=int, 1=float32, 2=float64
+# For 2 args: arg0 | (arg1 << 2)
+# double,double = 0x2 | 0x8 = 0xa
+# float,float = 0x1 | 0x4 = 0x5
+
+dlimport m
+    path "libm.so.6"
+    path "libm"
+    # Double functions (1 arg)
+    function sin 1 1 0x2 0x2
+    function cos 1 1 0x2 0x2
+    function tan 1 1 0x2 0x2
+    function asin 1 1 0x2 0x2
+    function acos 1 1 0x2 0x2
+    function atan 1 1 0x2 0x2
+    function sinh 1 1 0x2 0x2
+    function cosh 1 1 0x2 0x2
+    function tanh 1 1 0x2 0x2
+    function exp 1 1 0x2 0x2
+    function exp2 1 1 0x2 0x2
+    function log 1 1 0x2 0x2
+    function log2 1 1 0x2 0x2
+    function log10 1 1 0x2 0x2
+    function sqrt 1 1 0x2 0x2
+    function cbrt 1 1 0x2 0x2
+    function ceil 1 1 0x2 0x2
+    function floor 1 1 0x2 0x2
+    function trunc 1 1 0x2 0x2
+    function round 1 1 0x2 0x2
+    function fabs 1 1 0x2 0x2
+    # Double functions (2 args)
+    function atan2 2 1 0xa 0x2
+    function pow 2 1 0xa 0x2
+    function hypot 2 1 0xa 0x2
+    function fmod 2 1 0xa 0x2
+    function fmax 2 1 0xa 0x2
+    function fmin 2 1 0xa 0x2
+    function copysign 2 1 0xa 0x2
+    # Float functions (1 arg)
+    function sinf 1 1 0x1 0x1
+    function cosf 1 1 0x1 0x1
+    function tanf 1 1 0x1 0x1
+    function sqrtf 1 1 0x1 0x1
+    function expf 1 1 0x1 0x1
+    function logf 1 1 0x1 0x1
+    function fabsf 1 1 0x1 0x1
+    function ceilf 1 1 0x1 0x1
+    function floorf 1 1 0x1 0x1
+    # Float functions (2 args)
+    function powf 2 1 0x5 0x1
+    function fmaxf 2 1 0x5 0x1
+    function fminf 2 1 0x5 0x1
+end
+
+function start
+    move rs5 0  # test count
+    move rs4 0  # fail count
+
+    # ===== DOUBLE TESTS =====
+
+    # Test sin(pi/2) = 1.0
+    move rarg1 0x3ff921fb54442d18  # pi/2
+    call function m.sin 1
+    move rarg1 rout1
+    move rarg2 0x3ff0000000000000  # 1.0
+    move rarg3 "sin(pi/2)"
+    call function check_double 3
+
+    # Test cos(0) = 1.0
+    move rarg1 0x0  # 0.0
+    call function m.cos 1
+    move rarg1 rout1
+    move rarg2 0x3ff0000000000000  # 1.0
+    move rarg3 "cos(0)"
+    call function check_double 3
+
+    # Test tan(0) = 0.0
+    move rarg1 0x0
+    call function m.tan 1
+    move rarg1 rout1
+    move rarg2 0x0
+    move rarg3 "tan(0)"
+    call function check_double 3
+
+    # Test exp(0) = 1.0
+    move rarg1 0x0
+    call function m.exp 1
+    move rarg1 rout1
+    move rarg2 0x3ff0000000000000
+    move rarg3 "exp(0)"
+    call function check_double 3
+
+    # Test exp(1) = e = 2.718281828...
+    move rarg1 0x3ff0000000000000  # 1.0
+    call function m.exp 1
+    move rarg1 rout1
+    move rarg2 0x4005bf0a8b145769  # e
+    move rarg3 "exp(1)"
+    call function check_double 3
+
+    # Test log(1) = 0
+    move rarg1 0x3ff0000000000000  # 1.0
+    call function m.log 1
+    move rarg1 rout1
+    move rarg2 0x0
+    move rarg3 "log(1)"
+    call function check_double 3
+
+    # Test log(e) = 1.0
+    move rarg1 0x4005bf0a8b145769  # e
+    call function m.log 1
+    move rarg1 rout1
+    move rarg2 0x3ff0000000000000  # 1.0
+    move rarg3 "log(e)"
+    call function check_double 3
+
+    # Test sqrt(4) = 2
+    move rarg1 0x4010000000000000  # 4.0
+    call function m.sqrt 1
+    move rarg1 rout1
+    move rarg2 0x4000000000000000  # 2.0
+    move rarg3 "sqrt(4)"
+    call function check_double 3
+
+    # Test sqrt(2) = 1.41421356...
+    move rarg1 0x4000000000000000  # 2.0
+    call function m.sqrt 1
+    move rarg1 rout1
+    move rarg2 0x3ff6a09e667f3bcd  # sqrt(2)
+    move rarg3 "sqrt(2)"
+    call function check_double 3
+
+    # Test cbrt(8) = 2
+    move rarg1 0x4020000000000000  # 8.0
+    call function m.cbrt 1
+    move rarg1 rout1
+    move rarg2 0x4000000000000000  # 2.0
+    move rarg3 "cbrt(8)"
+    call function check_double 3
+
+    # Test ceil(1.5) = 2.0
+    move rarg1 0x3ff8000000000000  # 1.5
+    call function m.ceil 1
+    move rarg1 rout1
+    move rarg2 0x4000000000000000  # 2.0
+    move rarg3 "ceil(1.5)"
+    call function check_double 3
+
+    # Test floor(1.5) = 1.0
+    move rarg1 0x3ff8000000000000  # 1.5
+    call function m.floor 1
+    move rarg1 rout1
+    move rarg2 0x3ff0000000000000  # 1.0
+    move rarg3 "floor(1.5)"
+    call function check_double 3
+
+    # Test fabs(-5.0) = 5.0
+    move rarg1 0xc014000000000000  # -5.0
+    call function m.fabs 1
+    move rarg1 rout1
+    move rarg2 0x4014000000000000  # 5.0
+    move rarg3 "fabs(-5)"
+    call function check_double 3
+
+    # Test pow(2, 10) = 1024
+    move rarg1 0x4000000000000000  # 2.0
+    move rarg2 0x4024000000000000  # 10.0
+    call function m.pow 2
+    move rarg1 rout1
+    move rarg2 0x4090000000000000  # 1024.0
+    move rarg3 "pow(2,10)"
+    call function check_double 3
+
+    # Test hypot(3, 4) = 5
+    move rarg1 0x4008000000000000  # 3.0
+    move rarg2 0x4010000000000000  # 4.0
+    call function m.hypot 2
+    move rarg1 rout1
+    move rarg2 0x4014000000000000  # 5.0
+    move rarg3 "hypot(3,4)"
+    call function check_double 3
+
+    # Test fmax(3, 7) = 7
+    move rarg1 0x4008000000000000  # 3.0
+    move rarg2 0x401c000000000000  # 7.0
+    call function m.fmax 2
+    move rarg1 rout1
+    move rarg2 0x401c000000000000  # 7.0
+    move rarg3 "fmax(3,7)"
+    call function check_double 3
+
+    # Test fmin(3, 7) = 3
+    move rarg1 0x4008000000000000  # 3.0
+    move rarg2 0x401c000000000000  # 7.0
+    call function m.fmin 2
+    move rarg1 rout1
+    move rarg2 0x4008000000000000  # 3.0
+    move rarg3 "fmin(3,7)"
+    call function check_double 3
+
+    # ===== FLOAT TESTS =====
+
+    # Test sinf(pi/2) = 1.0
+    move rarg1 0x3fc90fdb  # pi/2 as float
+    call function m.sinf 1
+    move rarg1 rout1
+    move rarg2 0x3f800000  # 1.0f
+    move rarg3 "sinf(pi/2)"
+    call function check_float 3
+
+    # Test cosf(0) = 1.0
+    move rarg1 0x0
+    call function m.cosf 1
+    move rarg1 rout1
+    move rarg2 0x3f800000  # 1.0f
+    move rarg3 "cosf(0)"
+    call function check_float 3
+
+    # Test sqrtf(4) = 2
+    move rarg1 0x40800000  # 4.0f
+    call function m.sqrtf 1
+    move rarg1 rout1
+    move rarg2 0x40000000  # 2.0f
+    move rarg3 "sqrtf(4)"
+    call function check_float 3
+
+    # Test expf(0) = 1.0
+    move rarg1 0x0
+    call function m.expf 1
+    move rarg1 rout1
+    move rarg2 0x3f800000  # 1.0f
+    move rarg3 "expf(0)"
+    call function check_float 3
+
+    # Test logf(1) = 0
+    move rarg1 0x3f800000  # 1.0f
+    call function m.logf 1
+    move rarg1 rout1
+    move rarg2 0x0
+    move rarg3 "logf(1)"
+    call function check_float 3
+
+    # Test fabsf(-5) = 5
+    move rarg1 0xc0a00000  # -5.0f
+    call function m.fabsf 1
+    move rarg1 rout1
+    move rarg2 0x40a00000  # 5.0f
+    move rarg3 "fabsf(-5)"
+    call function check_float 3
+
+    # Test ceilf(1.5) = 2
+    move rarg1 0x3fc00000  # 1.5f
+    call function m.ceilf 1
+    move rarg1 rout1
+    move rarg2 0x40000000  # 2.0f
+    move rarg3 "ceilf(1.5)"
+    call function check_float 3
+
+    # Test floorf(1.5) = 1
+    move rarg1 0x3fc00000  # 1.5f
+    call function m.floorf 1
+    move rarg1 rout1
+    move rarg2 0x3f800000  # 1.0f
+    move rarg3 "floorf(1.5)"
+    call function check_float 3
+
+    # Test powf(2, 10) = 1024
+    move rarg1 0x40000000  # 2.0f
+    move rarg2 0x41200000  # 10.0f
+    call function m.powf 2
+    move rarg1 rout1
+    move rarg2 0x44800000  # 1024.0f
+    move rarg3 "powf(2,10)"
+    call function check_float 3
+
+    # Test fmaxf(3, 7) = 7
+    move rarg1 0x40400000  # 3.0f
+    move rarg2 0x40e00000  # 7.0f
+    call function m.fmaxf 2
+    move rarg1 rout1
+    move rarg2 0x40e00000  # 7.0f
+    move rarg3 "fmaxf(3,7)"
+    call function check_float 3
+
+    # Print summary
+    move rarg1 "=============================="
+    call function io.puts 1
+    push rs5
+    push rs4
+    move rarg1 "Tests: %d, Failures: %d\n"
+    call function io.printf 3
+    pop rs4
+    pop rs5
+
+    cmp rs4 0
+    jump ne label had_failures
+    move rarg1 "ALL TESTS PASSED"
+    call function io.puts 1
+    move rout1 0
+    ret
+
+label had_failures
+    move rarg1 "SOME TESTS FAILED"
+    call function io.puts 1
+    move rout1 1
+    ret
+end
+
+# check_double: rarg1=got, rarg2=expected, rarg3=name
+function check_double 3
+    add rs5 rs5 1
+    cmp rarg1 rarg2
+    jump ne label double_fail
+    # pass
+    push rarg3
+    move rarg1 "PASS: %s\n"
+    call function io.printf 2
+    pop rarg3
+    ret
+label double_fail
+    add rs4 rs4 1
+    push rarg1
+    push rarg2
+    push rarg3
+    move rarg1 "FAIL: %s (got 0x%lx, expected 0x%lx)\n"
+    call function io.printf 4
+    pop rarg3
+    pop rarg2
+    pop rarg1
+    ret
+end
+
+# check_float: rarg1=got, rarg2=expected, rarg3=name
+function check_float 3
+    add rs5 rs5 1
+    # Mask to 32 bits for float comparison
+    and rarg1 rarg1 0xffffffff
+    and rarg2 rarg2 0xffffffff
+    cmp rarg1 rarg2
+    jump ne label float_fail
+    push rarg3
+    move rarg1 "PASS: %s\n"
+    call function io.printf 2
+    pop rarg3
+    ret
+label float_fail
+    add rs4 rs4 1
+    push rarg1
+    push rarg2
+    push rarg3
+    move rarg1 "FAIL: %s (got 0x%x, expected 0x%x)\n"
+    call function io.printf 4
+    pop rarg3
+    pop rarg2
+    pop rarg1
+    ret
+end

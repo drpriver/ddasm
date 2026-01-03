@@ -1,0 +1,34 @@
+module test_dlimport_sin
+
+import io
+
+dlimport mathlib
+    path "libm.so.6"
+    path "libm"
+    function sin 1 1 0x2 0x2
+end
+
+function start
+    # pi/2 as double = 1.5707963267948966
+    # IEEE 754 double bit pattern: 0x3ff921fb54442d18
+    move rarg1 0x3ff921fb54442d18
+    call function mathlib.sin 1
+    # result should be 1.0 = 0x3ff0000000000000
+
+    # Compare with expected value
+    move rs0 0x3ff0000000000000
+    cmp rout1 rs0
+    jump ne label fail
+
+    # Success
+    move rarg1 "PASS: sin(pi/2) = 1.0"
+    call function io.puts 1
+    move rout1 0
+    ret
+
+label fail
+    move rarg1 "FAIL: sin(pi/2) != 1.0"
+    call function io.puts 1
+    move rout1 1
+    ret
+end

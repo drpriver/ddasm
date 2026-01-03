@@ -20,6 +20,13 @@ import cfront.c_parser : CParser;
 import cfront.c_ast : CTranslationUnit;
 import cfront.c_to_dasm : CDasmWriter;
 
+struct CompileFlags {
+    bool syntax_only;
+    bool pp_only;
+    bool print_ast;
+    bool debug_types;
+}
+
 // Default system include paths (compile-time)
 version(OSX) {
     enum str[] DEFAULT_INCLUDE_PATHS = [
@@ -74,7 +81,7 @@ version(OSX) {
     ];
 }
 
-int compile_c_to_dasm(const(ubyte)[] source, Box!(char[])* progtext, str source_file = "", str[] include_paths = [], str[] framework_paths = []) {
+int compile_c_to_dasm(const(ubyte)[] source, Box!(char[])* progtext, str source_file = "", str[] include_paths = [], str[] framework_paths = [], CompileFlags flags = CompileFlags.init) {
     ArenaAllocator arena = ArenaAllocator(MALLOCATOR);
     scope(exit) arena.free_all();
 
@@ -99,12 +106,11 @@ int compile_c_to_dasm(const(ubyte)[] source, Box!(char[])* progtext, str source_
     preprocessor.initialize();
     err = preprocessor.process(pp_tokens[], &processed);
     if (err) return 1;
-    if(0){
+    if(flags.pp_only){
         str last_file = "";
         int last_line = 0;
         import cfront.c_pp_token;
         import core.stdc.stdio;
-        fprintf(stderr, "processed.length: %zu\n", processed[].length);
         foreach (tok; processed[]) {
             // Skip whitespace and newlines for cleaner output
             if (tok.type == PPTokenType.PP_WHITESPACE) {
@@ -139,6 +145,7 @@ int compile_c_to_dasm(const(ubyte)[] source, Box!(char[])* progtext, str source_
             fwrite(tok.lexeme.ptr, 1, tok.lexeme.length, stdout);
         }
         fwrite("\n".ptr, 1, 1, stdout);
+        return 0;
     }
 
     // Phase 5+: Convert PPTokens to CTokens
@@ -148,9 +155,28 @@ int compile_c_to_dasm(const(ubyte)[] source, Box!(char[])* progtext, str source_
 
     // Parse
     CParser parser = CParser(arena.allocator(), tokens[]);
+    parser.debug_types = flags.debug_types;
     CTranslationUnit unit;
     err = parser.parse(&unit);
     if (err) return 1;
+
+    // Dump type tables if debug_types is enabled
+    if (flags.debug_types) {
+        import core.stdc.stdio : fprintf, stderr;
+        fprintf(stderr, "\n=== Type Tables ===\n");
+        parser.dump_type_tables();
+    }
+
+    // Print AST if requested
+    if (flags.print_ast) {
+        import cfront.c_ast_printer : print_ast;
+        print_ast(&unit);
+    }
+
+    // Stop after parsing if syntax_only
+    if (flags.syntax_only || flags.print_ast) {
+        return 0;
+    }
 
     // Generate DASM
     StringBuilder sb = { allocator: progtext.allocator };

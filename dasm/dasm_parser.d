@@ -9,7 +9,7 @@ import dlib.allocator;
 import dlib.zstring;
 import dlib.table;
 import dlib.stringbuilder;
-import dlib.parse_numbers;
+import dlib.parse_numbers: parse_unsigned_human, IntegerResult, is_float_literal, parse_float, FloatResult;
 
 import dvm.dvm_defs;
 import dvm.dvm_unlinked;
@@ -495,6 +495,18 @@ struct ParseContext{
                 return result;
             }
             case NUMBER:{
+                // Check if this is a float literal
+                if(is_float_literal(tok.text)){
+                    FloatResult f = parse_float(tok.text);
+                    if(f.errored){
+                        err_print(tok, "Unable to parse a float from ", Q(tok.text));
+                        return result;
+                    }
+                    // Bit-cast double to uintptr_t
+                    result.immediate = *cast(ulong*)&f.value;
+                    result.kind = IMMEDIATE;
+                    return result;
+                }
                 IntegerResult!ulong e = parse_unsigned_human(tok.text);
                 if(e.errored){
                     err_print(tok, "Unable to parse a number from ", Q(tok.text));
@@ -745,6 +757,26 @@ struct ParseContext{
                 if(tokenizer.current_token.type == IDENTIFIER && tokenizer.current_token.text == "varargs"){
                     spec.is_varargs = true;
                     tokenizer.advance; // consume "varargs"
+                }
+                // Check for optional arg_types mask (integer immediate)
+                while(tokenizer.current_token.type == SPACE || tokenizer.current_token.type == TAB)
+                    tokenizer.advance;
+                if(tokenizer.current_token.type == NUMBER){
+                    IntegerResult!ulong arg_types_res = parse_unsigned_human(tokenizer.current_token.text);
+                    if(!arg_types_res.errored){
+                        spec.arg_types = cast(uint)arg_types_res.value;
+                        tokenizer.advance;
+                        // Check for optional ret_types mask
+                        while(tokenizer.current_token.type == SPACE || tokenizer.current_token.type == TAB)
+                            tokenizer.advance;
+                        if(tokenizer.current_token.type == NUMBER){
+                            IntegerResult!ulong ret_types_res = parse_unsigned_human(tokenizer.current_token.text);
+                            if(!ret_types_res.errored){
+                                spec.ret_types = cast(uint)ret_types_res.value;
+                                tokenizer.advance;
+                            }
+                        }
+                    }
                 }
                 decl.funcs.push(spec);
             }

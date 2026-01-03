@@ -33,6 +33,7 @@ import dlib.parse_numbers : parse_unsigned_human;
 
 import cfront.c_pp_to_c : CToken, CTokenType;
 import cfront.c_ast;
+import cfront.c_const_eval : try_eval_constant, ConstValue;
 
 struct RegisterAllocator {
     // Start allocating from R8 onwards to avoid RARG1-8 (R0-R7)
@@ -2651,6 +2652,14 @@ struct CDasmWriter {
         // have side-effects, so just handle that in the specific handler function.
         e = e.ungroup();
 
+        // Try constant folding
+        ConstValue cv = try_eval_constant(e);
+        if(cv.is_const()){
+            if(target != TARGET_IS_NOTHING)
+                sb.writef("    move r% %\n", target, cv.as_long);
+            return 0;
+        }
+
         final switch(e.kind) with (CExprKind){
             case LITERAL:    return gen_literal(e.as_literal, target);
             case IDENTIFIER: return gen_identifier(e.as_identifier, target);
@@ -2705,6 +2714,17 @@ struct CDasmWriter {
                 }
             }
             sb.writef("    move r% %\n", target, hex_val);
+        } else if(expr.value.type == CTokenType.FLOAT_LITERAL){
+            // Float literal - parse and bit-cast to integer
+            import dlib.parse_numbers : parse_float;
+            auto parsed = parse_float(lex);
+            if(parsed.errored){
+                error(expr.value, "Unable to parse float literal");
+                return 1;
+            }
+            // Bit-cast double to ulong for storage in register
+            ulong bits = *cast(ulong*)&parsed.value;
+            sb.writef("    move r% %\n", target, bits);
         } else {
             // Integer literal - strip suffix (u, U, l, L) if present
             str int_val = lex;
@@ -2725,8 +2745,28 @@ struct CDasmWriter {
     int gen_cast(CCast* expr, int target){
         if(expr.cast_type == &TYPE_VOID)
             target = TARGET_IS_NOTHING;
-        // Cast just generates the operand - type conversion is implicit at this level
-        return gen_expression(expr.operand, target);
+
+        int err = gen_expression(expr.operand, target);
+        if(err) return err;
+
+        if(target != TARGET_IS_NOTHING){
+            CType* src_type = get_expr_type(expr.operand);
+            CType* dst_type = expr.cast_type;
+
+            // Handle float<->int conversions
+            bool src_is_float = src_type && src_type.is_float();
+            bool dst_is_float = dst_type && dst_type.is_float();
+
+            if(src_is_float && !dst_is_float){
+                // float -> int: use ftoi
+                sb.writef("    ftoi r% r%\n", target, target);
+            } else if(!src_is_float && dst_is_float){
+                // int -> float: use itof
+                sb.writef("    itof r% r%\n", target, target);
+            }
+        }
+
+        return 0;
     }
 
     int gen_compound_literal(CCompoundLiteral* expr, int target){
@@ -3176,6 +3216,75 @@ struct CDasmWriter {
         bool right_is_ptr = right_type && (right_type.is_pointer() || right_type.is_array());
         size_t left_elem_size = left_is_ptr ? left_type.element_size() : 0;
         size_t right_elem_size = right_is_ptr ? right_type.element_size() : 0;
+
+        // Check for float operations
+        bool left_is_float = left_type && left_type.is_float();
+        bool right_is_float = right_type && right_type.is_float();
+        if(left_is_float || right_is_float){
+            // Generate RHS into a register
+            int rhs = get_expr_reg(expr.right);
+            if(rhs < 0){
+                rhs = regallocator.allocate();
+                int err = gen_expression(expr.right, rhs);
+                if(err) return err;
+            }
+            // Convert non-float operand to float if needed
+            if(left_is_float && !right_is_float){
+                sb.writef("    itof r% r%\n", rhs, rhs);
+            } else if(!left_is_float && right_is_float){
+                sb.writef("    itof r% r%\n", lhs, lhs);
+            }
+            // Generate float operation
+            switch(expr.op) with (CTokenType){
+                case PLUS:
+                    sb.writef("    fadd r% r% r%\n", target, lhs, rhs);
+                    break;
+                case MINUS:
+                    sb.writef("    fsub r% r% r%\n", target, lhs, rhs);
+                    break;
+                case STAR:
+                    sb.writef("    fmul r% r% r%\n", target, lhs, rhs);
+                    break;
+                case SLASH:
+                    sb.writef("    fdiv r% r% r%\n", target, lhs, rhs);
+                    break;
+                case EQUAL_EQUAL:
+                    sb.writef("    fcmp r% r%\n", lhs, rhs);
+                    sb.writef("    move r% 0\n", target);
+                    sb.writef("    cmov eq r% 1\n", target);
+                    break;
+                case BANG_EQUAL:
+                    sb.writef("    fcmp r% r%\n", lhs, rhs);
+                    sb.writef("    move r% 0\n", target);
+                    sb.writef("    cmov ne r% 1\n", target);
+                    break;
+                case LESS:
+                    sb.writef("    fcmp r% r%\n", lhs, rhs);
+                    sb.writef("    move r% 0\n", target);
+                    sb.writef("    cmov lt r% 1\n", target);
+                    break;
+                case LESS_EQUAL:
+                    sb.writef("    fcmp r% r%\n", lhs, rhs);
+                    sb.writef("    move r% 0\n", target);
+                    sb.writef("    cmov le r% 1\n", target);
+                    break;
+                case GREATER:
+                    sb.writef("    fcmp r% r%\n", lhs, rhs);
+                    sb.writef("    move r% 0\n", target);
+                    sb.writef("    cmov gt r% 1\n", target);
+                    break;
+                case GREATER_EQUAL:
+                    sb.writef("    fcmp r% r%\n", lhs, rhs);
+                    sb.writef("    move r% 0\n", target);
+                    sb.writef("    cmov ge r% 1\n", target);
+                    break;
+                default:
+                    error(expr.expr.token, "Unsupported float operation");
+                    return 1;
+            }
+            regallocator.reset_to(before);
+            return 0;
+        }
 
         // Check for literal RHS optimization
         CExpr* right = expr.right;
@@ -3736,12 +3845,18 @@ struct CDasmWriter {
         if(err) return err;
 
         if(target != TARGET_IS_NOTHING){
+            CType* operand_type = get_expr_type(expr.operand);
+            bool is_float_op = operand_type && operand_type.is_float();
+
             switch(expr.op) with (CTokenType){
                 case PLUS:
                     // Unary plus is a no-op
                     break;
                 case MINUS:
-                    sb.writef("    neg r% r%\n", target, target);
+                    if(is_float_op)
+                        sb.writef("    fneg r% r%\n", target, target);
+                    else
+                        sb.writef("    neg r% r%\n", target, target);
                     break;
                 case BANG:
                     sb.writef("    not r% r%\n", target, target);

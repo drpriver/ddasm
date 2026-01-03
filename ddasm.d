@@ -53,6 +53,8 @@ int main(int argc, char** argv){
     bool debugger = false;
     bool highlevel = false;
     bool no_run = false;
+    bool codegen_only = false;
+    bool parse_only = false;
     uintptr_t[RegisterNames.RARGMAX-RegisterNames.RARG1] rargs;
     ZString[rargs.length] rargs_s;
     ZString sourcefile;
@@ -75,7 +77,7 @@ int main(int argc, char** argv){
             dest: ARGDEST(&sourcefile),
         },
     ];
-    ArgToParse[11] _kw_args = [
+    ArgToParse[13] _kw_args = [
         {
             name: "-I",
             help: "Add directory to include search path (for C files). Can be specified multiple times.",
@@ -130,6 +132,16 @@ int main(int argc, char** argv){
             name: "-y", altname: "--dry-run",
             help: "Compile and link, but don't run the script/dasm",
             dest: ARGDEST(&no_run),
+        },
+        {
+            name: "-S", altname: "--codegen-only",
+            help: "Compile C to DASM text and output, don't link or run",
+            dest: ARGDEST(&codegen_only),
+        },
+        {
+            name: "--parse-code-only",
+            help: "Parse DASM but don't link or run",
+            dest: ARGDEST(&parse_only),
         },
         {
             name: "-F",
@@ -262,6 +274,11 @@ int main(int argc, char** argv){
         ubyte[] data = btext.as!(ubyte[]).data;
         int err = cfront.cfront.compile_c_to_dasm(data, &dasmtext, sourcefile[], include_paths[], framework_paths[]);
         if(err) return err;
+        // If codegen_only, print DASM text and exit
+        if(codegen_only){
+            fprintf(stdout, "%.*s\n", cast(int)dasmtext.data.length, dasmtext.data.ptr);
+            return 0;
+        }
         btext.dealloc();
         btext = Box!str(btext.allocator, dasmtext.data);
     }
@@ -270,6 +287,11 @@ int main(int argc, char** argv){
     if(err){
         fprintf(stderr, "Parsing failed\n");
         return err;
+    }
+    // If parse_only, exit after successful parsing
+    if(parse_only){
+        fprintf(stdout, "Parsing successful\n");
+        return 0;
     }
 
     LinkedModule linked_prog = {source_text: btext, name: prog.name};

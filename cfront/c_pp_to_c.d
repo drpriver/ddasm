@@ -52,6 +52,7 @@ enum CTokenType : uint {
     HEX = 502,
     STRING = 503,
     CHAR_LITERAL = 504,
+    FLOAT_LITERAL = 505,
 
     // Type keywords
     VOID = 600,
@@ -268,7 +269,7 @@ struct PPToCConverter {
         *output ~= tok;
     }
 
-    // Convert pp-number to NUMBER or HEX
+    // Convert pp-number to NUMBER, HEX, or FLOAT_LITERAL
     void convert_number(PPToken pp){
         str s = pp.lexeme;
         CTokenType type = CTokenType.NUMBER;
@@ -276,6 +277,18 @@ struct PPToCConverter {
         // Check for hex prefix
         if(s.length >= 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')){
             type = CTokenType.HEX;
+        }
+        else {
+            // Check for float literal (contains '.' or 'e/E')
+            bool has_dot = false;
+            bool has_exp = false;
+            foreach(c; s){
+                if(c == '.') has_dot = true;
+                if(c == 'e' || c == 'E') has_exp = true;
+            }
+            if(has_dot || has_exp){
+                type = CTokenType.FLOAT_LITERAL;
+            }
         }
 
         add_token(type, s, pp);

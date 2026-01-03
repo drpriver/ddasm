@@ -109,20 +109,31 @@ struct Machine {
             // Caller cleanup - don't pop here
         }
 
-        import dvm.varargs_trampoline: call_varargs;
-        registers[ROUT1] = call_varargs(
-            cast(void*)func.native_function_,
-            args.ptr,
-            n_fixed,
-            n_total
-        );
+        // Use float-aware trampoline if any args or returns are floats
+        if (func.arg_types != 0 || func.ret_types != 0) {
+            import dvm.varargs_trampoline_float: call_varargs_float;
+            registers[ROUT1] = call_varargs_float(
+                cast(void*)func.native_function_,
+                args.ptr,
+                n_fixed,
+                n_total,
+                func.arg_types,
+                func.ret_types
+            );
+        } else {
+            import dvm.varargs_trampoline: call_varargs;
+            registers[ROUT1] = call_varargs(
+                cast(void*)func.native_function_,
+                args.ptr,
+                n_fixed,
+                n_total
+            );
+        }
         return 0;
     }}
 
     int
     call_native(Function* func){with(RegisterNames){
-        import dvm.native_trampoline: call_native_trampoline;
-
         // Gather arguments from DVM registers
         uintptr_t[16] args = void;
         size_t n_args = func.n_args;
@@ -130,12 +141,26 @@ struct Machine {
             args[i] = registers[RARG1 + i];
         }
 
-        // Call via trampoline
-        uintptr_t result = call_native_trampoline(
-            cast(void*)func.native_function_,
-            args.ptr,
-            n_args
-        );
+        uintptr_t result;
+
+        // Use float-aware trampoline if any args or returns are floats
+        if (func.arg_types != 0 || func.ret_types != 0) {
+            import dvm.native_trampoline_float: call_native_float;
+            result = call_native_float(
+                cast(void*)func.native_function_,
+                args.ptr,
+                n_args,
+                func.arg_types,
+                func.ret_types
+            );
+        } else {
+            import dvm.native_trampoline: call_native_trampoline;
+            result = call_native_trampoline(
+                cast(void*)func.native_function_,
+                args.ptr,
+                n_args
+            );
+        }
 
         // Store result if function returns a value
         if (func.n_ret) {
@@ -576,6 +601,78 @@ struct Machine {
                     float_t* lhs = cast(float_t*)get_reg;
                     float_t* rhs = cast(float_t*)get_reg;
                     *dst = *lhs + *rhs;
+                }break;
+                case FSUB_I:{
+                    if(int b = begin(FSUB_I)) return b;
+                    float_t* dst = cast(float_t*)get_reg;
+                    float_t* lhs = cast(float_t*)get_reg;
+                    float_t rhs = get_float;
+                    *dst = *lhs - rhs;
+                }break;
+                case FSUB_R:{
+                    if(int b = begin(FSUB_R)) return b;
+                    float_t* dst = cast(float_t*)get_reg;
+                    float_t* lhs = cast(float_t*)get_reg;
+                    float_t* rhs = cast(float_t*)get_reg;
+                    *dst = *lhs - *rhs;
+                }break;
+                case FMUL_I:{
+                    if(int b = begin(FMUL_I)) return b;
+                    float_t* dst = cast(float_t*)get_reg;
+                    float_t* lhs = cast(float_t*)get_reg;
+                    float_t rhs = get_float;
+                    *dst = *lhs * rhs;
+                }break;
+                case FMUL_R:{
+                    if(int b = begin(FMUL_R)) return b;
+                    float_t* dst = cast(float_t*)get_reg;
+                    float_t* lhs = cast(float_t*)get_reg;
+                    float_t* rhs = cast(float_t*)get_reg;
+                    *dst = *lhs * *rhs;
+                }break;
+                case FDIV_I:{
+                    if(int b = begin(FDIV_I)) return b;
+                    float_t* dst = cast(float_t*)get_reg;
+                    float_t* lhs = cast(float_t*)get_reg;
+                    float_t rhs = get_float;
+                    *dst = *lhs / rhs;
+                }break;
+                case FDIV_R:{
+                    if(int b = begin(FDIV_R)) return b;
+                    float_t* dst = cast(float_t*)get_reg;
+                    float_t* lhs = cast(float_t*)get_reg;
+                    float_t* rhs = cast(float_t*)get_reg;
+                    *dst = *lhs / *rhs;
+                }break;
+                case FCMP_I:{
+                    if(int b = begin(FCMP_I)) return b;
+                    registers[RFLAGS] = 0;
+                    float_t lhs = float_read_reg;
+                    float_t rhs = get_float;
+                    if(lhs == rhs){
+                        registers[RFLAGS] = CmpFlags.ZERO;
+                    }
+                    else if(lhs < rhs){
+                        registers[RFLAGS] = CmpFlags.CARRY;
+                    }
+                }break;
+                case FCMP_R:{
+                    if(int b = begin(FCMP_R)) return b;
+                    registers[RFLAGS] = 0;
+                    float_t lhs = float_read_reg;
+                    float_t rhs = float_read_reg;
+                    if(lhs == rhs){
+                        registers[RFLAGS] = CmpFlags.ZERO;
+                    }
+                    else if(lhs < rhs){
+                        registers[RFLAGS] = CmpFlags.CARRY;
+                    }
+                }break;
+                case FNEG:{
+                    if(int b = begin(FNEG)) return b;
+                    float_t* dst = cast(float_t*)get_reg;
+                    float_t* rhs = cast(float_t*)get_reg;
+                    *dst = -*rhs;
                 }break;
                 case ADD_I:{
                     if(int b = begin(ADD_I)) return b;

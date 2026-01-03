@@ -185,6 +185,8 @@ load_dynamic_module(
         f.type = spec.is_varargs ? FunctionType.NATIVE_VARARGS : FunctionType.NATIVE;
         f.n_args = spec.n_args;
         f.n_ret = spec.n_ret;
+        f.arg_types = spec.arg_types;  // Type mask from dlimport declaration
+        f.ret_types = cast(ubyte)spec.ret_types;  // Return type mask
 
         // Store the raw function pointer in the union
         // All variants share the same memory location

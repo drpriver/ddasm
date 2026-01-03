@@ -1,0 +1,107 @@
+module test_math_simple
+
+import io
+
+dlimport m
+    path "libm.so.6"
+    path "libm"
+    function sin 1 1 0x2 0x2
+    function cos 1 1 0x2 0x2
+    function sqrt 1 1 0x2 0x2
+    function sinf 1 1 0x1 0x1
+    function cosf 1 1 0x1 0x1
+    function sqrtf 1 1 0x1 0x1
+end
+
+function start
+    # Test sin(pi/2) = 1.0
+    move rarg1 0x3ff921fb54442d18
+    call function m.sin 1
+    move rs0 0x3ff0000000000000
+    cmp rout1 rs0
+    jump ne label fail1
+    move rarg1 "PASS: sin(pi/2)"
+    call function io.puts 1
+    move rip label next1
+label fail1
+    move rarg1 "FAIL: sin(pi/2)"
+    call function io.puts 1
+
+label next1
+    # Test cos(0) = 1.0
+    move rarg1 0x0
+    call function m.cos 1
+    move rs0 0x3ff0000000000000
+    cmp rout1 rs0
+    jump ne label fail2
+    move rarg1 "PASS: cos(0)"
+    call function io.puts 1
+    move rip label next2
+label fail2
+    move rarg1 "FAIL: cos(0)"
+    call function io.puts 1
+
+label next2
+    # Test sqrt(4) = 2
+    move rarg1 0x4010000000000000
+    call function m.sqrt 1
+    move rs0 0x4000000000000000
+    cmp rout1 rs0
+    jump ne label fail3
+    move rarg1 "PASS: sqrt(4)"
+    call function io.puts 1
+    move rip label next3
+label fail3
+    move rarg1 "FAIL: sqrt(4)"
+    call function io.puts 1
+
+label next3
+    # Test sinf(pi/2) = 1.0f
+    move rarg1 0x3fc90fdb
+    call function m.sinf 1
+    and rout1 rout1 0xffffffff
+    move rs0 0x3f800000
+    cmp rout1 rs0
+    jump ne label fail4
+    move rarg1 "PASS: sinf(pi/2)"
+    call function io.puts 1
+    move rip label next4
+label fail4
+    move rarg1 "FAIL: sinf(pi/2)"
+    call function io.puts 1
+
+label next4
+    # Test cosf(0) = 1.0f
+    move rarg1 0x0
+    call function m.cosf 1
+    and rout1 rout1 0xffffffff
+    move rs0 0x3f800000
+    cmp rout1 rs0
+    jump ne label fail5
+    move rarg1 "PASS: cosf(0)"
+    call function io.puts 1
+    move rip label next5
+label fail5
+    move rarg1 "FAIL: cosf(0)"
+    call function io.puts 1
+
+label next5
+    # Test sqrtf(4) = 2.0f
+    move rarg1 0x40800000
+    call function m.sqrtf 1
+    and rout1 rout1 0xffffffff
+    move rs0 0x40000000
+    cmp rout1 rs0
+    jump ne label fail6
+    move rarg1 "PASS: sqrtf(4)"
+    call function io.puts 1
+    move rip label done
+label fail6
+    move rarg1 "FAIL: sqrtf(4)"
+    call function io.puts 1
+
+label done
+    move rarg1 "All tests complete"
+    call function io.puts 1
+    ret
+end

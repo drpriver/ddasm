@@ -14,6 +14,8 @@ expose_varargs(void* fun, uint n_fixed) {
     f.native_function_ = cast(void function())fun;
     f.n_args = cast(ubyte)n_fixed;
     f.n_ret = 1;
+    f.arg_types = 0;   // All integer args by default
+    f.ret_types = 0;   // Integer return by default
     return f;
 }
 
@@ -21,6 +23,8 @@ Function*
 expose_function(F)(F fun){
     Function* f = cast(Function*)MALLOCATOR.alloc(Function.sizeof).ptr;
     f.type = FunctionType.NATIVE;
+    f.arg_types = 0;   // All integer args by default
+    f.ret_types = 0;   // Integer return by default
     static if(is(F : uintptr_t function())){
         f.native_function_r = fun;
         f.n_ret = 1;

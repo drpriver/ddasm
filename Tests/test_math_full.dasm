@@ -1,0 +1,341 @@
+module test_math_full
+
+import io
+
+# arg_types for 2 doubles: 0x2 | (0x2 << 2) = 0xa
+# arg_types for 2 floats: 0x1 | (0x1 << 2) = 0x5
+
+dlimport m
+    path "libm.so.6"
+    path "libm"
+    # Double (1 arg)
+    function sin 1 1 0x2 0x2
+    function cos 1 1 0x2 0x2
+    function tan 1 1 0x2 0x2
+    function exp 1 1 0x2 0x2
+    function log 1 1 0x2 0x2
+    function sqrt 1 1 0x2 0x2
+    function cbrt 1 1 0x2 0x2
+    function ceil 1 1 0x2 0x2
+    function floor 1 1 0x2 0x2
+    function fabs 1 1 0x2 0x2
+    # Double (2 args)
+    function pow 2 1 0xa 0x2
+    function hypot 2 1 0xa 0x2
+    function fmax 2 1 0xa 0x2
+    function fmin 2 1 0xa 0x2
+    # Float (1 arg)
+    function sinf 1 1 0x1 0x1
+    function cosf 1 1 0x1 0x1
+    function sqrtf 1 1 0x1 0x1
+    function fabsf 1 1 0x1 0x1
+    # Float (2 args)
+    function powf 2 1 0x5 0x1
+    function fmaxf 2 1 0x5 0x1
+end
+
+function start
+    # ===== DOUBLE 1-ARG =====
+
+    # sin(pi/2) = 1.0
+    move rarg1 0x3ff921fb54442d18
+    call function m.sin 1
+    move rs0 0x3ff0000000000000
+    cmp rout1 rs0
+    jump eq label p1
+    move rarg1 "FAIL: sin"
+    call function io.puts 1
+    move rip label t2
+label p1
+    move rarg1 "PASS: sin(pi/2)=1"
+    call function io.puts 1
+
+label t2
+    # cos(0) = 1.0
+    move rarg1 0x0
+    call function m.cos 1
+    move rs0 0x3ff0000000000000
+    cmp rout1 rs0
+    jump eq label p2
+    move rarg1 "FAIL: cos"
+    call function io.puts 1
+    move rip label t3
+label p2
+    move rarg1 "PASS: cos(0)=1"
+    call function io.puts 1
+
+label t3
+    # tan(0) = 0.0
+    move rarg1 0x0
+    call function m.tan 1
+    move rs0 0x0
+    cmp rout1 rs0
+    jump eq label p3
+    move rarg1 "FAIL: tan"
+    call function io.puts 1
+    move rip label t4
+label p3
+    move rarg1 "PASS: tan(0)=0"
+    call function io.puts 1
+
+label t4
+    # exp(0) = 1.0
+    move rarg1 0x0
+    call function m.exp 1
+    move rs0 0x3ff0000000000000
+    cmp rout1 rs0
+    jump eq label p4
+    move rarg1 "FAIL: exp"
+    call function io.puts 1
+    move rip label t5
+label p4
+    move rarg1 "PASS: exp(0)=1"
+    call function io.puts 1
+
+label t5
+    # log(1) = 0.0
+    move rarg1 0x3ff0000000000000
+    call function m.log 1
+    move rs0 0x0
+    cmp rout1 rs0
+    jump eq label p5
+    move rarg1 "FAIL: log"
+    call function io.puts 1
+    move rip label t6
+label p5
+    move rarg1 "PASS: log(1)=0"
+    call function io.puts 1
+
+label t6
+    # sqrt(4) = 2.0
+    move rarg1 0x4010000000000000
+    call function m.sqrt 1
+    move rs0 0x4000000000000000
+    cmp rout1 rs0
+    jump eq label p6
+    move rarg1 "FAIL: sqrt"
+    call function io.puts 1
+    move rip label t7
+label p6
+    move rarg1 "PASS: sqrt(4)=2"
+    call function io.puts 1
+
+label t7
+    # cbrt(8) = 2.0
+    move rarg1 0x4020000000000000
+    call function m.cbrt 1
+    move rs0 0x4000000000000000
+    cmp rout1 rs0
+    jump eq label p7
+    move rarg1 "FAIL: cbrt"
+    call function io.puts 1
+    move rip label t8
+label p7
+    move rarg1 "PASS: cbrt(8)=2"
+    call function io.puts 1
+
+label t8
+    # ceil(1.5) = 2.0
+    move rarg1 0x3ff8000000000000
+    call function m.ceil 1
+    move rs0 0x4000000000000000
+    cmp rout1 rs0
+    jump eq label p8
+    move rarg1 "FAIL: ceil"
+    call function io.puts 1
+    move rip label t9
+label p8
+    move rarg1 "PASS: ceil(1.5)=2"
+    call function io.puts 1
+
+label t9
+    # floor(1.5) = 1.0
+    move rarg1 0x3ff8000000000000
+    call function m.floor 1
+    move rs0 0x3ff0000000000000
+    cmp rout1 rs0
+    jump eq label p9
+    move rarg1 "FAIL: floor"
+    call function io.puts 1
+    move rip label t10
+label p9
+    move rarg1 "PASS: floor(1.5)=1"
+    call function io.puts 1
+
+label t10
+    # fabs(-5) = 5.0
+    move rarg1 0xc014000000000000
+    call function m.fabs 1
+    move rs0 0x4014000000000000
+    cmp rout1 rs0
+    jump eq label p10
+    move rarg1 "FAIL: fabs"
+    call function io.puts 1
+    move rip label t11
+label p10
+    move rarg1 "PASS: fabs(-5)=5"
+    call function io.puts 1
+
+    # ===== DOUBLE 2-ARG =====
+
+label t11
+    # pow(2, 10) = 1024
+    move rarg1 0x4000000000000000
+    move rarg2 0x4024000000000000
+    call function m.pow 2
+    move rs0 0x4090000000000000
+    cmp rout1 rs0
+    jump eq label p11
+    move rarg1 "FAIL: pow"
+    call function io.puts 1
+    move rip label t12
+label p11
+    move rarg1 "PASS: pow(2,10)=1024"
+    call function io.puts 1
+
+label t12
+    # hypot(3, 4) = 5
+    move rarg1 0x4008000000000000
+    move rarg2 0x4010000000000000
+    call function m.hypot 2
+    move rs0 0x4014000000000000
+    cmp rout1 rs0
+    jump eq label p12
+    move rarg1 "FAIL: hypot"
+    call function io.puts 1
+    move rip label t13
+label p12
+    move rarg1 "PASS: hypot(3,4)=5"
+    call function io.puts 1
+
+label t13
+    # fmax(3, 7) = 7
+    move rarg1 0x4008000000000000
+    move rarg2 0x401c000000000000
+    call function m.fmax 2
+    move rs0 0x401c000000000000
+    cmp rout1 rs0
+    jump eq label p13
+    move rarg1 "FAIL: fmax"
+    call function io.puts 1
+    move rip label t14
+label p13
+    move rarg1 "PASS: fmax(3,7)=7"
+    call function io.puts 1
+
+label t14
+    # fmin(3, 7) = 3
+    move rarg1 0x4008000000000000
+    move rarg2 0x401c000000000000
+    call function m.fmin 2
+    move rs0 0x4008000000000000
+    cmp rout1 rs0
+    jump eq label p14
+    move rarg1 "FAIL: fmin"
+    call function io.puts 1
+    move rip label t15
+label p14
+    move rarg1 "PASS: fmin(3,7)=3"
+    call function io.puts 1
+
+    # ===== FLOAT 1-ARG =====
+
+label t15
+    # sinf(pi/2) = 1.0f
+    move rarg1 0x3fc90fdb
+    call function m.sinf 1
+    and rout1 rout1 0xffffffff
+    move rs0 0x3f800000
+    cmp rout1 rs0
+    jump eq label p15
+    move rarg1 "FAIL: sinf"
+    call function io.puts 1
+    move rip label t16
+label p15
+    move rarg1 "PASS: sinf(pi/2)=1"
+    call function io.puts 1
+
+label t16
+    # cosf(0) = 1.0f
+    move rarg1 0x0
+    call function m.cosf 1
+    and rout1 rout1 0xffffffff
+    move rs0 0x3f800000
+    cmp rout1 rs0
+    jump eq label p16
+    move rarg1 "FAIL: cosf"
+    call function io.puts 1
+    move rip label t17
+label p16
+    move rarg1 "PASS: cosf(0)=1"
+    call function io.puts 1
+
+label t17
+    # sqrtf(4) = 2.0f
+    move rarg1 0x40800000
+    call function m.sqrtf 1
+    and rout1 rout1 0xffffffff
+    move rs0 0x40000000
+    cmp rout1 rs0
+    jump eq label p17
+    move rarg1 "FAIL: sqrtf"
+    call function io.puts 1
+    move rip label t18
+label p17
+    move rarg1 "PASS: sqrtf(4)=2"
+    call function io.puts 1
+
+label t18
+    # fabsf(-5) = 5.0f
+    move rarg1 0xc0a00000
+    call function m.fabsf 1
+    and rout1 rout1 0xffffffff
+    move rs0 0x40a00000
+    cmp rout1 rs0
+    jump eq label p18
+    move rarg1 "FAIL: fabsf"
+    call function io.puts 1
+    move rip label t19
+label p18
+    move rarg1 "PASS: fabsf(-5)=5"
+    call function io.puts 1
+
+    # ===== FLOAT 2-ARG =====
+
+label t19
+    # powf(2, 10) = 1024.0f
+    move rarg1 0x40000000
+    move rarg2 0x41200000
+    call function m.powf 2
+    and rout1 rout1 0xffffffff
+    move rs0 0x44800000
+    cmp rout1 rs0
+    jump eq label p19
+    move rarg1 "FAIL: powf"
+    call function io.puts 1
+    move rip label t20
+label p19
+    move rarg1 "PASS: powf(2,10)=1024"
+    call function io.puts 1
+
+label t20
+    # fmaxf(3, 7) = 7.0f
+    move rarg1 0x40400000
+    move rarg2 0x40e00000
+    call function m.fmaxf 2
+    and rout1 rout1 0xffffffff
+    move rs0 0x40e00000
+    cmp rout1 rs0
+    jump eq label p20
+    move rarg1 "FAIL: fmaxf"
+    call function io.puts 1
+    move rip label done
+label p20
+    move rarg1 "PASS: fmaxf(3,7)=7"
+    call function io.puts 1
+
+label done
+    move rarg1 "===== All 20 tests complete ====="
+    call function io.puts 1
+    ret
+end

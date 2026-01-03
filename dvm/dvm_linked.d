@@ -49,9 +49,17 @@ struct Function {
     FunctionType type;
     ubyte n_args;
     ubyte n_ret;
-    ubyte pad;
-    // if D had bitfields I could use the padding byte.
-    uint length;
+    // Return types (2 bits per slot): 0=int, 1=float32, 2=float64
+    // bits 0-1: first return, bits 2-3: second return, etc.
+    ubyte ret_types;
+    union {
+        // For INTERPRETED functions: instruction count
+        uint length;
+        // For NATIVE functions: argument type mask (2 bits per arg)
+        // 00=int, 01=float32, 10=float64, 11=reserved
+        // Supports up to 16 args with type info
+        uint arg_types;
+    }
 
     uintptr_t[] instructions(){
         return instructions_[0..length];

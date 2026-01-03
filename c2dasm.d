@@ -15,13 +15,17 @@ import dlib.term_util : stdin_is_interactive, get_cols;
 import dlib.get_input : LineHistory, get_input_line;
 import dlib.file_util : read_file, FileFlags;
 import dlib.aliases : str;
-import cfront.cfront : DEFAULT_INCLUDE_PATHS, DEFAULT_FRAMEWORK_PATHS;
+import cfront.cfront : DEFAULT_INCLUDE_PATHS, DEFAULT_FRAMEWORK_PATHS, CompileFlags;
 
 static import core.stdc.string;
 
 extern(C)
 int main(int argc, char** argv) {
     bool force_interactive = false;
+    bool syntax_only = false;
+    bool pp_only = false;
+    bool print_ast = false;
+    bool debug_types = false;
     ZString sourcefile;
     Barray!str include_paths;
     include_paths.bdata.allocator = MALLOCATOR;
@@ -40,7 +44,7 @@ int main(int argc, char** argv) {
                 dest: ARGDEST(&sourcefile),
             ),
         ];
-        ArgToParse[3] _kw_args = [
+        ArgToParse[7] _kw_args = [
             ArgToParse(
                 name: "-I",
                 help: "Add directory to include search path. Can be specified multiple times.",
@@ -51,6 +55,26 @@ int main(int argc, char** argv) {
                 name: "--force-interactive", altname: "-i",
                 help: "Force interactive command history mode when reading from stdin.",
                 dest: ARGDEST(&force_interactive),
+            ),
+            ArgToParse(
+                name: "--syntax-only", altname: "-fsyntax-only",
+                help: "Parse source and check for errors, but don't generate code.",
+                dest: ARGDEST(&syntax_only),
+            ),
+            ArgToParse(
+                name: "-E", altname: "--pp-only",
+                help: "Preprocess only, output preprocessed source.",
+                dest: ARGDEST(&pp_only),
+            ),
+            ArgToParse(
+                name: "--print-ast", altname: "-ast-dump",
+                help: "Print the AST after parsing.",
+                dest: ARGDEST(&print_ast),
+            ),
+            ArgToParse(
+                name: "--debug-types",
+                help: "Print type info during parsing and dump final type table.",
+                dest: ARGDEST(&debug_types),
             ),
             ArgToParse(
                 name: "-F",
@@ -156,8 +180,16 @@ int main(int argc, char** argv) {
     FixedAllocator f = FixedAllocator.fixed!(1024 * 1024);
     Box!(char[]) progtext = {f.allocator()};
     scope(exit) progtext.dealloc;
-    int err = cfront.cfront.compile_c_to_dasm(bscript.data, &progtext, sourcefile[], include_paths[], framework_paths[]);
+    CompileFlags flags = {
+        syntax_only: syntax_only,
+        pp_only: pp_only,
+        print_ast: print_ast,
+        debug_types: debug_types,
+    };
+    int err = cfront.cfront.compile_c_to_dasm(bscript.data, &progtext, sourcefile[], include_paths[], framework_paths[], flags);
     if (err) return err;
-    fprintf(stdout, "%.*s\n", cast(int)progtext.data.length, progtext.data.ptr);
+    // Don't print progtext for flags that don't produce code
+    if (!syntax_only && !pp_only && !print_ast)
+        fprintf(stdout, "%.*s\n", cast(int)progtext.data.length, progtext.data.ptr);
     return 0;
 }

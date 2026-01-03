@@ -193,3 +193,92 @@ parse_unsigned_human(const char[] s){ with(ParseNumberError){
         return result;
     return result;
 }}
+
+struct FloatResult {
+    double value;
+    ParseNumberError errored;
+}
+
+// Check if a string represents a float literal (has '.' or 'e/E')
+// But NOT a hex literal (0x...)
+bool is_float_literal(const char[] s){
+    // Hex literals are not floats (even if they contain 'e')
+    if(s.length >= 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X'))
+        return false;
+    foreach(c; s){
+        if(c == '.' || c == 'e' || c == 'E')
+            return true;
+    }
+    return false;
+}
+
+// Parse a float literal
+FloatResult parse_float(const char[] s){ with(ParseNumberError){
+    if(!s.length) return FloatResult(0.0, UNEXPECTED_END);
+
+    // Strip suffix (f, F, l, L)
+    const(char)[] num = s;
+    if(num.length > 0){
+        char last = num[$-1];
+        if(last == 'f' || last == 'F' || last == 'l' || last == 'L')
+            num = num[0..$-1];
+    }
+    if(!num.length) return FloatResult(0.0, UNEXPECTED_END);
+
+    // Parse the float manually
+    double result = 0.0;
+    bool negative = false;
+    size_t i = 0;
+
+    // Handle sign
+    if(num[i] == '-'){
+        negative = true;
+        i++;
+    } else if(num[i] == '+'){
+        i++;
+    }
+
+    // Parse integer part
+    while(i < num.length && num[i] >= '0' && num[i] <= '9'){
+        result = result * 10.0 + (num[i] - '0');
+        i++;
+    }
+
+    // Parse fractional part
+    if(i < num.length && num[i] == '.'){
+        i++;
+        double fraction = 0.1;
+        while(i < num.length && num[i] >= '0' && num[i] <= '9'){
+            result += (num[i] - '0') * fraction;
+            fraction *= 0.1;
+            i++;
+        }
+    }
+
+    // Parse exponent
+    if(i < num.length && (num[i] == 'e' || num[i] == 'E')){
+        i++;
+        bool exp_negative = false;
+        if(i < num.length && num[i] == '-'){
+            exp_negative = true;
+            i++;
+        } else if(i < num.length && num[i] == '+'){
+            i++;
+        }
+        int exp = 0;
+        while(i < num.length && num[i] >= '0' && num[i] <= '9'){
+            exp = exp * 10 + (num[i] - '0');
+            i++;
+        }
+        if(exp_negative) exp = -exp;
+        // Apply exponent
+        if(exp > 0){
+            while(exp-- > 0) result *= 10.0;
+        } else {
+            while(exp++ < 0) result *= 0.1;
+        }
+    }
+
+    if(negative) result = -result;
+    return FloatResult(result, NO_ERROR);
+}}
