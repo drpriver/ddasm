@@ -1,0 +1,61 @@
+# Test writing to variable elements
+import io
+
+var arr 3 1 2 3 end
+
+function start 0
+    # Print initial values
+    move rarg1 "Initial: "
+    call function io.printf 1
+
+    move rs0 var arr
+    read rs1 rs0
+    push rs1
+    move rarg1 "%lld "
+    call function io.printf 2
+
+    move rs0 var arr
+    add rs0 rs0 8
+    read rs1 rs0
+    push rs1
+    move rarg1 "%lld "
+    call function io.printf 2
+
+    move rs0 var arr
+    add rs0 rs0 16
+    read rs1 rs0
+    push rs1
+    move rarg1 "%lld\n"
+    call function io.printf 2
+
+    # Modify arr[1] to 99
+    move rs0 var arr
+    add rs0 rs0 8
+    write rs0 99
+
+    # Print modified values
+    move rarg1 "Modified: "
+    call function io.printf 1
+
+    move rs0 var arr
+    read rs1 rs0
+    push rs1
+    move rarg1 "%lld "
+    call function io.printf 2
+
+    move rs0 var arr
+    add rs0 rs0 8
+    read rs1 rs0
+    push rs1
+    move rarg1 "%lld "
+    call function io.printf 2
+
+    move rs0 var arr
+    add rs0 rs0 16
+    read rs1 rs0
+    push rs1
+    move rarg1 "%lld\n"
+    call function io.printf 2
+
+    halt
+end

@@ -1,0 +1,52 @@
+# Test multiple variables with different sizes
+import io
+
+var a 2 10 20 end
+var b 3 30 40 50 end
+var c 1 60 end
+
+function start 0
+    # Print a[0], a[1]
+    move rs0 var a
+    read rs1 rs0
+    push rs1
+    move rarg1 "a[0]=%lld "
+    call function io.printf 2
+
+    move rs0 var a
+    add rs0 rs0 8
+    read rs1 rs0
+    push rs1
+    move rarg1 "a[1]=%lld\n"
+    call function io.printf 2
+
+    # Print b[0], b[1], b[2]
+    move rs0 var b
+    read rs1 rs0
+    push rs1
+    move rarg1 "b[0]=%lld "
+    call function io.printf 2
+
+    move rs0 var b
+    add rs0 rs0 8
+    read rs1 rs0
+    push rs1
+    move rarg1 "b[1]=%lld "
+    call function io.printf 2
+
+    move rs0 var b
+    add rs0 rs0 16
+    read rs1 rs0
+    push rs1
+    move rarg1 "b[2]=%lld\n"
+    call function io.printf 2
+
+    # Print c[0]
+    move rs0 var c
+    read rs1 rs0
+    push rs1
+    move rarg1 "c[0]=%lld\n"
+    call function io.printf 2
+
+    halt
+end

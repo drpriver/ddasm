@@ -1,0 +1,13 @@
+# Test basic single-word variable
+import io
+
+var x 1 42 end
+
+function start 0
+    move rs0 var x
+    read rs1 rs0
+    push rs1
+    move rarg1 "%lld\n"
+    call function io.printf 2
+    halt
+end

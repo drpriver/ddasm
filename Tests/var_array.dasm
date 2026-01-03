@@ -1,0 +1,47 @@
+# Test multi-element variable (array)
+import io
+
+var arr 5 10 20 30 40 50 end
+
+function start 0
+    # Print arr[0]
+    move rs0 var arr
+    read rs1 rs0
+    push rs1
+    move rarg1 "%lld "
+    call function io.printf 2
+
+    # Print arr[1]
+    move rs0 var arr
+    add rs0 rs0 8
+    read rs1 rs0
+    push rs1
+    move rarg1 "%lld "
+    call function io.printf 2
+
+    # Print arr[2]
+    move rs0 var arr
+    add rs0 rs0 16
+    read rs1 rs0
+    push rs1
+    move rarg1 "%lld "
+    call function io.printf 2
+
+    # Print arr[3]
+    move rs0 var arr
+    add rs0 rs0 24
+    read rs1 rs0
+    push rs1
+    move rarg1 "%lld "
+    call function io.printf 2
+
+    # Print arr[4]
+    move rs0 var arr
+    add rs0 rs0 32
+    read rs1 rs0
+    push rs1
+    move rarg1 "%lld\n"
+    call function io.printf 2
+
+    halt
+end

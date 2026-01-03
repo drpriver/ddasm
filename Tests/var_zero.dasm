@@ -1,0 +1,29 @@
+# Test zero-initialized variable (no initializers)
+import io
+
+var arr 3 end
+
+function start 0
+    # All values should be 0
+    move rs0 var arr
+    read rs1 rs0
+    push rs1
+    move rarg1 "%lld "
+    call function io.printf 2
+
+    move rs0 var arr
+    add rs0 rs0 8
+    read rs1 rs0
+    push rs1
+    move rarg1 "%lld "
+    call function io.printf 2
+
+    move rs0 var arr
+    add rs0 rs0 16
+    read rs1 rs0
+    push rs1
+    move rarg1 "%lld\n"
+    call function io.printf 2
+
+    halt
+end

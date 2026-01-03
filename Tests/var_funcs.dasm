@@ -1,0 +1,47 @@
+# Test function pointer initializers
+import io
+
+var funcs 3
+    function fn1
+    function fn2
+    function fn3
+end
+
+function fn1 0
+    move rarg1 "fn1"
+    call function io.puts
+    ret
+end
+
+function fn2 0
+    move rarg1 "fn2"
+    call function io.puts
+    ret
+end
+
+function fn3 0
+    move rarg1 "fn3"
+    call function io.puts
+    ret
+end
+
+function start 0
+    # Call first function
+    move rs0 var funcs
+    read rs1 rs0
+    call rs1
+
+    # Call second function
+    move rs0 var funcs
+    add rs0 rs0 8
+    read rs1 rs0
+    call rs1
+
+    # Call third function
+    move rs0 var funcs
+    add rs0 rs0 16
+    read rs1 rs0
+    call rs1
+
+    halt
+end

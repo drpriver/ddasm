@@ -1,0 +1,29 @@
+# Test string initializers
+import io
+
+var strs 3
+    "hello"
+    "world"
+    "test"
+end
+
+function start 0
+    # Print first string
+    move rs0 var strs
+    read rarg1 rs0
+    call function io.puts
+
+    # Print second string
+    move rs0 var strs
+    add rs0 rs0 8
+    read rarg1 rs0
+    call function io.puts
+
+    # Print third string
+    move rs0 var strs
+    add rs0 rs0 16
+    read rarg1 rs0
+    call function io.puts
+
+    halt
+end

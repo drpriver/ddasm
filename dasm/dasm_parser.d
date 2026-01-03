@@ -195,24 +195,60 @@ struct ParseContext{
                         AbstractVariable var;
                         var.first_char = tok.text.ptr;
                         var.name = tok.text;
+                        var.initializers.bdata.allocator = allocator;
                         tok = tokenizer.current_token_and_advance;
                         if(tok.type != SPACE){
                             err_print(tok, "var name must be followed by a space");
                             return PARSE_ERROR;
                         }
+                        // Parse size (must be a number)
                         tok = tokenizer.current_token_and_advance;
-                        while(tok.type == SPACE && tok.type == TAB)
+                        while(tok.type == SPACE || tok.type == TAB)
                             tok = tokenizer.current_token_and_advance;
-                        Argument arg = parse_one_argument(tok);
-                        switch(arg.kind){
-                            case UNSET:
-                            case REGISTER:
-                            case LABEL:
-                                if(!errmess.length) err_print(tok, "Invalid variable dealio");
+                        if(tok.type != NUMBER){
+                            err_print(tok, "expected variable size (a number), got ", Q(tok.text));
+                            return PARSE_ERROR;
+                        }
+                        IntegerResult!ulong size_result = parse_unsigned_human(tok.text);
+                        if(size_result.errored){
+                            err_print(tok, "Unable to parse size from ", Q(tok.text));
+                            return PARSE_ERROR;
+                        }
+                        var.size = cast(size_t)size_result.value;
+                        if(var.size == 0){
+                            err_print(tok, "variable size must be at least 1");
+                            return PARSE_ERROR;
+                        }
+                        // Parse initializers until 'end'
+                        for(;;){
+                            tok = tokenizer.current_token_and_advance;
+                            while(tok.type == SPACE || tok.type == TAB || tok.type == NEWLINE)
+                                tok = tokenizer.current_token_and_advance;
+                            tok = tokenizer.skip_comment(tok);
+                            if(tok.type == NEWLINE)
+                                continue;
+                            if(tok.type == EOF){
+                                err_print(tok, "unexpected EOF in variable declaration, expected 'end'");
                                 return PARSE_ERROR;
-                            default:
-                                var.value = arg;
+                            }
+                            if(tok.type == IDENTIFIER && tok.text == "end")
                                 break;
+                            Argument arg = parse_one_argument(tok);
+                            switch(arg.kind){
+                                case UNSET:
+                                case REGISTER:
+                                case LABEL:
+                                    if(!errmess.length) err_print(tok, "Invalid variable initializer");
+                                    return PARSE_ERROR;
+                                default:
+                                    var.initializers.push(arg);
+                                    break;
+                            }
+                        }
+                        // Validate initializer count
+                        if(var.initializers.count > var.size){
+                            err_print(tok, "too many initializers: got ", var.initializers.count, " but size is ", var.size);
+                            return PARSE_ERROR;
                         }
                         prog.variables.push(var);
                     }

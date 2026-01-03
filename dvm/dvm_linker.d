@@ -56,14 +56,22 @@ struct LinkContext {
 
     AsmError
     allocate_variables(){
-        if(unlinked.variables.count)
-            prog.variables.resize(unlinked.variables.count);
-        foreach(i, var; unlinked.variables[]){
+        // Calculate total storage needed (sum of all variable sizes)
+        size_t total_size = 0;
+        foreach(ref var; unlinked.variables[]){
+            total_size += var.size;
+        }
+        if(total_size)
+            prog.variables.resize(total_size);
+        // Assign offsets and build variable table
+        size_t offset = 0;
+        foreach(ref var; unlinked.variables[]){
             if(var.name in prog.variable_table){
                 err_print(var.first_char, "Duplicate variable: ", Q(var.name));
                 return AsmError.LINK_ERROR;
             }
-            prog.variable_table[var.name] = &prog.variables.data[i];
+            prog.variable_table[var.name] = &prog.variables.data[offset];
+            offset += var.size;
         }
         return AsmError.NO_ERROR;
     }
@@ -231,51 +239,60 @@ struct LinkContext {
 
     AsmError
     link_variables(){with(ArgumentKind){
-        foreach(i, const ref AbstractVariable var; unlinked.variables[]){
-            uintptr_t* dest = &prog.variables.data[i];
-            switch(var.value.kind){
-                default:
-                case LABEL:
-                    err_print(var.value.first_char, "BUG LABEL");
-                    return AsmError.LINK_ERROR;
-                case UNSET:
-                    err_print(var.value.first_char, "BUG");
-                    return AsmError.LINK_ERROR;
-                case STRING:{
-                    ZString s = make_string(var.value.text);
-                    *dest = cast(uintptr_t)s.ptr;
-                }break;
-                case IMMEDIATE:
-                    *dest = var.value.immediate;
-                    break;
-                case REGISTER:
-                    *dest = var.value.reg;
-                    break;
-                case CMPMODE:
-                    *dest = var.value.cmp_mode;
-                    break;
-                case FUNCTION:{
-                    auto fi = find_function(var.value.function_name, var.value.first_char);
-                    if(!fi)
+        size_t offset = 0;
+        foreach(const ref AbstractVariable var; unlinked.variables[]){
+            uintptr_t* base = &prog.variables.data[offset];
+            // Zero-initialize the entire variable storage
+            foreach(j; 0 .. var.size)
+                base[j] = 0;
+            // Link each initializer
+            foreach(j, const ref Argument arg; var.initializers[]){
+                uintptr_t* dest = &base[j];
+                switch(arg.kind){
+                    default:
+                    case LABEL:
+                        err_print(arg.first_char, "BUG LABEL");
                         return AsmError.LINK_ERROR;
-                    else
-                        *dest = fi;
-                }break;
-                case ARRAY:
-                    *dest = cast(uintptr_t)prog.arrays[var.value.array].bdata.data.ptr;
-                    break;
-                case VARIABLE:
-                    if(auto variable = var.value.variable in prog.variable_table)
-                        (*dest) = cast(uintptr_t)*variable;
-                    else {
-                        err_print(var.value.first_char, "Reference to unknown variable: ", Q(var.value.variable));
+                    case UNSET:
+                        err_print(arg.first_char, "BUG");
                         return AsmError.LINK_ERROR;
-                    }
-                    break;
-                case CONSTANT:
-                    err_print(var.value.first_char, "TODO");
-                    return AsmError.LINK_ERROR;
+                    case STRING:{
+                        ZString s = make_string(arg.text);
+                        *dest = cast(uintptr_t)s.ptr;
+                    }break;
+                    case IMMEDIATE:
+                        *dest = arg.immediate;
+                        break;
+                    case REGISTER:
+                        *dest = arg.reg;
+                        break;
+                    case CMPMODE:
+                        *dest = arg.cmp_mode;
+                        break;
+                    case FUNCTION:{
+                        auto fi = find_function(arg.function_name, arg.first_char);
+                        if(!fi)
+                            return AsmError.LINK_ERROR;
+                        else
+                            *dest = fi;
+                    }break;
+                    case ARRAY:
+                        *dest = cast(uintptr_t)prog.arrays[arg.array].bdata.data.ptr;
+                        break;
+                    case VARIABLE:
+                        if(auto variable = arg.variable in prog.variable_table)
+                            (*dest) = cast(uintptr_t)*variable;
+                        else {
+                            err_print(arg.first_char, "Reference to unknown variable: ", Q(arg.variable));
+                            return AsmError.LINK_ERROR;
+                        }
+                        break;
+                    case CONSTANT:
+                        err_print(arg.first_char, "TODO");
+                        return AsmError.LINK_ERROR;
+                }
             }
+            offset += var.size;
         }
         return AsmError.NO_ERROR;
     }

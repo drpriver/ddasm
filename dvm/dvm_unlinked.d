@@ -27,7 +27,8 @@ struct AbstractFunction {
 
 struct AbstractVariable {
     str name;
-    Argument value;
+    size_t size;                    // number of words
+    Barray!(Argument) initializers; // initializer values
     const(char)* first_char;
 }
 

@@ -1,0 +1,47 @@
+# Test partial initialization (remaining slots should be zero)
+import io
+
+var arr 5 10 20 30 end
+
+function start 0
+    # Print arr[0] - should be 10
+    move rs0 var arr
+    read rs1 rs0
+    push rs1
+    move rarg1 "%lld "
+    call function io.printf 2
+
+    # Print arr[1] - should be 20
+    move rs0 var arr
+    add rs0 rs0 8
+    read rs1 rs0
+    push rs1
+    move rarg1 "%lld "
+    call function io.printf 2
+
+    # Print arr[2] - should be 30
+    move rs0 var arr
+    add rs0 rs0 16
+    read rs1 rs0
+    push rs1
+    move rarg1 "%lld "
+    call function io.printf 2
+
+    # Print arr[3] - should be 0 (zero-padded)
+    move rs0 var arr
+    add rs0 rs0 24
+    read rs1 rs0
+    push rs1
+    move rarg1 "%lld "
+    call function io.printf 2
+
+    # Print arr[4] - should be 0 (zero-padded)
+    move rs0 var arr
+    add rs0 rs0 32
+    read rs1 rs0
+    push rs1
+    move rarg1 "%lld\n"
+    call function io.printf 2
+
+    halt
+end

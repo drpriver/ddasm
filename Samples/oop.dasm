@@ -6,28 +6,28 @@ import mem
 
 # for this demo, a printer is something that responds to make as a class method
 # and free, setpref and print as regular methods.
-var printerClass [
+var printerClass 1 [
     0Sfree function freePrinter
     0Smake function makePrinter
     0Ssetpref function setPref
     0Sprint function printerPrint
-    0]
+    0] end
 
 # Note that these vtables are in different order - demonstrating
 # that you can have duck-typed dispatch.
-var secondClass [
+var secondClass 1 [
     0Ssetpref function setPref
     0Sprint function otherPrinterPrint
     0Sfree function freePrinter
     0Smake function makeOtherPrinter
-    0]
+    0] end
 
-var thirdClass [
+var thirdClass 1 [
     0Sprint function thirdPrinterPrint
     0Ssetpref function setPref
     0Sfree function freePrinter
     0Smake function makeThirdPrinter
-    0]
+    0] end
 
 # arg1: class
 # arg2: method
@@ -148,7 +148,11 @@ function printerPrint 2
     add  rarg3 rarg3 1
     add  rs0 rs0 0p1
     write rs0 rarg3
+    push rarg2
+    push rarg3
+    push rarg4
     call function io.printf 4
+    sub rsp rsp 0p3
     pop rs0
     ret
 end
@@ -172,7 +176,11 @@ function otherPrinterPrint 2
     add  rarg3 rarg3 1
     add  rs0 rs0 0p1
     write rs0 rarg3
+    push rarg2
+    push rarg3
+    push rarg4
     call function io.printf 4
+    sub rsp rsp 0p3
     pop rs0
     ret
 end
@@ -191,7 +199,10 @@ function thirdPrinterPrint 2
     move rarg3 rarg2
     move rarg1 "%s ThirdPrinter: %s\n"
     read rarg2 rs0
+    push rarg1
+    push rarg2
     call function io.printf 3
+    sub rsp rsp 0p2
     pop rs0
     ret
 end

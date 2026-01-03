@@ -14,11 +14,11 @@
 #   write rs0 2
 #
 import io
-var foo 3
-var hello "Hello\0World\0Yes!!\0Again\0Aloha\0last time "
-var yes function func2
-var bar var yes
-var arr [function test [function test]]
+var foo 1 3 end
+var hello 1 "Hello\0World\0Yes!!\0Again\0Aloha\0last time " end
+var yes 1 function func2 end
+var bar 1 var yes end
+var arr 1 [function test [function test]] end
 
 function test 0
     move rarg1 "test"
@@ -55,7 +55,7 @@ function func2 0
     write rs0 function foobar
     ret
 end
-var local 0
+var local 1 0 end
 function weird 0
     move rs0 var local
     write rs0 label whoa
