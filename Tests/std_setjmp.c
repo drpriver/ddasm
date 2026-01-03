@@ -4,7 +4,6 @@ int printf(const char*,...);
 #include <setjmp.h>
 
 jmp_buf env;
-_Static_assert(sizeof(env) == 200, "sizeof(env) != 200");
 
 int test_setjmp(void) {
     printf("%zu\n", sizeof env);

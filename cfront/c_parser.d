@@ -824,6 +824,53 @@ struct CParser {
             return result;
         }
 
+        if(check(CTokenType.IDENTIFIER) && peek().lexeme == "__builtin_offsetof"){
+            advance();  // consume __builtin_offsetof
+            consume(CTokenType.LEFT_PAREN, "Expected '(' after __builtin_offsetof");
+            if(ERROR_OCCURRED){ result.err = true; return result; }
+            // Parse type (can be struct X, union Y, or typedef name)
+            CType* type_ = parse_type();
+            if(type_ is null){ result.err = true; return result; }
+            consume(CTokenType.COMMA, "Expected ',' after type in __builtin_offsetof");
+            if(ERROR_OCCURRED){ result.err = true; return result; }
+            // Parse member name (can be nested: member1.member2)
+            CToken member = consume(CTokenType.IDENTIFIER, "Expected member name");
+            if(ERROR_OCCURRED){ result.err = true; return result; }
+            // Look up the field offset in the type
+            size_t offset = 0;
+            CType* current_type = type_;
+            // Handle nested member access (e.g., __value.__wch)
+            while(true){
+                if(current_type.kind != CTypeKind.STRUCT && current_type.kind != CTypeKind.UNION){
+                    error(member, "offsetof requires struct or union type");
+                    result.err = true; return result;
+                }
+                bool found = false;
+                foreach(ref f; current_type.fields){
+                    if(f.name == member.lexeme){
+                        offset += f.offset;
+                        current_type = f.type;
+                        found = true;
+                        break;
+                    }
+                }
+                if(!found){
+                    error(member, "Unknown field in offsetof");
+                    result.err = true; return result;
+                }
+                if(match(CTokenType.DOT)){
+                    member = consume(CTokenType.IDENTIFIER, "Expected member name after '.'");
+                    if(ERROR_OCCURRED){ result.err = true; return result; }
+                } else {
+                    break;
+                }
+            }
+            consume(CTokenType.RIGHT_PAREN, "Expected ')' after __builtin_offsetof");
+            if(ERROR_OCCURRED){ result.err = true; return result; }
+            result.value = cast(long)offset;
+            return result;
+        }
+
         if(match(CTokenType.IDENTIFIER)){
             CToken tok = previous();
             // Look up in already-defined enum constants
@@ -2301,12 +2348,24 @@ struct CParser {
                 } else {
                     inline_type = make_struct_type(allocator, "", inline_fields[], inline_size);
                 }
+                // Handle array dimension: struct { ... } field_name[N];
+                while(match(CTokenType.LEFT_BRACKET)){
+                    auto size_result = parse_enum_const_expr();
+                    if(size_result.err) return 1;
+                    if(size_result.value <= 0){
+                        error("Array size must be positive");
+                        return 1;
+                    }
+                    consume(CTokenType.RIGHT_BRACKET, "Expected ']' after array size");
+                    if(ERROR_OCCURRED) return 1;
+                    inline_type = make_array_type(allocator, inline_type, cast(size_t) size_result.value);
+                }
                 StructField field;
                 field.name = field_name.lexeme;
                 field.type = inline_type;
                 field.offset = base_offset;
                 *fields ~= field;
-                *total_field_size = inline_size;
+                *total_field_size = inline_type.size_of();
             } else {
                 // True anonymous struct/union - add fields directly to parent
                 foreach(ref f; inline_fields[]){
@@ -2443,10 +2502,15 @@ struct CParser {
             *fields ~= field;
 
             size_t field_size = decl_type.size_of();
-            if(!is_union){
+            if(is_union){
+                // For unions, track max field size
+                if(field_size > *total_field_size){
+                    *total_field_size = field_size;
+                }
+            } else {
                 current_offset += field_size;
+                *total_field_size = current_offset - base_offset;  // Return delta including padding
             }
-            *total_field_size = current_offset - base_offset;  // Return delta including padding
 
         } while(match(CTokenType.COMMA));
 
@@ -2769,8 +2833,8 @@ struct CParser {
                 match(CTokenType.INT);  // optional trailing int
                 result = is_unsigned ? &TYPE_ULONG : &TYPE_LONG;
             } else if(match(CTokenType.DOUBLE)){
-                // long double - treat as double for simplicity
-                result = &TYPE_DOUBLE;
+                // long double - 80-bit extended precision (16 bytes on x86_64)
+                result = &TYPE_LONG_DOUBLE;
                 match(CTokenType.COMPLEX);  // consume trailing _Complex if present
             } else {
                 // Consume trailing unsigned/signed/int (e.g., 'long unsigned int')
@@ -4193,6 +4257,53 @@ struct CParser {
                 }
                 // Return a dummy literal 0
                 return CLiteral.make_int(allocator, 0, va_tok);
+            }
+            // __builtin_offsetof(type, member) - compute offset of member in type
+            if(peek().lexeme == "__builtin_offsetof"){
+                CToken off_tok = advance();
+                consume(CTokenType.LEFT_PAREN, "Expected '(' after __builtin_offsetof");
+                if(ERROR_OCCURRED) return null;
+                // Parse type (can be struct X, union Y, or typedef name)
+                CType* type_ = parse_type();
+                if(type_ is null) return null;
+                consume(CTokenType.COMMA, "Expected ',' after type in __builtin_offsetof");
+                if(ERROR_OCCURRED) return null;
+                // Parse member name (can be nested: member1.member2)
+                CToken member = consume(CTokenType.IDENTIFIER, "Expected member name");
+                if(ERROR_OCCURRED) return null;
+                // Look up the field offset in the type
+                size_t offset = 0;
+                CType* current_type = type_;
+                bool found = false;
+                // Handle nested member access (e.g., __value.__wch)
+                while(true){
+                    if(current_type.kind != CTypeKind.STRUCT && current_type.kind != CTypeKind.UNION){
+                        error(member, "offsetof requires struct or union type");
+                        return null;
+                    }
+                    foreach(ref f; current_type.fields){
+                        if(f.name == member.lexeme){
+                            offset += f.offset;
+                            current_type = f.type;
+                            found = true;
+                            break;
+                        }
+                    }
+                    if(!found){
+                        error(member, "Unknown field in offsetof");
+                        return null;
+                    }
+                    if(match(CTokenType.DOT)){
+                        member = consume(CTokenType.IDENTIFIER, "Expected member name after '.'");
+                        if(ERROR_OCCURRED) return null;
+                        found = false;
+                    } else {
+                        break;
+                    }
+                }
+                consume(CTokenType.RIGHT_PAREN, "Expected ')' after __builtin_offsetof");
+                if(ERROR_OCCURRED) return null;
+                return CLiteral.make_int(allocator, cast(long)offset, off_tok);
             }
             // __embed("path", offset, length) - emitted by preprocessor for #embed
             if(peek().lexeme == "__embed"){

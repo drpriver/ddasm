@@ -23,6 +23,7 @@ enum CTypeKind {
     INT128,
     FLOAT,
     DOUBLE,
+    LONG_DOUBLE,
     POINTER,
     ARRAY,
     FUNCTION,
@@ -90,15 +91,16 @@ struct CType {
     // Get size in bytes (for pointer arithmetic)
     size_t size_of(){
         final switch(kind){
-            case CTypeKind.VOID:     return 0;
-            case CTypeKind.CHAR:     return 1;
-            case CTypeKind.SHORT:    return 2;
-            case CTypeKind.INT:      return 4;
-            case CTypeKind.LONG:     return 8;
-            case CTypeKind.INT128:   return 16;
-            case CTypeKind.FLOAT:    return 4;
-            case CTypeKind.DOUBLE:   return 8;
-            case CTypeKind.POINTER:  return 8;  // 64-bit
+            case CTypeKind.VOID:        return 0;
+            case CTypeKind.CHAR:        return 1;
+            case CTypeKind.SHORT:       return 2;
+            case CTypeKind.INT:         return 4;
+            case CTypeKind.LONG:        return 8;
+            case CTypeKind.INT128:      return 16;
+            case CTypeKind.FLOAT:       return 4;
+            case CTypeKind.DOUBLE:      return 8;
+            case CTypeKind.LONG_DOUBLE: return 16;  // 80-bit padded to 16 on x86_64
+            case CTypeKind.POINTER:     return 8;   // 64-bit
             case CTypeKind.ARRAY:    return pointed_to ? pointed_to.size_of() * array_size : 0;
             case CTypeKind.FUNCTION: return 8;  // Function pointer size
             case CTypeKind.STRUCT:   return struct_size;
@@ -110,14 +112,15 @@ struct CType {
     // Get alignment in bytes
     size_t align_of(){
         final switch(kind){
-            case CTypeKind.VOID:     return 1;
-            case CTypeKind.CHAR:     return 1;
-            case CTypeKind.SHORT:    return 2;
-            case CTypeKind.INT:      return 4;
-            case CTypeKind.LONG:     return 8;
-            case CTypeKind.INT128:   return 16;
-            case CTypeKind.FLOAT:    return 4;
-            case CTypeKind.DOUBLE:   return 8;
+            case CTypeKind.VOID:        return 1;
+            case CTypeKind.CHAR:        return 1;
+            case CTypeKind.SHORT:       return 2;
+            case CTypeKind.INT:         return 4;
+            case CTypeKind.LONG:        return 8;
+            case CTypeKind.INT128:      return 16;
+            case CTypeKind.FLOAT:       return 4;
+            case CTypeKind.DOUBLE:      return 8;
+            case CTypeKind.LONG_DOUBLE: return 16;
             case CTypeKind.POINTER:  return 8;
             case CTypeKind.ARRAY:    return pointed_to ? pointed_to.align_of() : 1;
             case CTypeKind.FUNCTION: return 8;
@@ -199,6 +202,7 @@ __gshared CType TYPE_INT = { kind: CTypeKind.INT };
 __gshared CType TYPE_LONG = { kind: CTypeKind.LONG };
 __gshared CType TYPE_FLOAT = { kind: CTypeKind.FLOAT };
 __gshared CType TYPE_DOUBLE = { kind: CTypeKind.DOUBLE };
+__gshared CType TYPE_LONG_DOUBLE = { kind: CTypeKind.LONG_DOUBLE };
 __gshared CType TYPE_UCHAR = { kind: CTypeKind.CHAR, is_unsigned: true };
 __gshared CType TYPE_UINT = { kind: CTypeKind.INT, is_unsigned: true };
 __gshared CType TYPE_ULONG = { kind: CTypeKind.LONG, is_unsigned: true };
@@ -373,13 +377,14 @@ struct CLiteral {
 
     // Create a synthetic integer literal
     static CExpr* make_int(Allocator a, long val, CToken tok){
+        import dlib.stringbuilder : mwritef;
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.LITERAL;
         result.expr.token = tok;
         result.expr.type = &TYPE_INT;
         result.value = tok;
-        result.value.lexeme = val != 0 ? "1" : "0";
+        result.value.lexeme = mwritef(a, "%", val)[];
         result.value.type = CTokenType.NUMBER;
         return &result.expr;
     }

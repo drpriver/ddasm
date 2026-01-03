@@ -32,8 +32,17 @@ all: ds2dasm ddasm c2dasm cpp
 clean:
 	$(RM) $(wildcard Bin/*)
 
-.PHONY: tests
-tests: ddasm c2dasm cpp
+.PHONY: static-tests
+static-tests: ddasm c2dasm cpp
 	Tests/run_tests.py
+
+# generated dynamically
+.PHONY: abi-tests
+abi-tests: ddasm c2dasm
+	Tests/test_abi.py
+
+.PHONY: tests
+tests: static-tests abi-tests
+
 
 .DEFAULT_GOAL:= all
