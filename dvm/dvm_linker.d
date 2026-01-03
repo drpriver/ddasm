@@ -319,17 +319,13 @@ struct LinkContext {
                             err_print(arg.first_char, "Embed range exceeds file size");
                             return AsmError.LINK_ERROR;
                         }
-                        // Length must be word-aligned
-                        if(arg.embed.length % 8 != 0){
-                            err_print(arg.first_char, "Embed length must be multiple of 8 bytes");
-                            return AsmError.LINK_ERROR;
-                        }
-                        size_t num_words = arg.embed.length / 8;
+                        // Round up to full words (remaining bytes zero-padded by var init)
+                        size_t num_words = (arg.embed.length + 7) / 8;
                         if(pos + num_words > var.size){
                             err_print(arg.first_char, "Embed data exceeds variable size");
                             return AsmError.LINK_ERROR;
                         }
-                        // Copy data
+                        // Copy data (var storage already zero-initialized)
                         ubyte* src = cast(ubyte*)file.value.data.ptr + arg.embed.offset;
                         memcpy(dest, src, arg.embed.length);
                         pos += num_words;

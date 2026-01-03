@@ -1248,14 +1248,15 @@ struct CDasmWriter {
                 count++;
             }
         } else if(CEmbed* embed = init.as_embed()){
-            // __embed must be at a word boundary
+            // embed must be at a word boundary
             if(byte_offset % 8 != 0){
-                error(init.token, "__embed requires word-aligned position (prefix must be multiple of 8 bytes)");
+                error(init.token, "#embed requires word-aligned position (prefix must be multiple of 8 bytes)");
                 return count;
             }
-            // __embed length must also be word-aligned (for now)
-            if(embed.length % 8 != 0){
-                error(init.token, "__embed length must be multiple of 8 bytes (no suffix support yet)");
+            // Non-word-aligned length is OK if we're at the end (would zero-pad anyway)
+            size_t embed_end_words = (byte_offset + embed.length + 7) / 8;
+            if(embed.length % 8 != 0 && embed_end_words != size_words){
+                error(init.token, "#embed with non-word-aligned length must be at end of array");
                 return count;
             }
             // Emit any pending word
@@ -1265,7 +1266,8 @@ struct CDasmWriter {
             }
             // Emit embed directive for DASM to process
             sb.writef("embed \"%\" % % ", embed.path, embed.offset, embed.length);
-            byte_offset += embed.length;
+            // Round up byte_offset to word boundary (embed consumes partial word)
+            byte_offset = ((byte_offset + embed.length) + 7) & ~cast(size_t)7;
             count += embed.length;
         } else {
             // Try to evaluate as constant expression

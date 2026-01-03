@@ -1,0 +1,39 @@
+# Test non-word-aligned embed (5 bytes, zero-padded to 8)
+dlimport Libc
+    path "libc.so.6"
+    function printf 1 1 varargs
+end
+
+var data 1 embed "Tests/test_embed.bin" 0 5 end
+
+function main 0
+    # Read and print the 5 bytes
+    move r1 var data
+    read1 r2 r1
+    push r2
+    add r1 r1 1
+    read1 r2 r1
+    push r2
+    add r1 r1 1
+    read1 r2 r1
+    push r2
+    add r1 r1 1
+    read1 r2 r1
+    push r2
+    add r1 r1 1
+    read1 r2 r1
+    push r2
+    move r0 "%c%c%c%c%c\n"
+    call function Libc.printf 6
+    sub rsp rsp 40
+    move r15 0
+    ret
+end
+
+import misc
+function start 0
+    call function main 0
+    move rarg1 rout1
+    call function misc.exit 1
+    ret
+end
