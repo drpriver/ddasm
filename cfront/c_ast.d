@@ -10,6 +10,28 @@ import dlib.allocator : Allocator;
 
 import cfront.c_pp_to_c : CToken, CTokenType;
 
+// Detect LP64 (Unix: long is 64 bits) vs LLP64 (Windows: long is 32 bits)
+version(Windows){
+    version(X86_64){
+        enum IS_64BIT = true;
+        enum IS_LP64 = false;  // Windows LLP64: long is 32 bits
+    } else {
+        enum IS_64BIT = false;
+        enum IS_LP64 = false;
+    }
+} else {
+    version(AArch64){
+        enum IS_64BIT = true;
+        enum IS_LP64 = true;
+    } else version(X86_64){
+        enum IS_64BIT = true;
+        enum IS_LP64 = true;
+    } else {
+        enum IS_64BIT = false;
+        enum IS_LP64 = false;
+    }
+}
+
 // =============================================================================
 // Type System
 // =============================================================================
@@ -95,14 +117,25 @@ struct CType {
             case CTypeKind.CHAR:        return 1;
             case CTypeKind.SHORT:       return 2;
             case CTypeKind.INT:         return 4;
-            case CTypeKind.LONG:        return 8;
+            // long: 8 bytes on LP64 (Unix), 4 bytes on LLP64 (Windows)
+            case CTypeKind.LONG:
+                static if(IS_LP64) return 8;
+                else return 4;
             case CTypeKind.INT128:      return 16;
             case CTypeKind.FLOAT:       return 4;
             case CTypeKind.DOUBLE:      return 8;
-            case CTypeKind.LONG_DOUBLE: return 16;  // 80-bit padded to 16 on x86_64
-            case CTypeKind.POINTER:     return 8;   // 64-bit
+            // long double: 8 bytes on ARM64 (same as double), 16 bytes on x86_64 (80-bit extended)
+            case CTypeKind.LONG_DOUBLE:
+                version(AArch64) return 8;
+                else return 16;
+            // Pointers: 8 bytes on 64-bit, 4 bytes on 32-bit
+            case CTypeKind.POINTER:
+                static if(IS_64BIT) return 8;
+                else return 4;
             case CTypeKind.ARRAY:    return pointed_to ? pointed_to.size_of() * array_size : 0;
-            case CTypeKind.FUNCTION: return 8;  // Function pointer size
+            case CTypeKind.FUNCTION:
+                static if(IS_64BIT) return 8;
+                else return 4;
             case CTypeKind.STRUCT:   return struct_size;
             case CTypeKind.UNION:    return struct_size;  // Union size is max of all members
             case CTypeKind.ENUM:     return 4;  // Enums are ints
@@ -116,14 +149,25 @@ struct CType {
             case CTypeKind.CHAR:        return 1;
             case CTypeKind.SHORT:       return 2;
             case CTypeKind.INT:         return 4;
-            case CTypeKind.LONG:        return 8;
+            // long: 8 bytes alignment on LP64 (Unix), 4 bytes on LLP64 (Windows)
+            case CTypeKind.LONG:
+                static if(IS_LP64) return 8;
+                else return 4;
             case CTypeKind.INT128:      return 16;
             case CTypeKind.FLOAT:       return 4;
             case CTypeKind.DOUBLE:      return 8;
-            case CTypeKind.LONG_DOUBLE: return 16;
-            case CTypeKind.POINTER:  return 8;
+            // long double: 8 bytes alignment on ARM64, 16 bytes on x86_64
+            case CTypeKind.LONG_DOUBLE:
+                version(AArch64) return 8;
+                else return 16;
+            // Pointers: 8 bytes alignment on 64-bit, 4 bytes on 32-bit
+            case CTypeKind.POINTER:
+                static if(IS_64BIT) return 8;
+                else return 4;
             case CTypeKind.ARRAY:    return pointed_to ? pointed_to.align_of() : 1;
-            case CTypeKind.FUNCTION: return 8;
+            case CTypeKind.FUNCTION:
+                static if(IS_64BIT) return 8;
+                else return 4;
             case CTypeKind.STRUCT:
             case CTypeKind.UNION:
                 // Alignment is max alignment of all fields

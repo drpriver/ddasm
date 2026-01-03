@@ -132,12 +132,73 @@ struct CPreprocessor {
         define_object_macro("__DATE__", builtin:true);
         define_object_macro("__TIME__", builtin:true);
 
+        // Detect LP64 (Unix-style 64-bit where long is 64 bits)
+        // vs LLP64 (Windows 64-bit where long is 32 bits)
+        version(Windows){
+            // Windows uses LLP64: long is 32 bits, long long is 64 bits
+            version(X86_64){
+                enum IS_64BIT = true;
+                enum IS_LP64 = false;  // Windows LLP64
+            } else {
+                enum IS_64BIT = false;
+                enum IS_LP64 = false;
+            }
+        } else {
+            // Unix-like systems use LP64: long is 64 bits on 64-bit platforms
+            version(AArch64){
+                enum IS_64BIT = true;
+                enum IS_LP64 = true;
+            } else version(X86_64){
+                enum IS_64BIT = true;
+                enum IS_LP64 = true;
+            } else {
+                enum IS_64BIT = false;
+                enum IS_LP64 = false;
+            }
+        }
+
         // TODO: make this an arg so we can pretend to be various compilers.
-        version(linux)
-            enum DEFAULT_COMPILER_IS_GCC = true;
+        // GCC and Clang define these type macros; MSVC does not.
+        // On Unix-like systems (Linux, macOS), we pretend to be GCC/Clang.
+        version(Windows)
+            enum DEFAULT_COMPILER_IS_GNU = false;  // MSVC doesn't define these
         else
-            enum DEFAULT_COMPILER_IS_GCC = false;
-        if(DEFAULT_COMPILER_IS_GCC){
+            enum DEFAULT_COMPILER_IS_GNU = true;   // GCC on Linux, Clang on macOS
+
+        if(DEFAULT_COMPILER_IS_GNU){
+            // GCC/Clang type macros needed by system headers
+            static if(IS_LP64){
+                // LP64: long is 64 bits
+                define_object_macro("__SIZE_TYPE__", "long unsigned int");
+                define_object_macro("__PTRDIFF_TYPE__", "long int");
+                define_object_macro("__SIZEOF_LONG__", "8");
+                define_object_macro("__LP64__", "1");
+                define_object_macro("__INTPTR_TYPE__", "long");
+                define_object_macro("__UINTPTR_TYPE__", "unsigned long");
+            } else static if(IS_64BIT){
+                // LLP64 (Windows 64-bit): long is 32 bits, use long long for 64-bit types
+                define_object_macro("__SIZE_TYPE__", "long long unsigned int");
+                define_object_macro("__PTRDIFF_TYPE__", "long long int");
+                define_object_macro("__SIZEOF_LONG__", "4");
+                define_object_macro("__INTPTR_TYPE__", "long long");
+                define_object_macro("__UINTPTR_TYPE__", "unsigned long long");
+            } else {
+                // 32-bit platforms
+                define_object_macro("__SIZE_TYPE__", "unsigned int");
+                define_object_macro("__PTRDIFF_TYPE__", "int");
+                define_object_macro("__SIZEOF_LONG__", "4");
+                define_object_macro("__INTPTR_TYPE__", "int");
+                define_object_macro("__UINTPTR_TYPE__", "unsigned int");
+            }
+            static if(IS_64BIT){
+                define_object_macro("__SIZEOF_POINTER__", "8");
+            } else {
+                define_object_macro("__SIZEOF_POINTER__", "4");
+            }
+            define_object_macro("__SIZEOF_INT__", "4");
+            define_object_macro("__SIZEOF_SHORT__", "2");
+            define_object_macro("__SIZEOF_LONG_LONG__", "8");
+
             // macros for stdint.h - exact-width types
             define_object_macro("__INT8_TYPE__", "signed char");
             define_object_macro("__INT16_TYPE__", "short int");
@@ -154,14 +215,8 @@ struct CPreprocessor {
 
             // Other type macros
             define_object_macro("__SIG_ATOMIC_TYPE__", "int");
-            version(D_LP64){
-                define_object_macro("__SIZE_TYPE__", "long unsigned int");
-                define_object_macro("__PTRDIFF_TYPE__", "long int");
-            } else {
-                define_object_macro("__SIZE_TYPE__", "unsigned int");
-                define_object_macro("__PTRDIFF_TYPE__", "int");
-            }
-            version(D_LP64){
+
+            static if(IS_LP64){
                 define_object_macro("__INT64_TYPE__", "long int");
                 define_object_macro("__UINT64_TYPE__", "long unsigned int");
             }
@@ -177,7 +232,7 @@ struct CPreprocessor {
             define_object_macro("__INT_FAST16_TYPE__", "short");
             define_object_macro("__INT_LEAST32_TYPE__", "int");
             define_object_macro("__INT_FAST32_TYPE__", "int");
-            version(D_LP64){
+            static if(IS_LP64){
                 define_object_macro("__INT_LEAST64_TYPE__", "long");
                 define_object_macro("__INT_FAST64_TYPE__", "long");
             }
@@ -191,33 +246,17 @@ struct CPreprocessor {
             define_object_macro("__UINT_FAST16_TYPE__", "unsigned short");
             define_object_macro("__UINT_LEAST32_TYPE__", "unsigned");
             define_object_macro("__UINT_FAST32_TYPE__", "unsigned");
-            version(D_LP64){
+            static if(IS_LP64){
                 define_object_macro("__UINT_LEAST64_TYPE__", "unsigned long");
                 define_object_macro("__UINT_FAST64_TYPE__", "unsigned long");
-                define_object_macro("__INTPTR_TYPE__", "long");
-                define_object_macro("__UINTPTR_TYPE__", "unsigned long");
             }
             else {
                 define_object_macro("__UINT_LEAST64_TYPE__", "unsigned long long");
                 define_object_macro("__UINT_FAST64_TYPE__", "unsigned long long");
-                define_object_macro("__INTPTR_TYPE__", "long long");
-                define_object_macro("__UINTPTR_TYPE__", "unsigned long long");
             }
             define_object_macro("__INTMAX_TYPE__", "long long");
             define_object_macro("__UINTMAX_TYPE__", "unsigned long long");
 
-            // Size macros - platform dependent
-            define_object_macro("__SIZEOF_INT__", "4");
-            define_object_macro("__SIZEOF_SHORT__", "2");
-            define_object_macro("__SIZEOF_LONG_LONG__", "8");
-            version(D_LP64){
-                define_object_macro("__SIZEOF_LONG__", "8");
-                define_object_macro("__SIZEOF_POINTER__", "8");
-                define_object_macro("__LP64__", "1");
-            } else {
-                define_object_macro("__SIZEOF_LONG__", "4");
-                define_object_macro("__SIZEOF_POINTER__", "4");
-            }
             // TODO: the other ones
             define_object_macro("__INT_MAX__", "2147483648");
         }
