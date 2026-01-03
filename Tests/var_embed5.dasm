@@ -1,6 +1,7 @@
 # Test non-word-aligned embed (5 bytes, zero-padded to 8)
 dlimport Libc
     path "libc.so.6"
+    path "libSystem.B.dylib"
     function printf 1 1 varargs
 end
 

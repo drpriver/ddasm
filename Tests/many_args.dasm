@@ -1,6 +1,7 @@
 # Test non-varargs call with 8 arguments (exceeds 6 register args on x86-64)
 dlimport Libc
     path "libc.so.6"
+    path "libSystem.B.dylib"
     function printf 1 1 varargs
 end
 
