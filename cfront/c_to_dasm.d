@@ -1247,6 +1247,26 @@ struct CDasmWriter {
                 byte_offset += scalar_size;
                 count++;
             }
+        } else if(CEmbed* embed = init.as_embed()){
+            // __embed must be at a word boundary
+            if(byte_offset % 8 != 0){
+                error(init.token, "__embed requires word-aligned position (prefix must be multiple of 8 bytes)");
+                return count;
+            }
+            // __embed length must also be word-aligned (for now)
+            if(embed.length % 8 != 0){
+                error(init.token, "__embed length must be multiple of 8 bytes (no suffix support yet)");
+                return count;
+            }
+            // Emit any pending word
+            if(word_val != 0){
+                sb.writef("% ", H(word_val));
+                word_val = 0;
+            }
+            // Emit embed directive for DASM to process
+            sb.writef("embed \"%\" % % ", embed.path, embed.offset, embed.length);
+            byte_offset += embed.length;
+            count += embed.length;
         } else {
             // Try to evaluate as constant expression
             long val = 0;
@@ -1286,8 +1306,11 @@ struct CDasmWriter {
                 size_t emitted = emit_init_values(gvar.initializer, vtype, scalar_size,
                                                   word_val, byte_offset, size_words);
 
-                // Emit final word
-                sb.writef("% ", H(word_val));
+                // Emit final word only if there's a partial word or non-zero value
+                // (embeds handle their own data, so word_val=0 and aligned means nothing to emit)
+                if(word_val != 0 || byte_offset % 8 != 0){
+                    sb.writef("% ", H(word_val));
+                }
 
                 // Emit remaining zero words if needed
                 size_t words_emitted = (byte_offset + 7) / 8;

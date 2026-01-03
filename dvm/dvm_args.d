@@ -17,6 +17,13 @@ enum ArgumentKind: uint {
     ARRAY          = 0b1000000,
     VARIABLE       = 0b10000000,
     CONSTANT       = 0b100000000,
+    EMBED          = 0b1000000000,
+}
+
+struct EmbedInfo {
+    str path;       // file path (unescaped, borrowed)
+    size_t offset;  // byte offset into file
+    size_t length;  // number of bytes to embed
 }
 
 enum CmpMode: uintptr_t {
@@ -62,5 +69,6 @@ struct Argument {
         str token;
         str variable;
         str constant;
+        EmbedInfo embed;
     }
 }

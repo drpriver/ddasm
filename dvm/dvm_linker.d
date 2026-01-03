@@ -11,6 +11,7 @@ import dlib.stringbuilder;
 import dlib.parse_numbers: parse_hex_inner;
 import dlib.table;
 import dlib.str_util: split;
+import dlib.file_util: read_file, FileResult;
 
 import dvm.dvm_defs;
 import dvm.dvm_linked;
@@ -245,9 +246,10 @@ struct LinkContext {
             // Zero-initialize the entire variable storage
             foreach(j; 0 .. var.size)
                 base[j] = 0;
-            // Link each initializer
-            foreach(j, const ref Argument arg; var.initializers[]){
-                uintptr_t* dest = &base[j];
+            // Link each initializer - track position separately from arg index
+            size_t pos = 0;
+            foreach(const ref Argument arg; var.initializers[]){
+                uintptr_t* dest = &base[pos];
                 switch(arg.kind){
                     default:
                     case LABEL:
@@ -259,15 +261,19 @@ struct LinkContext {
                     case STRING:{
                         ZString s = make_string(arg.text);
                         *dest = cast(uintptr_t)s.ptr;
+                        pos++;
                     }break;
                     case IMMEDIATE:
                         *dest = arg.immediate;
+                        pos++;
                         break;
                     case REGISTER:
                         *dest = arg.reg;
+                        pos++;
                         break;
                     case CMPMODE:
                         *dest = arg.cmp_mode;
+                        pos++;
                         break;
                     case FUNCTION:{
                         auto fi = find_function(arg.function_name, arg.first_char);
@@ -275,9 +281,11 @@ struct LinkContext {
                             return AsmError.LINK_ERROR;
                         else
                             *dest = fi;
+                        pos++;
                     }break;
                     case ARRAY:
                         *dest = cast(uintptr_t)prog.arrays[arg.array].bdata.data.ptr;
+                        pos++;
                         break;
                     case VARIABLE:
                         if(auto variable = arg.variable in prog.variable_table)
@@ -286,10 +294,46 @@ struct LinkContext {
                             err_print(arg.first_char, "Reference to unknown variable: ", Q(arg.variable));
                             return AsmError.LINK_ERROR;
                         }
+                        pos++;
                         break;
                     case CONSTANT:
                         err_print(arg.first_char, "TODO");
                         return AsmError.LINK_ERROR;
+                    case EMBED:{
+                        // Read file and copy bytes as words
+                        import core.stdc.string: memcpy;
+                        ZString path = make_string(arg.embed.path);
+                        FileResult file = read_file(path.ptr, temp_allocator);
+                        if(file.errored){
+                            err_print(arg.first_char, "Failed to read embed file: ", arg.embed.path);
+                            return AsmError.LINK_ERROR;
+                        }
+                        scope(exit) file.value.dealloc;
+                        // Validate offset and length
+                        size_t file_len = file.value.data.length;
+                        if(arg.embed.offset >= file_len){
+                            err_print(arg.first_char, "Embed offset exceeds file size");
+                            return AsmError.LINK_ERROR;
+                        }
+                        if(arg.embed.offset + arg.embed.length > file_len){
+                            err_print(arg.first_char, "Embed range exceeds file size");
+                            return AsmError.LINK_ERROR;
+                        }
+                        // Length must be word-aligned
+                        if(arg.embed.length % 8 != 0){
+                            err_print(arg.first_char, "Embed length must be multiple of 8 bytes");
+                            return AsmError.LINK_ERROR;
+                        }
+                        size_t num_words = arg.embed.length / 8;
+                        if(pos + num_words > var.size){
+                            err_print(arg.first_char, "Embed data exceeds variable size");
+                            return AsmError.LINK_ERROR;
+                        }
+                        // Copy data
+                        ubyte* src = cast(ubyte*)file.value.data.ptr + arg.embed.offset;
+                        memcpy(dest, src, arg.embed.length);
+                        pos += num_words;
+                    }break;
                 }
             }
             offset += var.size;

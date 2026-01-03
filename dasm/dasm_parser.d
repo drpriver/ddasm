@@ -576,7 +576,66 @@ struct ParseContext{
                     case "constant":
                         parse_namespaced("constant", CONSTANT);
                         return result;
-                    default: 
+                    case "embed":
+                        // Parse: embed "path" offset length
+                        tok = tokenizer.current_token_and_advance;
+                        while(tok.type == SPACE || tok.type == TAB)
+                            tok = tokenizer.current_token_and_advance;
+                        // Parse path string
+                        if(tok.type != QUOTATION && tok.type != APOSTROPHE){
+                            err_print(tok, "expected string path after embed");
+                            return result;
+                        }
+                        TokenType q = tok.type;
+                        const char * before = tok.text.ptr;
+                        bool backslash = false;
+                        tok = tokenizer.current_token_and_advance;
+                        for(;;){
+                            if(tok.type == q && !backslash)
+                                break;
+                            if(tok.type == BACKSLASH)
+                                backslash = !backslash;
+                            if(tok.type == NEWLINE || tok.type == EOF){
+                                err_print(tok, "bad quotation in embed path, no terminating quote");
+                                return result;
+                            }
+                            if(tok.type != BACKSLASH)
+                                backslash = false;
+                            tok = tokenizer.current_token_and_advance;
+                        }
+                        ptrdiff_t length = tok.text.ptr - before;
+                        result.embed.path = before[1..length];
+                        // Parse offset
+                        tok = tokenizer.current_token_and_advance;
+                        while(tok.type == SPACE || tok.type == TAB)
+                            tok = tokenizer.current_token_and_advance;
+                        if(tok.type != NUMBER){
+                            err_print(tok, "expected number for offset in embed");
+                            return result;
+                        }
+                        IntegerResult!ulong offset_result = parse_unsigned_human(tok.text);
+                        if(offset_result.errored){
+                            err_print(tok, "Unable to parse offset from ", Q(tok.text));
+                            return result;
+                        }
+                        result.embed.offset = cast(size_t)offset_result.value;
+                        // Parse length
+                        tok = tokenizer.current_token_and_advance;
+                        while(tok.type == SPACE || tok.type == TAB)
+                            tok = tokenizer.current_token_and_advance;
+                        if(tok.type != NUMBER){
+                            err_print(tok, "expected number for length in embed");
+                            return result;
+                        }
+                        IntegerResult!ulong len_result = parse_unsigned_human(tok.text);
+                        if(len_result.errored){
+                            err_print(tok, "Unable to parse length from ", Q(tok.text));
+                            return result;
+                        }
+                        result.embed.length = cast(size_t)len_result.value;
+                        result.kind = EMBED;
+                        return result;
+                    default:
                         break;
                 }
                 return result;
