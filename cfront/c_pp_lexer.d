@@ -170,9 +170,9 @@ struct PPLexer {
             return;
         }
 
-        // Whitespace (not newline)
-        if(c == ' ' || c == '\t'){
-            while(peek() == ' ' || peek() == '\t'){
+        // Whitespace (not newline) - includes space, tab, form feed, vertical tab
+        if(c == ' ' || c == '\t' || c == '\f' || c == '\v'){
+            while(peek() == ' ' || peek() == '\t' || peek() == '\f' || peek() == '\v'){
                 advance();
             }
             add_token(PPTokenType.PP_WHITESPACE, " ");

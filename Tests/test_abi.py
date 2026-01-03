@@ -64,10 +64,10 @@ HEADER_TYPES = [
         "struct sockaddr_in", "struct sockaddr_in6",
     ], False, "Network"),
     # File/stat types
-    ("sys/stat.h", ["struct stat"], True, "File/Stat"),  # Skip: complex preprocessor
+    ("sys/stat.h", ["struct stat"], False, "File/Stat"),
     ("dirent.h", ["struct dirent"], False, "File/Stat"),
     # Signal extended types
-    ("signal.h", ["sigset_t", "struct sigaction", "siginfo_t", "stack_t"], True, "Signal Extended"),  # Skip: needs feature macros
+    ("signal.h", ["sigset_t", "struct sigaction", "siginfo_t", "stack_t"], True, "Signal Extended"),  # Skip: needs _POSIX_C_SOURCE
     # Poll/Select types
     ("poll.h", ["struct pollfd", "nfds_t"], False, "Poll/Select"),
     ("sys/select.h", ["fd_set"], False, "Poll/Select"),
@@ -83,7 +83,7 @@ HEADER_TYPES = [
     # Resource types
     ("sys/resource.h", ["struct rusage", "struct rlimit", "rlim_t"], False, "Resource"),
     # Regex types
-    ("regex.h", ["regex_t", "regmatch_t", "regoff_t"], True, "Regex"),  # Skip: complex preprocessor
+    ("regex.h", ["regmatch_t", "regoff_t"], False, "Regex"),  # regex_t skipped: has bitfields
 ]
 
 # Struct offset tests
@@ -99,7 +99,7 @@ STRUCT_OFFSET_TYPES = [
     ("sys/stat.h", "struct stat", [
         "st_dev", "st_ino", "st_mode", "st_nlink", "st_uid", "st_gid",
         "st_rdev", "st_size", "st_blksize", "st_blocks",
-    ], True),  # Skip: complex preprocessor
+    ], False),
     ("netinet/in.h", "struct sockaddr_in", ["sin_family", "sin_port", "sin_addr"], False),
     ("netinet/in.h", "struct sockaddr_in6", [
         "sin6_family", "sin6_port", "sin6_flowinfo", "sin6_addr", "sin6_scope_id",
@@ -108,9 +108,9 @@ STRUCT_OFFSET_TYPES = [
     ("sys/time.h", "struct timeval", ["tv_sec", "tv_usec"], False),
     ("sys/uio.h", "struct iovec", ["iov_base", "iov_len"], False),
     ("sys/resource.h", "struct rlimit", ["rlim_cur", "rlim_max"], False),
-    ("regex.h", "regmatch_t", ["rm_so", "rm_eo"], True),  # Skip: complex preprocessor
-    ("signal.h", "struct sigaction", ["sa_handler", "sa_mask", "sa_flags"], True),  # Skip: needs feature macros
-    ("signal.h", "stack_t", ["ss_sp", "ss_flags", "ss_size"], True),  # Skip: needs feature macros
+    ("regex.h", "regmatch_t", ["rm_so", "rm_eo"], False),
+    ("signal.h", "struct sigaction", ["sa_handler", "sa_mask", "sa_flags"], True),  # Skip: needs _POSIX_C_SOURCE
+    ("signal.h", "stack_t", ["ss_sp", "ss_flags", "ss_size"], True),  # Skip: needs _POSIX_C_SOURCE
     ("termios.h", "struct termios", ["c_iflag", "c_oflag", "c_cflag", "c_lflag"], False),
     ("pwd.h", "struct passwd", ["pw_name", "pw_uid", "pw_gid", "pw_dir", "pw_shell"], False),
     ("grp.h", "struct group", ["gr_name", "gr_gid", "gr_mem"], False),

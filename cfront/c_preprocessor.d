@@ -262,6 +262,13 @@ struct CPreprocessor {
         define_object_macro("volatile", "");
         define_object_macro("__volatile__", "");
 
+        // User label prefix - empty on Linux/ELF, underscore on macOS
+        version(OSX){
+            define_object_macro("__USER_LABEL_PREFIX__", "_");
+        } else {
+            define_object_macro("__USER_LABEL_PREFIX__", "");
+        }
+
         // Function-like macros that expand to nothing
         define_empty_func_macro("__attribute__", 1);
 
@@ -2645,8 +2652,9 @@ struct CPreprocessor {
                 } else if(tok.is_punct(")")){
                     depth--;
                     if(depth == 0){
-                        // End of arguments
-                        if(current_arg.count > 0 || args.count > 0){
+                        // End of arguments - always add final arg if macro takes params
+                        // STR() has one empty arg, STR(a,b) has two args
+                        if(macro_def.params.length > 0 || current_arg.count > 0 || args.count > 0){
                             args ~= current_arg[];
                         }
                     } else {
@@ -3094,7 +3102,8 @@ struct CPreprocessor {
 
         bool prev_was_space = true;
         foreach(tok; tokens){
-            if(tok.type == PPTokenType.PP_WHITESPACE){
+            // Treat newlines same as whitespace - collapse to single space
+            if(tok.type == PPTokenType.PP_WHITESPACE || tok.type == PPTokenType.PP_NEWLINE){
                 if(!prev_was_space){
                     sb.write(' ');
                     prev_was_space = true;
