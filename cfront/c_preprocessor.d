@@ -61,6 +61,9 @@ struct CPreprocessor {
     }
     Table!(str, ubyte) watched_macros;  // Macros being watched (flags indicate which events)
 
+    // Current directive line (for error messages)
+    int directive_line = 0;
+
     // Initialize with predefined macros
     void initialize(){
         macros.data.allocator = allocator;
@@ -742,9 +745,16 @@ struct CPreprocessor {
     // Report error
     void error(str msg){
         error_occurred = true;
-        fprintf(stderr, "%.*s: Preprocessor error: %.*s\n",
-                cast(int)current_file.length, current_file.ptr,
-                cast(int)msg.length, msg.ptr);
+        if(directive_line > 0){
+            fprintf(stderr, "%.*s:%d: Preprocessor error: %.*s\n",
+                    cast(int)current_file.length, current_file.ptr,
+                    directive_line,
+                    cast(int)msg.length, msg.ptr);
+        } else {
+            fprintf(stderr, "%.*s: Preprocessor error: %.*s\n",
+                    cast(int)current_file.length, current_file.ptr,
+                    cast(int)msg.length, msg.ptr);
+        }
     }
 
     void error_at(PPToken tok, str msg){
@@ -858,6 +868,9 @@ struct CPreprocessor {
     // Process a preprocessor directive
     size_t process_directive(PPToken[] tokens, size_t start, Barray!PPToken* output){
         size_t i = start;
+
+        // Track directive line for error messages
+        directive_line = tokens.length > start ? tokens[start].line : 0;
 
         // Skip whitespace
         while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
@@ -1870,8 +1883,10 @@ struct CPreprocessor {
             }
         }
         error_occurred = true;
-        fprintf(stderr, "%.*s: #error %.*s\n",
+        int error_line = line.length > 0 ? line[0].line : 0;
+        fprintf(stderr, "%.*s:%d: #error %.*s\n",
                 cast(int)current_file.length, current_file.ptr,
+                error_line,
                 cast(int)sb.cursor, sb.borrow().ptr);
     }
 
@@ -1884,8 +1899,10 @@ struct CPreprocessor {
                 sb.write(tok.lexeme);
             }
         }
-        fprintf(stderr, "%.*s: warning: #warning %.*s\n",
+        int warning_line = line.length > 0 ? line[0].line : 0;
+        fprintf(stderr, "%.*s:%d: warning: #warning %.*s\n",
                 cast(int)current_file.length, current_file.ptr,
+                warning_line,
                 cast(int)sb.cursor, sb.borrow().ptr);
     }
 
