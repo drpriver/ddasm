@@ -36,18 +36,14 @@ import cfront.c_ast;
 import cfront.c_const_eval : try_eval_constant, ConstValue, EnumTable;
 
 struct RegisterAllocator {
-    // Start allocating from R8 onwards to avoid RARG1-8 (R0-R7)
-    enum REG_START = 8;  // N_REG_ARGS
-    int alloced = REG_START;
-    int local_max = REG_START;
+    int alloced = 0;
 
     int allocate(){
         int result = alloced++;
-        if(result > local_max) local_max = result;
         return result;
     }
 
-    void reset(){ alloced = REG_START; }
+    void reset(){ alloced = 0; }
     void reset_to(int r){ alloced = r; }
 }
 
@@ -1181,9 +1177,18 @@ struct CDasmWriter {
         // For register-based locals, start allocating from max_call_slots
         // This lets us use R(max_call_slots)..R7 for saved params instead of R8+
         // Note: reglocals in R0-R7 must be saved around calls (handled in gen_call)
-        if(!use_stack && max_call_slots < N_REG_ARGS){
-            regallocator.reset_to(max_call_slots);
+        int reg_base = N_REG_ARGS;
+        if(use_stack){
+            if(max_call_slots < N_REG_ARGS)
+                reg_base = max_call_slots;
         }
+        else {
+            if(max_call_slots < N_REG_ARGS)
+                reg_base = max_call_slots;
+            if(total_param_slots > reg_base)
+                reg_base = total_param_slots;
+        }
+        regallocator.reset_to(reg_base);
 
         // Move arguments from rarg registers (or stack) to locals
         foreach(i, ref param; func.params){

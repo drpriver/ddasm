@@ -2021,10 +2021,6 @@ struct CParser {
         // Add function parameters to local_var_types
         foreach(ref param; func.params){
             if(param.name.lexeme.length > 0){
-                errorf(param.name, "adding param ", Q(param.name.lexeme), " with type: ", str_for(param.type.kind));
-                if(param.type.is_pointer){
-                    errorf(param.name, "  (points to): ", str_for(param.type.pointed_to.kind));
-                }
                 local_var_types[param.name.lexeme] = param.type;
             }
         }
@@ -2925,13 +2921,27 @@ struct CParser {
         consume(CTokenType.RIGHT_PAREN, "Expected ')' after field name");
         if(ERROR_OCCURRED) return 1;
 
-        // Skip the parameter list
+        // (6.7.7.1) function-declarator: direct-declarator ( parameter-type-list_opt )
+        // Parse the parameter-type-list to build proper function pointer type
+        CType* fptr_type;
         if(check(CTokenType.LEFT_PAREN)){
-            skip_balanced_parens();
+            consume(CTokenType.LEFT_PAREN, "Expected '(' for function parameters");
+            if(ERROR_OCCURRED) return 1;
+            auto func_param_result = parse_parameter_type_list();
+            if(func_param_result.err) return 1;
+            // Extract types from parameters
+            auto func_param_types = make_barray!(CType*)(allocator);
+            foreach(ref p; func_param_result.params[]){
+                func_param_types ~= p.type;
+            }
+            consume(CTokenType.RIGHT_PAREN, "Expected ')' after function parameters");
+            if(ERROR_OCCURRED) return 1;
+            CType* func_type = make_function_type(allocator, return_type, func_param_types[], func_param_result.is_varargs);
+            fptr_type = make_pointer_type(allocator, func_type);
+        } else {
+            // No parameter list - function pointer with no params
+            fptr_type = make_pointer_type(allocator, make_function_type(allocator, return_type, null, false));
         }
-
-        // Treat as void* for simplicity
-        CType* fptr_type = make_pointer_type(allocator, &TYPE_VOID);
 
         consume(CTokenType.SEMICOLON, "Expected ';' after function pointer field");
         if(ERROR_OCCURRED) return 1;
@@ -3033,10 +3043,27 @@ struct CParser {
                     }
                     consume(CTokenType.RIGHT_PAREN, "Expected ')' after function pointer");
                     if(ERROR_OCCURRED) return 1;
+                    // (6.7.7.1) function-declarator: direct-declarator ( parameter-type-list_opt )
+                    // Parse the parameter-type-list to build proper function pointer type
                     if(check(CTokenType.LEFT_PAREN)){
-                        skip_balanced_parens();
+                        consume(CTokenType.LEFT_PAREN, "Expected '(' for function parameters");
+                        if(ERROR_OCCURRED) return 1;
+                        auto func_param_result = parse_parameter_type_list();
+                        if(func_param_result.err) return 1;
+                        // Extract types from parameters
+                        auto func_param_types = make_barray!(CType*)(allocator);
+                        foreach(ref p; func_param_result.params[]){
+                            func_param_types ~= p.type;
+                        }
+                        consume(CTokenType.RIGHT_PAREN, "Expected ')' after function parameters");
+                        if(ERROR_OCCURRED) return 1;
+                        // param.type is the return type (void with any pointer modifiers)
+                        CType* func_type = make_function_type(allocator, param.type, func_param_types[], func_param_result.is_varargs);
+                        param.type = make_pointer_type(allocator, func_type);
+                    } else {
+                        // No parameter list - function pointer with no params
+                        param.type = make_pointer_type(allocator, make_function_type(allocator, param.type, null, false));
                     }
-                    param.type = make_pointer_type(allocator, &TYPE_VOID);
                     *params ~= param;
                     return 0;
                 } else {
@@ -3068,12 +3095,27 @@ struct CParser {
                 }
                 consume(CTokenType.RIGHT_PAREN, "Expected ')' after function pointer");
                 if(ERROR_OCCURRED) return 1;
-                // Skip the parameter list
+                // (6.7.7.1) function-declarator: direct-declarator ( parameter-type-list_opt )
+                // Parse the parameter-type-list to build proper function pointer type
                 if(check(CTokenType.LEFT_PAREN)){
-                    skip_balanced_parens();
+                    consume(CTokenType.LEFT_PAREN, "Expected '(' for function parameters");
+                    if(ERROR_OCCURRED) return 1;
+                    auto func_param_result = parse_parameter_type_list();
+                    if(func_param_result.err) return 1;
+                    // Extract types from parameters
+                    auto func_param_types = make_barray!(CType*)(allocator);
+                    foreach(ref p; func_param_result.params[]){
+                        func_param_types ~= p.type;
+                    }
+                    consume(CTokenType.RIGHT_PAREN, "Expected ')' after function parameters");
+                    if(ERROR_OCCURRED) return 1;
+                    // param.type is the return type from declaration-specifiers
+                    CType* func_type = make_function_type(allocator, param.type, func_param_types[], func_param_result.is_varargs);
+                    param.type = make_pointer_type(allocator, func_type);
+                } else {
+                    // No parameter list - function pointer with no params
+                    param.type = make_pointer_type(allocator, make_function_type(allocator, param.type, null, false));
                 }
-                // Treat as void* for simplicity
-                param.type = make_pointer_type(allocator, &TYPE_VOID);
                 *params ~= param;
                 return 0;
             } else {
