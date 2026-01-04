@@ -29,6 +29,12 @@ struct CParser {
     Table!(str, CType*) typedef_types; // Typedef aliases (name -> type)
     Table!(str, CType*) global_var_types; // Global variable types (for sizeof in const exprs)
 
+    // Type tracking for implicit casts
+    Table!(str, CType*) local_var_types;  // Local variable types (cleared per function)
+    Table!(str, size_t) func_info;         // Function name -> index in functions array
+    Barray!(CFunction)* functions_ptr;     // Pointer to functions array (set during parse)
+    CType* current_return_type;            // Current function's return type (for return checking)
+
     void error(CToken token, str message){
         ERROR_OCCURRED = true;
         // Show expansion location first (where macro was used), then definition location
@@ -55,11 +61,194 @@ struct CParser {
     }
 
     // =========================================================================
+    // Type Inference and Implicit Casts
+    // =========================================================================
+
+    // Get the type of an expression
+    CType* get_expr_type(CExpr* e){
+        if(e is null) return null;
+        e = e.ungroup();
+
+        // If type is already set, return it
+        if(e.type !is null) return e.type;
+
+        final switch(e.kind) with (CExprKind){
+            case LITERAL:
+                auto lit = e.as_literal;
+                if(lit.value.type == CTokenType.STRING)
+                    return &TYPE_CHAR_PTR;
+                if(lit.value.type == CTokenType.CHAR_LITERAL)
+                    return &TYPE_CHAR;
+                if(lit.value.type == CTokenType.FLOAT_LITERAL){
+                    // Check suffix for float vs double
+                    str lex = lit.value.lexeme;
+                    if(lex.length > 0){
+                        char last = lex[$-1];
+                        if(last == 'f' || last == 'F')
+                            return &TYPE_FLOAT;
+                    }
+                    return &TYPE_DOUBLE;
+                }
+                return &TYPE_INT;  // Integer literals are int
+            case IDENTIFIER:
+                auto id = e.as_identifier;
+                // Check local variables first
+                if(auto t = id.name.lexeme in local_var_types)
+                    return *t;
+                // Then check globals
+                if(auto t = id.name.lexeme in global_var_types)
+                    return *t;
+                // Could be an enum constant - return int
+                if(id.name.lexeme in enum_constants)
+                    return &TYPE_INT;
+                return null;
+            case BINARY:
+                auto bin = e.as_binary;
+                auto lt = get_expr_type(bin.left);
+                auto rt = get_expr_type(bin.right);
+                // Comparison operators return int
+                if(bin.op == CTokenType.EQUAL_EQUAL || bin.op == CTokenType.BANG_EQUAL ||
+                   bin.op == CTokenType.LESS || bin.op == CTokenType.LESS_EQUAL ||
+                   bin.op == CTokenType.GREATER || bin.op == CTokenType.GREATER_EQUAL)
+                    return &TYPE_INT;
+                // For arithmetic, result type follows usual arithmetic conversions
+                if(lt && lt.is_pointer()) return lt;
+                if(rt && rt.is_pointer()) return rt;
+                if(lt && lt.is_float()) return lt;
+                if(rt && rt.is_float()) return rt;
+                return lt ? lt : rt;
+            case UNARY:
+                auto un = e.as_unary;
+                if(un.op == CTokenType.STAR){
+                    auto pt = get_expr_type(un.operand);
+                    if(pt && pt.is_pointer()) return pt.pointed_to;
+                }
+                if(un.op == CTokenType.AMP){
+                    auto ot = get_expr_type(un.operand);
+                    if(ot) return make_pointer_type(allocator, ot);
+                }
+                if(un.op == CTokenType.BANG)
+                    return &TYPE_INT;
+                return get_expr_type(un.operand);
+            case CALL:
+                auto call = cast(CCall*)e;
+                if(CIdentifier* id = call.callee.as_identifier()){
+                    if(size_t* idx = id.name.lexeme in func_info){
+                        return (*functions_ptr)[*idx].return_type;
+                    }
+                }
+                return null;
+            case ASSIGN:
+                return get_expr_type((cast(CAssign*)e).target);
+            case SUBSCRIPT:
+                auto sub = e.as_subscript;
+                auto at = get_expr_type(sub.array);
+                if(at && (at.is_pointer() || at.is_array())) return at.pointed_to;
+                return null;
+            case MEMBER_ACCESS:
+                auto ma = e.as_member_access;
+                auto obj_type = get_expr_type(ma.object);
+                if(obj_type is null) return null;
+                if(ma.is_arrow && obj_type.is_pointer())
+                    obj_type = obj_type.pointed_to;
+                if(obj_type && obj_type.is_struct_or_union()){
+                    auto field = obj_type.get_field(ma.member.lexeme);
+                    if(field) return field.type;
+                }
+                return null;
+            case CAST:
+                return (cast(CCast*)e).cast_type;
+            case SIZEOF:
+            case ALIGNOF:
+            case COUNTOF:
+                return &TYPE_LONG;  // size_t is typically unsigned long
+            case VA_ARG:
+            case GROUPING:
+                return null;
+            case GENERIC:
+                return null;  // Complex to resolve
+            case TERNARY:
+                auto tern = cast(CTernary*)e;
+                auto tt = get_expr_type(tern.if_true);
+                if(tt) return tt;
+                return get_expr_type(tern.if_false);
+            case INIT_LIST:
+            case COMPOUND_LITERAL:
+                auto cl = cast(CCompoundLiteral*)e;
+                return cl.literal_type;
+            case EMBED:
+            case STMT_EXPR:
+                return null;
+        }
+    }
+
+    // Check if a type needs conversion to target type
+    // Returns true if implicit cast is needed
+    bool needs_conversion(CType* from, CType* to){
+        if(from is null || to is null) return false;
+        if(from is to) return false;
+        if(from.kind == to.kind && from.is_unsigned == to.is_unsigned) return false;
+
+        // Any arithmetic type can be converted to any other arithmetic type
+        if(from.is_arithmetic() && to.is_arithmetic()) return true;
+
+        return false;
+    }
+
+    // Wrap expression with implicit cast if needed
+    // Returns original expr if no conversion needed
+    CExpr* implicit_cast(CExpr* expr, CType* target_type, CToken tok){
+        if(expr is null || target_type is null) return expr;
+
+        CType* expr_type = get_expr_type(expr);
+        if(expr_type is null) return expr;
+
+        if(!needs_conversion(expr_type, target_type)) return expr;
+
+        // Create implicit cast node
+        return CCast.make(allocator, target_type, expr, tok);
+    }
+
+    // Apply "usual arithmetic conversions" to binary operands
+    // Modifies left and right to have matching types for arithmetic
+    void usual_arithmetic_conversions(ref CExpr* left, ref CExpr* right, CToken op_tok){
+        CType* lt = get_expr_type(left);
+        CType* rt = get_expr_type(right);
+
+        if(lt is null || rt is null) return;
+
+        // If either is a pointer, no conversion (pointer arithmetic handled separately)
+        if(lt.is_pointer() || rt.is_pointer()) return;
+
+        // If either is double, convert other to double
+        if(lt.kind == CTypeKind.DOUBLE || lt.kind == CTypeKind.LONG_DOUBLE){
+            right = implicit_cast(right, lt, op_tok);
+            return;
+        }
+        if(rt.kind == CTypeKind.DOUBLE || rt.kind == CTypeKind.LONG_DOUBLE){
+            left = implicit_cast(left, rt, op_tok);
+            return;
+        }
+
+        // If either is float, convert both to double (FLT_EVAL_METHOD=1)
+        if(lt.kind == CTypeKind.FLOAT || rt.kind == CTypeKind.FLOAT){
+            left = implicit_cast(left, &TYPE_DOUBLE, op_tok);
+            right = implicit_cast(right, &TYPE_DOUBLE, op_tok);
+            return;
+        }
+
+        // Integer promotions: char, short -> int
+        // For simplicity, we don't change integer types here since
+        // our VM uses register-sized ints anyway
+    }
+
+    // =========================================================================
     // Top-Level Parsing
     // =========================================================================
 
     int parse(CTranslationUnit* unit){
         auto functions = make_barray!CFunction(allocator);
+        functions_ptr = &functions;  // Set for use by helper methods
         auto globals = make_barray!CGlobalVar(allocator);
         auto structs = make_barray!CStructDef(allocator);
         auto unions = make_barray!CUnionDef(allocator);
@@ -79,11 +268,14 @@ struct CParser {
                 if(func.is_definition && !functions[idx].is_definition){
                     // Current is definition, existing is declaration - replace
                     functions[idx] = func;
+                    // func_info already has the correct index
                 }
                 // Otherwise (existing is definition or both declarations): skip
             } else {
                 // New function
-                func_indices[fname] = functions.count;
+                size_t idx = functions.count;
+                func_indices[fname] = idx;
+                func_info[fname] = idx;
                 functions ~= func;
             }
         }
@@ -95,6 +287,8 @@ struct CParser {
         enum_constants.data.allocator = allocator;
         typedef_types.data.allocator = allocator;
         global_var_types.data.allocator = allocator;
+        local_var_types.data.allocator = allocator;
+        func_info.data.allocator = allocator;
 
         while(!at_end){
             // Handle #pragma (emitted as # pragma library ( "..." ) tokens)
@@ -1811,6 +2005,20 @@ struct CParser {
         consume(CTokenType.LEFT_BRACE, "Expected '{' for function body");
         if(ERROR_OCCURRED) return 1;
 
+        // Set up type context for function body
+        // Reset local_var_types table (clear count and indices)
+        local_var_types.count = 0;
+        auto idxes = local_var_types._idxes();
+        if(idxes.length > 0) idxes[] = uint.max;
+        current_return_type = ret_type;
+
+        // Add function parameters to local_var_types
+        foreach(ref param; func.params){
+            if(param.name.lexeme.length > 0){
+                local_var_types[param.name.lexeme] = param.type;
+            }
+        }
+
         auto body = make_barray!(CStmt*)(allocator);
         while(!check(CTokenType.RIGHT_BRACE) && !at_end){
             CStmt* stmt = parse_statement();
@@ -1820,6 +2028,12 @@ struct CParser {
 
         consume(CTokenType.RIGHT_BRACE, "Expected '}' after function body");
         if(ERROR_OCCURRED) return 1;
+
+        // Clear type context after function
+        local_var_types.count = 0;
+        auto idxes2 = local_var_types._idxes();
+        if(idxes2.length > 0) idxes2[] = uint.max;
+        current_return_type = null;
 
         func.body = body[];
         return 0;
@@ -3424,6 +3638,11 @@ struct CParser {
         if(!check(CTokenType.SEMICOLON)){
             value = parse_expression();
             if(value is null) return null;
+
+            // Apply implicit cast to function's return type
+            if(current_return_type !is null){
+                value = implicit_cast(value, current_return_type, keyword);
+            }
         }
 
         consume(CTokenType.SEMICOLON, "Expected ';' after return");
@@ -3811,7 +4030,15 @@ struct CParser {
             if(match(CTokenType.EQUAL)){
                 initializer = parse_initializer();
                 if(initializer is null) return null;
+
+                // Apply implicit cast for scalar initializers (not init lists)
+                if(initializer.kind != CExprKind.INIT_LIST){
+                    initializer = implicit_cast(initializer, var_type, name);
+                }
             }
+
+            // Register local variable type for type checking
+            local_var_types[name.lexeme] = var_type;
 
             decls ~= CVarDecl.make(allocator, var_type, name, initializer, type_tok);
 
@@ -3971,6 +4198,19 @@ struct CParser {
             CToken op_tok = advance();
             CExpr* value = parse_assignment();  // Right associative
             if(value is null) return null;
+
+            // Apply implicit cast for assignments
+            CType* target_type = get_expr_type(expr);
+            if(target_type !is null){
+                if(op_tok.type == CTokenType.EQUAL){
+                    // Simple assignment: cast RHS to LHS type
+                    value = implicit_cast(value, target_type, op_tok);
+                } else if(target_type.is_float()){
+                    // Compound assignment with float LHS: cast RHS to double for arithmetic
+                    value = implicit_cast(value, &TYPE_DOUBLE, op_tok);
+                }
+            }
+
             return CAssign.make(allocator, expr, op_tok.type, value, op_tok);
         }
 
@@ -4104,6 +4344,7 @@ struct CParser {
             CToken op = advance();
             CExpr* right = parse_comparison();
             if(right is null) return null;
+            usual_arithmetic_conversions(expr, right, op);
             expr = CBinary.make(allocator, expr, op.type, right, op);
         }
 
@@ -4125,6 +4366,7 @@ struct CParser {
             CToken op = advance();
             CExpr* right = parse_shift();
             if(right is null) return null;
+            usual_arithmetic_conversions(expr, right, op);
             expr = CBinary.make(allocator, expr, op.type, right, op);
         }
 
@@ -4161,6 +4403,7 @@ struct CParser {
             CToken op = advance();
             CExpr* right = parse_multiplicative();
             if(right is null) return null;
+            usual_arithmetic_conversions(expr, right, op);
             expr = CBinary.make(allocator, expr, op.type, right, op);
         }
 
@@ -4180,6 +4423,7 @@ struct CParser {
             CToken op = advance();
             CExpr* right = parse_unary();
             if(right is null) return null;
+            usual_arithmetic_conversions(expr, right, op);
             expr = CBinary.make(allocator, expr, op.type, right, op);
         }
 
@@ -4395,12 +4639,35 @@ struct CParser {
         CToken paren = previous();
         auto args = make_barray!(CExpr*)(allocator);
 
+        // Try to get function parameter types for implicit casts
+        CFunction* func = null;
+        if(CIdentifier* id = callee.as_identifier()){
+            if(size_t* idx = id.name.lexeme in func_info){
+                func = &(*functions_ptr)[*idx];
+            }
+        }
+
         if(!check(CTokenType.RIGHT_PAREN)){
+            size_t arg_idx = 0;
             do {
                 // Use parse_assignment, not parse_expression, to avoid comma operator
                 CExpr* arg = parse_assignment();
                 if(arg is null) return null;
+
+                // Apply implicit cast if we have parameter type info
+                if(func !is null && arg_idx < func.params.length){
+                    CType* param_type = func.params[arg_idx].type;
+                    arg = implicit_cast(arg, param_type, paren);
+                } else if(func !is null && func.is_varargs && arg_idx >= func.params.length){
+                    // Varargs: float promotes to double
+                    CType* arg_type = get_expr_type(arg);
+                    if(arg_type && arg_type.kind == CTypeKind.FLOAT){
+                        arg = implicit_cast(arg, &TYPE_DOUBLE, paren);
+                    }
+                }
+
                 args ~= arg;
+                arg_idx++;
             } while(match(CTokenType.COMMA));
         }
 

@@ -573,6 +573,16 @@ struct CDasmWriter {
                 return null;
             case BINARY:
                 auto bin = e.as_binary;
+                // Comparison and logical operators always return int
+                with(CTokenType){
+                    switch(bin.op){
+                        case LESS, LESS_EQUAL, GREATER, GREATER_EQUAL,
+                             EQUAL_EQUAL, BANG_EQUAL, AMP_AMP, PIPE_PIPE:
+                            return &TYPE_INT;
+                        default:
+                            break;
+                    }
+                }
                 // For arithmetic, result type follows the pointer if present
                 auto lt = get_expr_type(bin.left);
                 auto rt = get_expr_type(bin.right);
@@ -1039,8 +1049,35 @@ struct CDasmWriter {
 
                     ubyte n_ret = func.return_type.is_void() ? 0 : 1;
                     auto n_params = func.params.length > 8 ? 8 : func.params.length;
+
+                    // Compute float arg mask (2 bits per param: 00=int, 01=float32, 10=double)
+                    uint float_arg_mask = 0;
+                    foreach(i, ref param; func.params){
+                        if(i >= 8) break;
+                        if(param.type && param.type.is_float()){
+                            if(param.type.kind == CTypeKind.FLOAT)
+                                float_arg_mask |= (0b01 << (i * 2));  // float32
+                            else
+                                float_arg_mask |= (0b10 << (i * 2));  // double
+                        }
+                    }
+
+                    // Compute float return mask (0x0=int, 0x1=float32, 0x2=double)
+                    uint float_ret_mask = 0;
+                    if(func.return_type.is_float()){
+                        if(func.return_type.kind == CTypeKind.FLOAT)
+                            float_ret_mask = 0x1;  // float32
+                        else
+                            float_ret_mask = 0x2;  // double
+                    }
+
                     sb.writef("  function % % %", fname, n_params, n_ret);
                     if(func.is_varargs) sb.write(" varargs");
+                    if(float_arg_mask != 0 || float_ret_mask != 0){
+                        sb.writef(" %", H(float_arg_mask));
+                        if(float_ret_mask != 0)
+                            sb.writef(" %", H(float_ret_mask));
+                    }
                     sb.write("\n");
                 }
 
@@ -2661,9 +2698,18 @@ struct CDasmWriter {
         if(cv.is_const()){
             if(target != TARGET_IS_NOTHING) {
                 if (cv.is_float()) {
-                    // Emit float as bit-cast hex value
-                    ulong bits = *cast(ulong*)&cv.float_val;
-                    sb.writef("    move r% %\n", target, H(bits));
+                    // Check if target type is float32 vs double
+                    CType* expr_type = get_expr_type(e);
+                    if(expr_type && expr_type.kind == CTypeKind.FLOAT){
+                        // Emit as 32-bit float representation
+                        float f32 = cast(float)cv.float_val;
+                        uint bits = *cast(uint*)&f32;
+                        sb.writef("    move r% %\n", target, H(bits));
+                    } else {
+                        // Emit as 64-bit double representation
+                        ulong bits = *cast(ulong*)&cv.float_val;
+                        sb.writef("    move r% %\n", target, H(bits));
+                    }
                 } else {
                     sb.writef("    move r% %\n", target, cv.as_long);
                 }
@@ -2764,16 +2810,36 @@ struct CDasmWriter {
             CType* src_type = get_expr_type(expr.operand);
             CType* dst_type = expr.cast_type;
 
-            // Handle float<->int conversions
-            bool src_is_float = src_type && src_type.is_float();
-            bool dst_is_float = dst_type && dst_type.is_float();
+            if(src_type is null || dst_type is null) return 0;
 
-            if(src_is_float && !dst_is_float){
-                // float -> int: use dtoi
-                sb.writef("    dtoi r% r%\n", target, target);
-            } else if(!src_is_float && dst_is_float){
-                // int -> float: use itod
+            bool src_is_double = src_type.kind == CTypeKind.DOUBLE || src_type.kind == CTypeKind.LONG_DOUBLE;
+            bool src_is_float32 = src_type.kind == CTypeKind.FLOAT;
+            bool src_is_int = src_type.is_integer();
+            bool dst_is_double = dst_type.kind == CTypeKind.DOUBLE || dst_type.kind == CTypeKind.LONG_DOUBLE;
+            bool dst_is_float32 = dst_type.kind == CTypeKind.FLOAT;
+            bool dst_is_int = dst_type.is_integer();
+
+            // Handle all arithmetic type conversions
+            if(src_is_int && dst_is_double){
+                // int -> double
                 sb.writef("    itod r% r%\n", target, target);
+            } else if(src_is_int && dst_is_float32){
+                // int -> float32: itod then dtof
+                sb.writef("    itod r% r%\n", target, target);
+                sb.writef("    dtof r% r%\n", target, target);
+            } else if(src_is_double && dst_is_int){
+                // double -> int
+                sb.writef("    dtoi r% r%\n", target, target);
+            } else if(src_is_float32 && dst_is_int){
+                // float32 -> int: ftod then dtoi
+                sb.writef("    ftod r% r%\n", target, target);
+                sb.writef("    dtoi r% r%\n", target, target);
+            } else if(src_is_double && dst_is_float32){
+                // double -> float32
+                sb.writef("    dtof r% r%\n", target, target);
+            } else if(src_is_float32 && dst_is_double){
+                // float32 -> double
+                sb.writef("    ftod r% r%\n", target, target);
             }
         }
 
@@ -4332,6 +4398,10 @@ struct CDasmWriter {
 
             // Check for register variable
             if(int* r = name in reglocals){
+                CType** var_type_ptr = name in var_types;
+                bool is_float_op = var_type_ptr && (*var_type_ptr).is_float();
+                bool is_float32 = var_type_ptr && (*var_type_ptr).is_float32();
+
                 if(expr.op == CTokenType.EQUAL){
                     // Simple assignment
                     int err = gen_expression(expr.value, *r);
@@ -4340,21 +4410,30 @@ struct CDasmWriter {
                     // Compound assignment (+=, -=, etc.)
                     int before = regallocator.alloced;
                     int rhs_reg = regallocator.allocate();
+
+                    // For float32, convert LHS to double before operation
+                    if(is_float32){
+                        sb.writef("    ftod r% r%\n", *r, *r);
+                    }
+
                     int err = gen_expression(expr.value, rhs_reg);
                     if(err) return err;
 
                     switch(expr.op) with (CTokenType){
                         case PLUS_EQUAL:
-                            sb.writef("    add r% r% r%\n", *r, *r, rhs_reg);
+                            sb.writef("    % r% r% r%\n", is_float_op ? "dadd" : "add", *r, *r, rhs_reg);
                             break;
                         case MINUS_EQUAL:
-                            sb.writef("    sub r% r% r%\n", *r, *r, rhs_reg);
+                            sb.writef("    % r% r% r%\n", is_float_op ? "dsub" : "sub", *r, *r, rhs_reg);
                             break;
                         case STAR_EQUAL:
-                            sb.writef("    mul r% r% r%\n", *r, *r, rhs_reg);
+                            sb.writef("    % r% r% r%\n", is_float_op ? "dmul" : "mul", *r, *r, rhs_reg);
                             break;
                         case SLASH_EQUAL:
-                            sb.writef("    div r% rjunk r% r%\n", *r, *r, rhs_reg);
+                            if(is_float_op)
+                                sb.writef("    ddiv r% r% r%\n", *r, *r, rhs_reg);
+                            else
+                                sb.writef("    div r% rjunk r% r%\n", *r, *r, rhs_reg);
                             break;
                         case PERCENT_EQUAL:
                             sb.writef("    div rjunk r% r% r%\n", *r, *r, rhs_reg);
@@ -4378,6 +4457,12 @@ struct CDasmWriter {
                             error(expr.expr.token, "Unhandled compound assignment");
                             return 1;
                     }
+
+                    // For float32, convert result back to float32
+                    if(is_float32){
+                        sb.writef("    dtof r% r%\n", *r, *r);
+                    }
+
                     regallocator.reset_to(before);
                 }
 
@@ -4460,6 +4545,7 @@ struct CDasmWriter {
                     int cur_reg = regallocator.allocate();
                     sb.writef("    local_read r% %\n", cur_reg, P(*offset));
                     // Convert float32 to double after reading
+                    bool is_float_op = var_type_ptr && (*var_type_ptr).is_float();
                     if(var_type_ptr && (*var_type_ptr).is_float32()){
                         sb.writef("    ftod r% r%\n", cur_reg, cur_reg);
                     }
@@ -4467,18 +4553,31 @@ struct CDasmWriter {
                     int err = gen_expression(expr.value, val_reg);
                     if(err) return err;
 
+                    // For float types, convert RHS to double if needed
+                    if(is_float_op){
+                        CType* rhs_type = get_expr_type(expr.value);
+                        if(rhs_type && rhs_type.is_integer()){
+                            sb.writef("    itod r% r%\n", val_reg, val_reg);
+                        } else if(rhs_type && rhs_type.is_float32()){
+                            sb.writef("    ftod r% r%\n", val_reg, val_reg);
+                        }
+                    }
+
                     switch(expr.op) with (CTokenType){
                         case PLUS_EQUAL:
-                            sb.writef("    add r% r% r%\n", val_reg, cur_reg, val_reg);
+                            sb.writef("    % r% r% r%\n", is_float_op ? "dadd" : "add", val_reg, cur_reg, val_reg);
                             break;
                         case MINUS_EQUAL:
-                            sb.writef("    sub r% r% r%\n", val_reg, cur_reg, val_reg);
+                            sb.writef("    % r% r% r%\n", is_float_op ? "dsub" : "sub", val_reg, cur_reg, val_reg);
                             break;
                         case STAR_EQUAL:
-                            sb.writef("    mul r% r% r%\n", val_reg, cur_reg, val_reg);
+                            sb.writef("    % r% r% r%\n", is_float_op ? "dmul" : "mul", val_reg, cur_reg, val_reg);
                             break;
                         case SLASH_EQUAL:
-                            sb.writef("    div r% rjunk r% r%\n", val_reg, cur_reg, val_reg);
+                            if(is_float_op)
+                                sb.writef("    ddiv r% r% r%\n", val_reg, cur_reg, val_reg);
+                            else
+                                sb.writef("    div r% rjunk r% r%\n", val_reg, cur_reg, val_reg);
                             break;
                         case PERCENT_EQUAL:
                             sb.writef("    div rjunk r% r% r%\n", val_reg, cur_reg, val_reg);
@@ -4538,6 +4637,8 @@ struct CDasmWriter {
                 size_t var_size = (*gtype) ? (*gtype).size_of() : 8;
                 bool is_unsigned = (*gtype) ? (*gtype).is_unsigned : true;
 
+                bool is_float_op = (*gtype) && (*gtype).is_float();
+
                 if(expr.op == CTokenType.EQUAL){
                     // Simple assignment
                     int err = gen_expression(expr.value, val_reg);
@@ -4546,22 +4647,39 @@ struct CDasmWriter {
                     // Compound assignment - read current value first
                     int cur_reg = regallocator.allocate();
                     sb.writef("    % r% r%\n", read_instr_for_size(var_size, is_unsigned), cur_reg, addr_reg);
+                    // Convert float32 to double after reading
+                    if((*gtype) && (*gtype).is_float32()){
+                        sb.writef("    ftod r% r%\n", cur_reg, cur_reg);
+                    }
 
                     int err = gen_expression(expr.value, val_reg);
                     if(err) return err;
 
+                    // For float types, convert RHS to double if needed
+                    if(is_float_op){
+                        CType* rhs_type = get_expr_type(expr.value);
+                        if(rhs_type && rhs_type.is_integer()){
+                            sb.writef("    itod r% r%\n", val_reg, val_reg);
+                        } else if(rhs_type && rhs_type.is_float32()){
+                            sb.writef("    ftod r% r%\n", val_reg, val_reg);
+                        }
+                    }
+
                     switch(expr.op) with (CTokenType){
                         case PLUS_EQUAL:
-                            sb.writef("    add r% r% r%\n", val_reg, cur_reg, val_reg);
+                            sb.writef("    % r% r% r%\n", is_float_op ? "dadd" : "add", val_reg, cur_reg, val_reg);
                             break;
                         case MINUS_EQUAL:
-                            sb.writef("    sub r% r% r%\n", val_reg, cur_reg, val_reg);
+                            sb.writef("    % r% r% r%\n", is_float_op ? "dsub" : "sub", val_reg, cur_reg, val_reg);
                             break;
                         case STAR_EQUAL:
-                            sb.writef("    mul r% r% r%\n", val_reg, cur_reg, val_reg);
+                            sb.writef("    % r% r% r%\n", is_float_op ? "dmul" : "mul", val_reg, cur_reg, val_reg);
                             break;
                         case SLASH_EQUAL:
-                            sb.writef("    div r% rjunk r% r%\n", val_reg, cur_reg, val_reg);
+                            if(is_float_op)
+                                sb.writef("    ddiv r% r% r%\n", val_reg, cur_reg, val_reg);
+                            else
+                                sb.writef("    div r% rjunk r% r%\n", val_reg, cur_reg, val_reg);
                             break;
                         case PERCENT_EQUAL:
                             sb.writef("    div rjunk r% r% r%\n", val_reg, cur_reg, val_reg);
@@ -4587,6 +4705,10 @@ struct CDasmWriter {
                     }
                 }
 
+                // Convert double to float32 before storing
+                if((*gtype) && (*gtype).is_float32()){
+                    sb.writef("    dtof r% r%\n", val_reg, val_reg);
+                }
                 sb.writef("    % r% r%\n", write_instr_for_size(var_size), addr_reg, val_reg);
 
                 if(target != TARGET_IS_NOTHING){

@@ -46,8 +46,6 @@ void open_window_and_renderer(int width, int height){
     int rw, rh;
     SDL_GetRendererOutputSize(renderer, &rw, &rh);
     if(rw != ww || rh != wh){
-        printf("rw: %d, ww: %d\n", rw, ww);
-        printf("rh: %d, wh: %d\n", rh, wh);
         SDL_RenderSetScale(renderer, (float)rw/ww, (float)rh/wh);
     }
     gwindow = window;
