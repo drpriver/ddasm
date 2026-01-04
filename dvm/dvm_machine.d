@@ -146,16 +146,20 @@ struct Machine {
         }
 
         uintptr_t result;
+        uintptr_t result2;
 
         // Use float-aware trampoline if any args or returns are floats
         if (func.arg_types != 0 || func.ret_types != 0) {
             import dvm.native_trampoline_float: call_native_float;
+            // Check if there are 2 return values (for struct returns in XMM0+XMM1)
+            uintptr_t* ret2_ptr = (func.n_ret > 1) ? &result2 : null;
             result = call_native_float(
                 cast(void*)func.native_function_,
                 args.ptr,
                 n_args,
                 func.arg_types,
-                func.ret_types
+                func.ret_types,
+                ret2_ptr
             );
         } else {
             import dvm.native_trampoline: call_native_trampoline;
@@ -169,6 +173,9 @@ struct Machine {
         // Store result if function returns a value
         if (func.n_ret) {
             registers[ROUT1] = result;
+            if (func.n_ret > 1) {
+                registers[ROUT2] = result2;
+            }
         }
         return 0;
     }}
@@ -565,7 +572,7 @@ struct Machine {
                 case ITOD:{
                     if(int b = begin(ITOD)) return b;
                     float_t* dst = cast(float_t*)get_reg;
-                    uintptr_t* rhs = get_reg;
+                    intptr_t* rhs = cast(intptr_t*)get_reg;  // Use signed for correct negative handling
                     *dst = cast(typeof(*dst))*rhs;
                 }break;
                 case DTOI:{

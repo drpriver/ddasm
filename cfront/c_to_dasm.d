@@ -688,28 +688,93 @@ struct CDasmWriter {
                     }
                     if(flib != lib) continue;
 
-                    ubyte n_ret = func.return_type.is_void() ? 0 : 1;
-                    auto n_params = func.params.length > 8 ? 8 : func.params.length;
+                    // Check if this function uses hidden pointer for struct return
+                    bool uses_hidden_ptr = func.return_type.is_struct_or_union() &&
+                                          !fits_in_registers(func.return_type);
+
+                    // Calculate number of return registers
+                    // For structs that fit in registers, they may use 1-2 return registers
+                    ubyte n_ret = 0;
+                    if(!func.return_type.is_void()){
+                        if(func.return_type.is_struct_or_union() && fits_in_registers(func.return_type)){
+                            n_ret = cast(ubyte)struct_return_regs(func.return_type);
+                        } else if(!uses_hidden_ptr){
+                            n_ret = 1;
+                        }
+                    }
+
+                    // Count register slots, not just parameters
+                    // Struct params that fit in registers take 1-2 slots
+                    int total_slots = uses_hidden_ptr ? 1 : 0;
+                    foreach(ref param; func.params){
+                        if(param.type && param.type.is_struct_or_union() && fits_in_registers(param.type)){
+                            total_slots += struct_return_regs(param.type);
+                        } else {
+                            total_slots++;
+                        }
+                    }
+                    auto n_params = total_slots > 8 ? 8 : total_slots;
 
                     // Compute float arg mask (2 bits per param: 00=int, 01=float32, 10=double)
+                    // Account for struct params taking multiple slots
+                    // For structs containing only floats, mark those slots as float32
                     uint float_arg_mask = 0;
-                    foreach(i, ref param; func.params){
-                        if(i >= 8) break;
-                        if(param.type && param.type.is_float()){
+                    int slot_idx = uses_hidden_ptr ? 1 : 0;
+                    foreach(ref param; func.params){
+                        if(slot_idx >= 8) break;
+                        if(param.type && param.type.is_struct_or_union() && fits_in_registers(param.type)){
+                            // Check if struct contains only floats
+                            int num_slots = struct_return_regs(param.type);
+                            bool all_floats = true;
+                            foreach(ref field; param.type.fields){
+                                if(field.type is null || !field.type.is_float32()){
+                                    all_floats = false;
+                                    break;
+                                }
+                            }
+                            // If all-float struct, mark each slot as float32
+                            if(all_floats && param.type.fields.length > 0){
+                                for(int i = 0; i < num_slots && slot_idx + i < 8; i++){
+                                    float_arg_mask |= (0b01 << ((slot_idx + i) * 2));
+                                }
+                            }
+                            slot_idx += num_slots;
+                        } else if(param.type && param.type.is_float()){
                             if(param.type.kind == CTypeKind.FLOAT)
-                                float_arg_mask |= (0b01 << (i * 2));  // float32
+                                float_arg_mask |= (0b01 << (slot_idx * 2));  // float32
                             else
-                                float_arg_mask |= (0b10 << (i * 2));  // double
+                                float_arg_mask |= (0b10 << (slot_idx * 2));  // double
+                            slot_idx++;
+                        } else {
+                            slot_idx++;
                         }
                     }
 
                     // Compute float return mask (0x0=int, 0x1=float32, 0x2=double)
+                    // For structs with only floats, they're returned in XMM registers
                     uint float_ret_mask = 0;
                     if(func.return_type.is_float()){
                         if(func.return_type.kind == CTypeKind.FLOAT)
                             float_ret_mask = 0x1;  // float32
                         else
                             float_ret_mask = 0x2;  // double
+                    } else if(func.return_type.is_struct_or_union() && fits_in_registers(func.return_type)){
+                        // Check if struct contains only floats
+                        bool all_floats = true;
+                        foreach(ref field; func.return_type.fields){
+                            if(field.type is null || !field.type.is_float32()){
+                                all_floats = false;
+                                break;
+                            }
+                        }
+                        if(all_floats && func.return_type.fields.length > 0){
+                            // All-float struct returned in XMM registers
+                            // Set bits for each return register slot (0x1 for slot 0, 0x4 for slot 1)
+                            int num_ret_regs = struct_return_regs(func.return_type);
+                            for(int i = 0; i < num_ret_regs; i++){
+                                float_ret_mask |= (0x1 << (i * 2));  // float32 in each slot
+                            }
+                        }
                     }
 
                     sb.writef("  function % % %", fname, n_params, n_ret);
@@ -896,10 +961,31 @@ struct CDasmWriter {
 
         if(CInitList* ilist = init.as_init_list()){
             // Nested init list - recurse into each element
-            CType* elem_type = target_type.is_array() ? target_type.pointed_to : target_type;
-            foreach(ref elem; ilist.elements[]){
-                count += emit_init_values(elem.value, elem_type, scalar_size,
-                                         word_val, byte_offset, size_words);
+            if(target_type.is_array()){
+                CType* elem_type = target_type.pointed_to;
+                foreach(ref elem; ilist.elements[]){
+                    count += emit_init_values(elem.value, elem_type, elem_type.size_of(),
+                                             word_val, byte_offset, size_words);
+                }
+            } else if(target_type.is_struct_or_union()){
+                // For structs, match elements to fields in order
+                auto fields = target_type.fields;
+                size_t field_idx = 0;
+                foreach(ref elem; ilist.elements[]){
+                    if(field_idx >= fields.length) break;
+                    CType* field_type = fields[field_idx].type;
+                    CType* field_scalar = get_scalar_type(field_type);
+                    size_t field_scalar_size = field_scalar ? field_scalar.size_of() : field_type.size_of();
+                    count += emit_init_values(elem.value, field_type, field_scalar_size,
+                                             word_val, byte_offset, size_words);
+                    field_idx++;
+                }
+            } else {
+                // Scalar type with init list - just use first element
+                if(ilist.elements[].length > 0){
+                    count += emit_init_values(ilist.elements[0].value, target_type, scalar_size,
+                                             word_val, byte_offset, size_words);
+                }
             }
         } else if(CLiteral* lit = init.as_literal()){
             // Check for string literal initializing char array
@@ -950,6 +1036,16 @@ struct CDasmWriter {
                 // Scalar literal
                 long val = 0;
                 try_eval_const(init, val);
+                // Convert to target type if needed (especially int->float)
+                if(target_type.is_float32()){
+                    // Integer constant to float32: convert value and get bits
+                    float fval = cast(float)val;
+                    val = *cast(int*)&fval;
+                } else if(target_type.kind == CTypeKind.DOUBLE || target_type.kind == CTypeKind.LONG_DOUBLE){
+                    // Integer constant to double: convert value and get bits
+                    double dval = cast(double)val;
+                    val = *cast(long*)&dval;
+                }
                 ulong mask = (scalar_size >= 8) ? ulong.max : ((1UL << (scalar_size * 8)) - 1);
                 size_t word_idx = byte_offset / 8;
                 size_t bit_offset = (byte_offset % 8) * 8;
@@ -988,6 +1084,16 @@ struct CDasmWriter {
             // Try to evaluate as constant expression
             long val = 0;
             try_eval_const(init, val);
+            // Convert to target type if needed (especially int->float)
+            if(target_type.is_float32()){
+                // Integer constant to float32: convert value and get bits
+                float fval = cast(float)val;
+                val = *cast(int*)&fval;
+            } else if(target_type.kind == CTypeKind.DOUBLE || target_type.kind == CTypeKind.LONG_DOUBLE){
+                // Integer constant to double: convert value and get bits
+                double dval = cast(double)val;
+                val = *cast(long*)&dval;
+            }
             ulong mask = (scalar_size >= 8) ? ulong.max : ((1UL << (scalar_size * 8)) - 1);
             size_t word_idx = byte_offset / 8;
             size_t bit_offset = (byte_offset % 8) * 8;
@@ -1012,11 +1118,10 @@ struct CDasmWriter {
 
         // Check if we have an initializer
         if(gvar.initializer !is null){
-            // Handle array initializers
-            if(vtype.is_array() && vtype.pointed_to !is null){
+            // Handle array and struct initializers
+            if((vtype.is_array() && vtype.pointed_to !is null) || vtype.is_struct_or_union()){
                 CType* scalar_type = get_scalar_type(vtype);
                 size_t scalar_size = scalar_type ? scalar_type.size_of() : 1;
-                size_t total_scalars = count_scalar_elements(vtype);
 
                 ulong word_val = 0;
                 size_t byte_offset = 0;
@@ -1041,6 +1146,14 @@ struct CDasmWriter {
                     try_eval_const(&lit.expr, val);
                 } else {
                     try_eval_const(gvar.initializer, val);
+                }
+                // Convert to target type if needed
+                if(vtype.is_float32()){
+                    float fval = cast(float)val;
+                    val = *cast(int*)&fval;
+                } else if(vtype.kind == CTypeKind.DOUBLE || vtype.kind == CTypeKind.LONG_DOUBLE){
+                    double dval = cast(double)val;
+                    val = *cast(long*)&dval;
                 }
                 sb.writef("% ", H(cast(ulong)val));
             }
@@ -1934,6 +2047,8 @@ struct CDasmWriter {
 
                                         int err = gen_expression(nested_elem.value, val_reg);
                                         if(err) return err;
+                                        // Add implicit conversion from expression type to field type
+                                        gen_implicit_conversion(val_reg, nested_elem.value, nested_fields[nested_field_idx].type);
 
                                         size_t nested_offset = offset + nested_fields[nested_field_idx].offset;
                                         size_t nested_size = nested_fields[nested_field_idx].type.size_of();
@@ -1950,20 +2065,51 @@ struct CDasmWriter {
                                     return 1;
                                 }
                             } else if(field_type.kind == CTypeKind.STRUCT && needs_memcpy(field_size)){
-                                // Large struct field - need memcpy
-                                int src_reg = val_reg;
-                                int err = gen_struct_address(elem.value, src_reg);
-                                if(err) return err;
+                                // Large struct field - need memcpy from another struct,
+                                // OR handle scalar initialization (C allows scalar to init first subobject)
+                                CExpr* val_expr = elem.value.ungroup();
                                 int field_slot = slot + cast(int)(offset / 8);
                                 sb.writef("    add r% rbp %\n", addr_reg, P(field_slot));
                                 if(offset % 8 != 0){
                                     sb.writef("    add r% r% %\n", addr_reg, addr_reg, offset % 8);
                                 }
-                                sb.writef("    memcpy r% r% %\n", addr_reg, src_reg, field_size);
+
+                                // Check if value is a struct expression (has address) or scalar
+                                bool is_struct_value = val_expr.type !is null && val_expr.type.is_struct_or_union();
+
+                                if(is_struct_value){
+                                    // Copy from another struct
+                                    int src_reg = val_reg;
+                                    int err = gen_struct_address(val_expr, src_reg);
+                                    if(err) return err;
+                                    sb.writef("    memcpy r% r% %\n", addr_reg, src_reg, field_size);
+                                } else {
+                                    // Scalar initializing struct: zero struct, then init first subobject
+                                    // In C, {0} zeros everything; {N} sets first scalar to N, zeros rest
+                                    sb.writef("    memzero r% %\n", addr_reg, field_size);
+                                    // Find first scalar subfield and initialize it
+                                    CType* first_scalar = field_type;
+                                    size_t first_offset = 0;
+                                    while(first_scalar.kind == CTypeKind.STRUCT && first_scalar.fields.length > 0){
+                                        first_offset += first_scalar.fields[0].offset;
+                                        first_scalar = first_scalar.fields[0].type;
+                                    }
+                                    if(first_scalar.kind != CTypeKind.STRUCT){
+                                        // Generate value and write to first scalar field
+                                        int err = gen_expression(val_expr, val_reg);
+                                        if(err) return err;
+                                        if(first_offset > 0){
+                                            sb.writef("    add r% r% %\n", addr_reg, addr_reg, first_offset);
+                                        }
+                                        sb.writef("    % r% r%\n", write_instr_for_size(first_scalar.size_of()), addr_reg, val_reg);
+                                    }
+                                }
                             } else {
                                 // Scalar field (or small struct <= 8 bytes)
                                 int err = gen_expression(elem.value, val_reg);
                                 if(err) return err;
+                                // Add implicit conversion from expression type to field type
+                                gen_implicit_conversion(val_reg, elem.value, field_type);
                                 int field_slot = slot + cast(int)(offset / 8);
                                 sb.writef("    add r% rbp %\n", addr_reg, P(field_slot));
                                 if(offset % 8 != 0){
@@ -2294,7 +2440,11 @@ struct CDasmWriter {
                     int err = gen_expression(stmt.initializer, temp);
                     if(err) return err;
                     // Convert double to float32 before storing
-                    if(stmt.var_type.is_float32()){
+                    // Note: if initializer already has type float32 (e.g., from an implicit cast),
+                    // then gen_expression already converted it, so no need for another dtof
+                    CType* init_type = stmt.initializer.type;
+                    bool init_is_float32 = init_type && init_type.is_float32();
+                    if(stmt.var_type.is_float32() && !init_is_float32){
                         sb.writef("    dtof r% r%\n", temp, temp);
                     }
                     sb.writef("    local_write % r%\n", P(slot), temp);
@@ -2488,19 +2638,82 @@ struct CDasmWriter {
                 // double -> int
                 sb.writef("    dtoi r% r%\n", target, target);
             } else if(src_is_float32 && dst_is_int){
-                // float32 -> int: ftod then dtoi
-                sb.writef("    ftod r% r%\n", target, target);
+                // float32 -> int: gen_expression already converted to double, just dtoi
                 sb.writef("    dtoi r% r%\n", target, target);
             } else if(src_is_double && dst_is_float32){
                 // double -> float32
                 sb.writef("    dtof r% r%\n", target, target);
             } else if(src_is_float32 && dst_is_double){
-                // float32 -> double
-                sb.writef("    ftod r% r%\n", target, target);
+                // float32 -> double: gen_expression already converted, nothing to do
             }
         }
 
         return 0;
+    }
+
+    // Check if an expression produces float32 bits directly (vs double that needs dtof)
+    // Constant-folded float32 and cast-to-float32 produce float32 bits directly.
+    // Variable reads of float32 produce double (gen_expression adds ftod).
+    bool expr_produces_float32_bits(CExpr* expr){
+        if(expr is null) return false;
+        expr = expr.ungroup();
+        CType* t = expr.type;
+        if(t is null || t.kind != CTypeKind.FLOAT) return false;
+
+        // Check if constant-foldable (produces float32 bits)
+        ConstValue cv = try_eval_constant(expr, &enum_constants);
+        if(cv.is_const()) return true;
+
+        // Cast to float32 produces float32 bits
+        if(expr.kind == CExprKind.CAST) return true;
+
+        return false;
+    }
+
+    // Generate implicit type conversion from src_type to dst_type for value in register
+    // src_expr is used to determine if float32 values are already float32 bits or double
+    void gen_implicit_conversion(int reg, CExpr* src_expr, CType* dst_type){
+        CType* src_type = src_expr ? src_expr.type : null;
+        if(src_type is null || dst_type is null) return;
+
+        bool src_is_double = src_type.kind == CTypeKind.DOUBLE || src_type.kind == CTypeKind.LONG_DOUBLE;
+        bool src_is_float32 = src_type.kind == CTypeKind.FLOAT;
+        bool src_is_int = src_type.is_integer();
+        bool dst_is_double = dst_type.kind == CTypeKind.DOUBLE || dst_type.kind == CTypeKind.LONG_DOUBLE;
+        bool dst_is_float32 = dst_type.kind == CTypeKind.FLOAT;
+        bool dst_is_int = dst_type.is_integer();
+
+        // Handle all arithmetic type conversions
+        if(src_is_int && dst_is_double){
+            // int -> double
+            sb.writef("    itod r% r%\n", reg, reg);
+        } else if(src_is_int && dst_is_float32){
+            // int -> float32: itod then dtof
+            sb.writef("    itod r% r%\n", reg, reg);
+            sb.writef("    dtof r% r%\n", reg, reg);
+        } else if(src_is_double && dst_is_int){
+            // double -> int
+            sb.writef("    dtoi r% r%\n", reg, reg);
+        } else if(src_is_float32 && dst_is_int){
+            // float32 -> int: need ftod first if value is float32 bits
+            if(expr_produces_float32_bits(src_expr)){
+                sb.writef("    ftod r% r%\n", reg, reg);
+            }
+            sb.writef("    dtoi r% r%\n", reg, reg);
+        } else if(src_is_double && dst_is_float32){
+            // double -> float32
+            sb.writef("    dtof r% r%\n", reg, reg);
+        } else if(src_is_float32 && dst_is_double){
+            // float32 -> double: need ftod if value is float32 bits
+            if(expr_produces_float32_bits(src_expr)){
+                sb.writef("    ftod r% r%\n", reg, reg);
+            }
+        } else if(src_is_float32 && dst_is_float32){
+            // float32 -> float32: only need dtof if value is double (variable read)
+            if(!expr_produces_float32_bits(src_expr)){
+                sb.writef("    dtof r% r%\n", reg, reg);
+            }
+        }
     }
 
     int gen_compound_literal(CCompoundLiteral* expr, int target){
@@ -2594,6 +2807,13 @@ struct CDasmWriter {
                         int err = gen_expression(elem.value, val_reg);
                         if(err) return err;
 
+                        // Add implicit conversion from expression type to field type
+                        CType* write_type = field.type;
+                        if(field.type.is_array()){
+                            write_type = field.type.element_type;
+                        }
+                        gen_implicit_conversion(val_reg, elem.value, write_type);
+
                         int field_slot = slot + cast(int)(offset / 8);
                         sb.writef("    add r% rbp %\n", addr_reg, P(field_slot));
                         if(offset % 8 != 0){
@@ -2613,6 +2833,9 @@ struct CDasmWriter {
 
                         int err = gen_expression(elem.value, val_reg);
                         if(err) return err;
+
+                        // Add implicit conversion from expression type to element type
+                        gen_implicit_conversion(val_reg, elem.value, lit_type.element_type);
 
                         int elem_slot = slot + cast(int)(offset / 8);
                         sb.writef("    add r% rbp %\n", addr_reg, P(elem_slot));
@@ -4239,13 +4462,13 @@ struct CDasmWriter {
                     if(err) return err;
 
                     // For float types, convert RHS to double if needed
+                    // Note: float32 values are already converted to double by gen_expression
                     if(is_float_op){
                         CType* rhs_type = expr.value.type;
                         if(rhs_type && rhs_type.is_integer()){
                             sb.writef("    itod r% r%\n", val_reg, val_reg);
-                        } else if(rhs_type && rhs_type.is_float32()){
-                            sb.writef("    ftod r% r%\n", val_reg, val_reg);
                         }
+                        // Don't add ftod for float32 - gen_expression already does this
                     }
 
                     switch(expr.op) with (CTokenType){
@@ -4289,7 +4512,11 @@ struct CDasmWriter {
                 }
 
                 // Convert double to float32 before storing
-                if(var_type_ptr && (*var_type_ptr).is_float32()){
+                // Note: if expr.value already has type float32 (e.g., from an implicit cast),
+                // then gen_expression already converted it, so no need for another dtof
+                CType* val_type = expr.value.type;
+                bool val_is_float32 = val_type && val_type.is_float32();
+                if(var_type_ptr && (*var_type_ptr).is_float32() && !val_is_float32){
                     sb.writef("    dtof r% r%\n", val_reg, val_reg);
                 }
                 sb.writef("    local_write % r%\n", P(*offset), val_reg);
@@ -4341,13 +4568,13 @@ struct CDasmWriter {
                     if(err) return err;
 
                     // For float types, convert RHS to double if needed
+                    // Note: float32 values are already converted to double by gen_expression
                     if(is_float_op){
                         CType* rhs_type = expr.value.type;
                         if(rhs_type && rhs_type.is_integer()){
                             sb.writef("    itod r% r%\n", val_reg, val_reg);
-                        } else if(rhs_type && rhs_type.is_float32()){
-                            sb.writef("    ftod r% r%\n", val_reg, val_reg);
                         }
+                        // Don't add ftod for float32 - gen_expression already does this
                     }
 
                     switch(expr.op) with (CTokenType){
@@ -4391,7 +4618,11 @@ struct CDasmWriter {
                 }
 
                 // Convert double to float32 before storing
-                if((*gtype) && (*gtype).is_float32()){
+                // Note: if expr.value already has type float32 (e.g., from an implicit cast),
+                // then gen_expression already converted it, so no need for another dtof
+                CType* val_type = expr.value.type;
+                bool val_is_float32 = val_type && val_type.is_float32();
+                if((*gtype) && (*gtype).is_float32() && !val_is_float32){
                     sb.writef("    dtof r% r%\n", val_reg, val_reg);
                 }
                 sb.writef("    % r% r%\n", write_instr_for_size(var_size), addr_reg, val_reg);
@@ -4523,10 +4754,93 @@ struct CDasmWriter {
                 int err = gen_struct_address(expr.value, val_reg);
                 if(err) return err;
                 sb.writef("    memcpy r% r% %\n", addr_reg, val_reg, field_size);
-            } else {
-                // Scalar or small struct field
+            } else if(expr.op == CTokenType.EQUAL){
+                // Simple assignment: just write the value
                 int err = gen_expression(expr.value, val_reg);
                 if(err) return err;
+                // For float32 fields, convert to float32 before storing
+                // Note: if expr.value already has type float32 (e.g., from an implicit cast),
+                // then gen_expression already converted it, so no need for another dtof
+                CType* val_type = expr.value.type;
+                bool val_is_float32 = val_type && val_type.is_float32();
+                if(field.type.is_float32() && !val_is_float32){
+                    sb.writef("    dtof r% r%\n", val_reg, val_reg);
+                }
+                sb.writef("    % r% r%\n", write_instr_for_size(field_size), addr_reg, val_reg);
+            } else {
+                // Compound assignment (+=, -=, etc.)
+                int cur_reg = regallocator.allocate();
+                bool is_float_op = field.type.is_float();
+                bool is_float32 = field.type.is_float32();
+
+                // Read current value (use unsigned read for floats since we don't want sign extension)
+                bool use_unsigned = field.type.is_unsigned || is_float_op;
+                sb.writef("    % r% r%\n", read_instr_for_size(field_size, use_unsigned), cur_reg, addr_reg);
+                // Convert float32 to double for operation
+                if(is_float32){
+                    sb.writef("    ftod r% r%\n", cur_reg, cur_reg);
+                }
+
+                // Generate RHS value
+                int err = gen_expression(expr.value, val_reg);
+                if(err) return err;
+
+                // Convert RHS to double if needed for float operation
+                // Note: float32 values are already converted to double by gen_expression
+                if(is_float_op){
+                    CType* rhs_type = expr.value.type;
+                    if(rhs_type && rhs_type.is_integer()){
+                        sb.writef("    itod r% r%\n", val_reg, val_reg);
+                    }
+                    // Don't add ftod for float32 - gen_expression already does this
+                }
+
+                // Perform the operation
+                switch(expr.op) with (CTokenType){
+                    case PLUS_EQUAL:
+                        sb.writef("    % r% r% r%\n", is_float_op ? "dadd" : "add", val_reg, cur_reg, val_reg);
+                        break;
+                    case MINUS_EQUAL:
+                        sb.writef("    % r% r% r%\n", is_float_op ? "dsub" : "sub", val_reg, cur_reg, val_reg);
+                        break;
+                    case STAR_EQUAL:
+                        sb.writef("    % r% r% r%\n", is_float_op ? "dmul" : "mul", val_reg, cur_reg, val_reg);
+                        break;
+                    case SLASH_EQUAL:
+                        if(is_float_op)
+                            sb.writef("    ddiv r% r% r%\n", val_reg, cur_reg, val_reg);
+                        else
+                            sb.writef("    div r% rjunk r% r%\n", val_reg, cur_reg, val_reg);
+                        break;
+                    case PERCENT_EQUAL:
+                        sb.writef("    div rjunk r% r% r%\n", val_reg, cur_reg, val_reg);
+                        break;
+                    case AMP_EQUAL:
+                        sb.writef("    and r% r% r%\n", val_reg, cur_reg, val_reg);
+                        break;
+                    case PIPE_EQUAL:
+                        sb.writef("    or r% r% r%\n", val_reg, cur_reg, val_reg);
+                        break;
+                    case CARET_EQUAL:
+                        sb.writef("    xor r% r% r%\n", val_reg, cur_reg, val_reg);
+                        break;
+                    case LESS_LESS_EQUAL:
+                        sb.writef("    shl r% r% r%\n", val_reg, cur_reg, val_reg);
+                        break;
+                    case GREATER_GREATER_EQUAL:
+                        sb.writef("    shr r% r% r%\n", val_reg, cur_reg, val_reg);
+                        break;
+                    default:
+                        error(expr.expr.token, "Unhandled compound assignment for member access");
+                        return 1;
+                }
+
+                // Convert back to float32 if needed
+                if(is_float32){
+                    sb.writef("    dtof r% r%\n", val_reg, val_reg);
+                }
+
+                // Write result back
                 sb.writef("    % r% r%\n", write_instr_for_size(field_size), addr_reg, val_reg);
             }
 
@@ -4664,7 +4978,13 @@ struct CDasmWriter {
                 // Read scalar field value
                 size_t field_size = field.type.size_of();
                 bool is_unsigned = field.type.is_unsigned;
-                sb.writef("    % r% r%\n", read_instr_for_size(field_size, is_unsigned), target, obj_reg);
+                // For float32 fields, use unsigned read (no sign extend) and convert to double
+                if(field.type.is_float32()){
+                    sb.writef("    read4 r% r%\n", target, obj_reg);
+                    sb.writef("    ftod r% r%\n", target, target);
+                } else {
+                    sb.writef("    % r% r%\n", read_instr_for_size(field_size, is_unsigned), target, obj_reg);
+                }
             }
         }
 

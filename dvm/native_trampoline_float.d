@@ -41,13 +41,15 @@ version(X86_64) {
         // - Integer and float registers are assigned independently
         // - AL = number of XMM registers used (for varargs)
         // - Integer return in RAX, float return in XMM0
+        // - For structs <=16 bytes with floats: return in XMM0 and XMM1
         // - Stack must be 16-byte aligned before call
         uintptr_t call_native_float(
             void* func_ptr,
             uintptr_t* args,
             size_t n_args,
             ulong arg_types,
-            ubyte ret_types = 0
+            ubyte ret_types = 0,
+            uintptr_t* ret2 = null  // Optional: store second XMM return register here
         ) {
             // Separate args into integer and float categories
             uintptr_t[6] int_args = 0;
@@ -100,9 +102,55 @@ version(X86_64) {
 
             // Check if first return value is a float type
             bool float_ret = (ret_types & 0x3) != 0;
+            // Check if there's a second float return value
+            bool float_ret2 = ((ret_types >> 2) & 0x3) != 0;
 
-            if (float_ret) {
-                // Float return: move xmm0 to rax after call
+            if (float_ret && float_ret2 && ret2 !is null) {
+                // Two-register float return: capture both xmm0 and xmm1
+                // Strategy: Append ret2 pointer to stack_args array, then after the
+                // call, load it from there and write xmm1 to it.
+                // Note: r11 is caller-saved (will be clobbered), r12/r13 are callee-saved.
+                // Important: Must maintain 16-byte stack alignment for the call.
+                stack_args[n_stack] = cast(uintptr_t)ret2;
+                return __asm!uintptr_t(
+                    "movq %rsp, %rbx\n" ~      // Save original rsp
+                    // Allocate 16 bytes for r11 storage (maintain 16-byte alignment)
+                    // We started with rsp=16n+8, subtracting 16 gives 16n+8-16=16(n-1)+8
+                    // which is still the correct form for calling
+                    "subq $$16, %rsp\n" ~
+                    "movq %r11, (%rsp)\n" ~    // Save r11 (stack_args.ptr)
+                    "subq %r13, %rsp\n" ~      // stack_bytes (already 16-byte aligned)
+                    "testq %r12, %r12\n" ~
+                    "jz 2f\n" ~
+                    "xorq %r14, %r14\n" ~
+                    "movq %rsp, %r15\n" ~
+                    "1:\n" ~
+                    "movq (%r11, %r14, 8), %rax\n" ~
+                    "movq %rax, (%r15)\n" ~
+                    "addq $$8, %r15\n" ~
+                    "addq $$1, %r14\n" ~
+                    "cmpq %r12, %r14\n" ~
+                    "jb 1b\n" ~
+                    "2:\n" ~
+                    "callq *%r10\n" ~
+                    // After call: xmm0 and xmm1 have return values
+                    // Restore r11 from saved location (rbx - 16, where we saved it)
+                    "movq -16(%rbx), %r11\n" ~
+                    // r12 (n_stack) is callee-saved, so it's still valid
+                    // Load ret2 pointer from stack_args[n_stack] (at offset r12*8 from r11)
+                    "movq (%r11, %r12, 8), %rcx\n" ~
+                    "movq %xmm1, (%rcx)\n" ~   // Store xmm1 to *ret2
+                    "movq %xmm0, %rax\n" ~     // Return xmm0 in rax
+                    "movq %rbx, %rsp",         // Restore stack
+                    "={rax},{rdi},{rsi},{rdx},{rcx},{r8},{r9},{xmm0},{xmm1},{xmm2},{xmm3},{xmm4},{xmm5},{xmm6},{xmm7},{al},{r10},{r11},{r12},{r13},~{rbx},~{r14},~{r15},~{xmm0},~{xmm1},~{memory}",
+                    int_args[0], int_args[1], int_args[2], int_args[3], int_args[4], int_args[5],
+                    float_args[0], float_args[1], float_args[2], float_args[3],
+                    float_args[4], float_args[5], float_args[6], float_args[7],
+                    cast(ubyte)n_float,
+                    func_ptr, stack_args.ptr, n_stack, stack_bytes
+                );
+            } else if (float_ret) {
+                // Single float return: move xmm0 to rax after call
                 return __asm!uintptr_t(
                     "movq %rsp, %rbx\n" ~
                     "subq %r13, %rsp\n" ~
