@@ -21,6 +21,7 @@ void print_small(union SmallUnion u) {
     printf("SmallUnion: %d\n", u.a);
 }
 
+#if 1
 union BigUnion make_big(int first) {
     union BigUnion u;
     u.arr[0] = first;
@@ -31,6 +32,7 @@ union BigUnion make_big(int first) {
 void print_big(union BigUnion u) {
     printf("BigUnion: arr[0]=%d arr[1]=%d\n", u.arr[0], u.arr[1]);
 }
+#endif
 
 int main() {
     // Test small union (fits in register)
@@ -38,10 +40,12 @@ int main() {
     s = make_small(42);
     print_small(s);
 
+#if 1
     // Test big union (uses hidden pointer)
     union BigUnion b;
     b = make_big(999);
     print_big(b);
+#endif
 
     return 0;
 }

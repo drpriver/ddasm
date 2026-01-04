@@ -121,7 +121,8 @@ struct CDeclarator {
 
     // For function declarators: direct-declarator ( parameter-type-list_opt )
     bool is_function;
-    CType*[] param_types;     // Parameter types
+    CType*[] param_types;     // Parameter types (for type building)
+    CParam[] params;          // Full parameters with names (for function definitions)
     bool is_varargs;          // Has ... in parameter list
 
     // For nested declarators like (*ptr) or (*func)(int)

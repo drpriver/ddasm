@@ -204,13 +204,13 @@ struct CAnalyzer {
                     CType *func = e.callee_function_type();
                     int slots = 0;
                     assert(func.return_type);
-                    if(func.return_type.is_struct_or_union() && !struct_fits_in_registers(func.return_type)){
+                    if(func.return_type.is_struct_or_union() && !fits_in_registers(func.return_type)){
                         slots += 1;  // Hidden return pointer
                     }
                     foreach(CType* arg; func.param_types){
                         // small structs can take more than one slot, otherwise they
                         // are passed via a pointer.
-                        if(arg.is_struct_or_union() && struct_fits_in_registers(arg))
+                        if(arg.is_struct_or_union() && fits_in_registers(arg))
                             slots += struct_return_regs(arg);
                         else
                             slots++;
@@ -294,8 +294,7 @@ struct CAnalyzer {
 }
 
 // Check if a struct/union type can be returned in registers (1-2 registers for <= 16 bytes)
-bool struct_fits_in_registers(CType* t){
-    if(t is null || !t.is_struct_or_union()) return false;
+bool fits_in_registers(CType* t){
     return t.size_of() <= 16;
 }
 // Get number of registers needed to return a struct/union (0, 1, or 2)
@@ -1082,9 +1081,9 @@ struct CDasmWriter {
 
         // Track return type for struct/union returns
         current_return_type = func.return_type;
-        returns_struct = func.return_type !is null && func.return_type.is_struct_or_union();
+        returns_struct = func.return_type.is_struct_or_union();
         // Only use hidden pointer for structs/unions > 16 bytes (can't fit in 2 registers)
-        uses_hidden_return_ptr = returns_struct && !struct_fits_in_registers(func.return_type);
+        uses_hidden_return_ptr = !fits_in_registers(current_return_type);
 
         // Run analysis to detect address-taken variables
         CAnalyzer analyzer;
@@ -1110,7 +1109,7 @@ struct CDasmWriter {
         // Calculate total register slots needed for parameters
         int total_param_slots = arg_offset;
         foreach(ref param; func.params){
-            if(param.type.is_struct_or_union() && struct_fits_in_registers(param.type)){
+            if(param.type.is_struct_or_union() && fits_in_registers(param.type)){
                 total_param_slots += struct_return_regs(param.type);
             } else {
                 total_param_slots += 1;
@@ -1197,7 +1196,7 @@ struct CDasmWriter {
 
             int reg_slot = current_reg_slot;
             int regs_used = 1;
-            if(param.type.is_struct_or_union() && struct_fits_in_registers(param.type)){
+            if(param.type.is_struct_or_union() && fits_in_registers(param.type)){
                 regs_used = struct_return_regs(param.type);
             }
             current_reg_slot += regs_used;
@@ -1220,7 +1219,7 @@ struct CDasmWriter {
                     int stack_idx = reg_slot - N_REG_ARGS;
                     int offset = (n_stack_params - stack_idx) * 8 + 8;  // +8 for pushed rbp
                     if(param.type.is_struct_or_union()){
-                        if(struct_fits_in_registers(param.type)){
+                        if(fits_in_registers(param.type)){
                             // Small struct on stack
                             sb.writef("    sub r1 rbp %\n", P(offset));
                             sb.write("    read r1 r1\n");
@@ -1247,7 +1246,7 @@ struct CDasmWriter {
                     }
                 } else if(spans_to_stack){
                     // Struct spans register and stack
-                    if(param.type.is_struct_or_union() && struct_fits_in_registers(param.type)){
+                    if(param.type.is_struct_or_union() && fits_in_registers(param.type)){
                         sb.writef("    add r0 rbp %\n", P(slot));
                         sb.writef("    write r0 rarg%\n", 1 + reg_slot);
                         // Second word from stack
@@ -1260,18 +1259,25 @@ struct CDasmWriter {
                         sb.write("    write r0 r1\n");
                     }
                 } else if(param.type.is_struct_or_union()){
-                    if(struct_fits_in_registers(param.type)){
+                    if(fits_in_registers(param.type)){
                         // Small struct: received in 1-2 registers, store to stack
-                        sb.writef("    add r0 rbp %\n", P(slot));
-                        sb.writef("    write r0 rarg%\n", 1 + reg_slot);
+                        // Use regallocator to avoid clobbering rarg registers (rarg1=r0, etc.)
+                        int before = regallocator.alloced;
+                        int addr_reg = regallocator.allocate();
+                        sb.writef("    add r% rbp %\n", addr_reg, P(slot));
+                        sb.writef("    write r% rarg%\n", addr_reg, 1 + reg_slot);
                         if(regs_used > 1){
-                            sb.write("    add r0 r0 8\n");
-                            sb.writef("    write r0 rarg%\n", 2 + reg_slot);
+                            sb.writef("    add r% r% 8\n", addr_reg, addr_reg);
+                            sb.writef("    write r% rarg%\n", addr_reg, 2 + reg_slot);
                         }
+                        regallocator.reset_to(before);
                     } else {
                         // Large struct: caller passed a pointer, we copy to our stack
-                        sb.writef("    add r0 rbp %\n", P(slot));
-                        sb.writef("    memcpy r0 rarg% %\n", 1 + reg_slot, param.type.size_of());
+                        int before = regallocator.alloced;
+                        int addr_reg = regallocator.allocate();
+                        sb.writef("    add r% rbp %\n", addr_reg, P(slot));
+                        sb.writef("    memcpy r% rarg% %\n", addr_reg, 1 + reg_slot, param.type.size_of());
+                        regallocator.reset_to(before);
                     }
                 } else {
                     // Non-struct in register: just store the value
@@ -3624,63 +3630,33 @@ struct CDasmWriter {
         int before = regallocator.alloced;
 
         // Check if callee returns a struct and if it's varargs
-        bool callee_returns_struct = false;
-        bool callee_uses_hidden_ptr = false;
-        bool callee_is_varargs = false;
-        int n_fixed_args = 0;  // Number of fixed args for varargs functions
         uint varargs_float_mask = 0;  // Bitmask of which args are floats (for varargs calls)
-        CType* callee_return_type = null;
-        if(CIdentifier* id = expr.callee.as_identifier()){
-            if(CType** rt = id.name.lexeme in func_return_types){
-                callee_return_type = *rt;
-                callee_returns_struct = callee_return_type !is null && callee_return_type.is_struct_or_union();
-                callee_uses_hidden_ptr = callee_returns_struct && !struct_fits_in_registers(callee_return_type);
-            }
-            // Check if function is varargs
-            if(CFunction** fp = id.name.lexeme in func_info){
-                CFunction* f = *fp;
-                callee_is_varargs = f.is_varargs;
-                n_fixed_args = cast(int)f.params.length;
-            }
-        } else {
-            // Indirect call through function pointer - get type from callee expression
-            CType* callee_type = expr.callee.type;
-            assert(callee_type);
-            if(callee_type){
-                CType* func_type = null;
-                // Callee can be a function pointer (POINTER to FUNCTION) or just a function type
-                if(callee_type.kind == CTypeKind.POINTER && callee_type.pointed_to &&
-                   callee_type.pointed_to.kind == CTypeKind.FUNCTION){
-                    func_type = callee_type.pointed_to;
-                } else if(callee_type.kind == CTypeKind.FUNCTION){
-                    func_type = callee_type;
-                }
-                if(func_type){
-                    callee_return_type = func_type.return_type;
-                    callee_returns_struct = callee_return_type !is null && callee_return_type.is_struct_or_union();
-                    callee_uses_hidden_ptr = callee_returns_struct && !struct_fits_in_registers(callee_return_type);
-                    callee_is_varargs = func_type.is_varargs;
-                    n_fixed_args = cast(int)func_type.param_types.length;
-                }
-            }
+        CType* callee_func_type = expr.callee_function_type;
+        if(!callee_func_type){
+            error(expr.expr.token, "ICE: generating a call to a non-function or non-function pointer");
+            return -1;
         }
-
+        bool callee_is_varargs = callee_func_type.is_varargs;
+        bool callee_uses_hidden_ptr = callee_func_type.return_type.is_struct_or_union && !fits_in_registers(callee_func_type.return_type);
         // For large struct/union returns, arg registers shift by 1 (rarg1 = hidden return ptr)
         int arg_offset = callee_uses_hidden_ptr ? 1 : 0;
 
         // Helper to get number of register slots for an argument
-        int arg_slots(CExpr* arg){
-            CType* t = arg.type;
-            if(t.is_struct_or_union() && struct_fits_in_registers(t)){
-                return struct_return_regs(t);
+        int arg_slots(CType* arg){
+            if(arg.is_struct_or_union() && fits_in_registers(arg)){
+                return struct_return_regs(arg);
             }
             return 1;
+        }
+        int n_fixed_args = 0;
+        foreach(CType* p; callee_func_type.param_types){
+            n_fixed_args += arg_slots(p);
         }
 
         // Calculate starting slot for argument i
         int get_arg_slot(size_t idx){
             int slot = arg_offset;
-            foreach(j, arg; expr.args){
+            foreach(j, arg; callee_func_type.param_types){
                 if(j == idx) return slot;
                 slot += arg_slots(arg);
             }
@@ -3690,7 +3666,7 @@ struct CDasmWriter {
         // Calculate total slots (for arg count)
         int total_slots = arg_offset;
         foreach(arg; expr.args){
-            total_slots += arg_slots(arg);
+            total_slots += arg_slots(arg.type);
         }
 
         // Count stack args (slots beyond N_REG_ARGS, or varargs beyond fixed args)
@@ -3699,7 +3675,7 @@ struct CDasmWriter {
             int slot = get_arg_slot(i);
             bool is_vararg = callee_is_varargs && i >= n_fixed_args;
             if(slot >= N_REG_ARGS || is_vararg){
-                n_stack_args += arg_slots(arg);
+                n_stack_args += arg_slots(arg.type);
             }
         }
 
@@ -3741,7 +3717,7 @@ struct CDasmWriter {
                 }
 
                 if(arg_type && arg_type.is_struct_or_union()){
-                    if(struct_fits_in_registers(arg_type)){
+                    if(fits_in_registers(arg_type)){
                         // Small struct: push each word
                         int addr_reg = regallocator.allocate();
                         int err = gen_struct_address(arg, addr_reg);
@@ -3771,7 +3747,7 @@ struct CDasmWriter {
                 CExpr* arg = expr.args[i];
                 int slot = get_arg_slot(i);
                 CType* arg_type = arg.type;
-                int num_slots = arg_slots(arg);
+                int num_slots = arg_slots(arg.type);
 
                 // Track if this fixed arg is a float/double (for calling convention)
                 if(arg_type && arg_type.is_float() && i < 16){
@@ -3779,7 +3755,7 @@ struct CDasmWriter {
                 }
 
                 if(arg_type && arg_type.is_struct_or_union()){
-                    if(struct_fits_in_registers(arg_type)){
+                    if(fits_in_registers(arg_type)){
                         int addr_reg = regallocator.allocate();
                         int err = gen_struct_address(arg, addr_reg);
                         if(err) return err;
@@ -3806,7 +3782,7 @@ struct CDasmWriter {
             foreach(arg; expr.args){
                 CType* arg_type = arg.type;
                 // Struct args are not simple
-                if(arg_type && arg_type.is_struct_or_union()){
+                if(arg_type.is_struct_or_union()){
                     all_args_simple = false;
                     break;
                 }
@@ -3822,7 +3798,7 @@ struct CDasmWriter {
         foreach(i, arg; expr.args){
             CType* arg_type = arg.type;
             int slot = get_arg_slot(i);
-            int num_slots = arg_slots(arg);
+            int num_slots = arg_slots(arg.type);
             // Varargs beyond fixed args always go on stack
             bool is_vararg = callee_is_varargs && i >= n_fixed_args;
             bool is_stack_arg = (slot >= N_REG_ARGS) || is_vararg;
@@ -3831,7 +3807,7 @@ struct CDasmWriter {
             if(is_stack_arg){
                 // Stack argument: evaluate to temp and push
                 if(arg_type && arg_type.is_struct_or_union()){
-                    if(struct_fits_in_registers(arg_type)){
+                    if(fits_in_registers(arg_type)){
                         // Small struct on stack: push each word
                         int addr_reg = regallocator.allocate();
                         int err = gen_struct_address(arg, addr_reg);
@@ -3860,7 +3836,7 @@ struct CDasmWriter {
             } else if(spans_to_stack){
                 // Arg starts in registers but spills to stack (e.g., 2-word struct at slot 7)
                 // First part goes to register, second part to stack
-                if(arg_type && arg_type.is_struct_or_union() && struct_fits_in_registers(arg_type)){
+                if(arg_type && arg_type.is_struct_or_union() && fits_in_registers(arg_type)){
                     int addr_reg = regallocator.allocate();
                     int err = gen_struct_address(arg, addr_reg);
                     if(err) return err;
@@ -3882,8 +3858,9 @@ struct CDasmWriter {
             } else {
                 // Register argument (slot < N_REG_ARGS)
                 if(arg_type && arg_type.is_struct_or_union()){
-                    if(struct_fits_in_registers(arg_type)){
+                    if(fits_in_registers(arg_type)){
                         // Small struct: load data into register(s)
+                        int b = regallocator.alloced;
                         int addr_reg = regallocator.allocate();
                         int err = gen_struct_address(arg, addr_reg);
                         if(err) return err;
@@ -3894,7 +3871,7 @@ struct CDasmWriter {
                             sb.writef("    add r% r% 8\n", addr_reg, addr_reg);
                             sb.writef("    read rarg% r%\n", 2 + slot, addr_reg);
                         }
-                        regallocator.reset_to(regallocator.alloced - 1);
+                        regallocator.reset_to(b);
                     } else {
                         // Large struct: pass address (callee copies)
                         int err = gen_struct_address(arg, RARG1 + slot);
@@ -3920,7 +3897,7 @@ struct CDasmWriter {
         if(!callee_is_varargs && !all_args_simple){
             for(int i = cast(int)expr.args.length - 2; i >= 0; i--){
                 int slot = get_arg_slot(i);
-                int num_slots = arg_slots(expr.args[i]);
+                int num_slots = arg_slots(expr.args[i].type);
                 // Only pop if this was a register arg (slot < N_REG_ARGS)
                 if(slot < N_REG_ARGS){
                     int regs_to_pop = num_slots;
@@ -3938,7 +3915,7 @@ struct CDasmWriter {
         // We use rsp as the temp location (it points past the allocated frame)
         int struct_slots_needed = 0;
         if(callee_uses_hidden_ptr){
-            struct_slots_needed = cast(int)callee_return_type.stack_slots();
+            struct_slots_needed = cast(int)callee_func_type.return_type.stack_slots();
             // Allocate temp space by advancing rsp
             sb.writef("    add rsp rsp %\n", P(struct_slots_needed));
             // Pass address of temp space as rarg1 (rsp - slots = start of temp area)
@@ -4060,10 +4037,11 @@ struct CDasmWriter {
             if(callee_uses_hidden_ptr){
                 // Large struct returns: temp space already allocated, address is at rsp - slots
                 sb.writef("    sub r% rsp %\n", target, P(struct_slots_needed));
-            } else if(callee_returns_struct){
-                // Small struct returns: allocate temp space and store rout1/rout2 there
-                size_t struct_size = callee_return_type.size_of();
-                int slots = cast(int)callee_return_type.stack_slots();
+            } else if(callee_func_type.return_type.is_struct_or_union()){
+                // Small/medium struct returns (fit in registers): allocate temp space and store value
+                // This ensures we always return a pointer for struct types, consistent with large structs
+                size_t struct_size = callee_func_type.return_type.size_of();
+                int slots = cast(int)callee_func_type.return_type.stack_slots();
 
                 // Allocate temp space
                 sb.writef("    add rsp rsp %\n", P(slots));
@@ -4191,10 +4169,10 @@ struct CDasmWriter {
                     int dst_reg = regallocator.allocate();
                     int src_reg = regallocator.allocate();
 
-                    // dst = address of target struct
-                    sb.writef("    add r% rbp %\n", dst_reg, P(*offset));
-
                     // src = address of source struct
+                    // IMPORTANT: Evaluate source FIRST, then destination.
+                    // This is because evaluating the source (e.g., a function call) may
+                    // clobber registers, so we calculate dst address AFTER source is ready.
                     CExpr* val = expr.value.ungroup();
                     if(CIdentifier* src_id = val.as_identifier()){
                         // Source is a variable
@@ -4222,6 +4200,9 @@ struct CDasmWriter {
                         int err = gen_struct_address(val, src_reg);
                         if(err) return err;
                     }
+
+                    // dst = address of target struct (calculated AFTER source to avoid clobbering)
+                    sb.writef("    add r% rbp %\n", dst_reg, P(*offset));
 
                     // memcpy dst src size
                     size_t struct_size = (*var_type_ptr).size_of();

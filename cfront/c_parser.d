@@ -574,34 +574,60 @@ struct CParser {
                         // Build return type from declarator parts outside the function containing the name
                         func.return_type = build_function_return_type(base_type, decl, name_decl);
                         // Extract params from the name_decl (the function declarator containing the name)
-                        auto params = make_barray!CParam(allocator);
-                        for(size_t i = 0; i < name_decl.param_types.length; i++){
-                            CParam p;
-                            p.type = name_decl.param_types[i];
-                            // No name available from declarator parsing
-                            params ~= p;
-                        }
-                        func.params = params[];
+                        // Use full params array which includes names
+                        func.params = name_decl.params;
                         func.is_varargs = name_decl.is_varargs;
                         func.is_definition = false;
                         func.is_inline = saw_inline;
                         func.library = current_library;
 
-                        // Check for function body
-                        if(match(CTokenType.LEFT_BRACE)){
+                        // Check for function body or declaration
+                        if(check(CTokenType.LEFT_BRACE)){
                             func.is_definition = true;
-                            // Skip function body
-                            int brace_depth = 1;
-                            while(!at_end && brace_depth > 0){
-                                if(check(CTokenType.LEFT_BRACE)) brace_depth++;
-                                else if(check(CTokenType.RIGHT_BRACE)) brace_depth--;
-                                advance();
+                            add_function(func);  // Add before parsing body for recursion
+
+                            // Set up type context for function body
+                            local_var_types.count = 0;
+                            auto idxes = local_var_types._idxes();
+                            if(idxes.length > 0) idxes[] = uint.max;
+                            current_return_type = func.return_type;
+
+                            // Add function parameters to local_var_types
+                            foreach(ref param; func.params){
+                                if(param.name.lexeme.length > 0){
+                                    local_var_types[param.name.lexeme] = param.type;
+                                }
+                            }
+
+                            consume(CTokenType.LEFT_BRACE, "Expected '{' for function body");
+                            if(ERROR_OCCURRED) return 1;
+
+                            auto body_ = make_barray!(CStmt*)(allocator);
+                            while(!check(CTokenType.RIGHT_BRACE) && !at_end){
+                                CStmt* stmt = parse_statement();
+                                if(stmt is null) return 1;
+                                body_ ~= stmt;
+                            }
+
+                            consume(CTokenType.RIGHT_BRACE, "Expected '}' after function body");
+                            if(ERROR_OCCURRED) return 1;
+
+                            // Clear type context
+                            local_var_types.count = 0;
+                            auto idxes2 = local_var_types._idxes();
+                            if(idxes2.length > 0) idxes2[] = uint.max;
+                            current_return_type = null;
+
+                            func.body = body_[];
+                            // Update the function we already added
+                            if(auto idx_ptr = func.name.lexeme in func_indices){
+                                functions[*idx_ptr] = func;
                             }
                         } else {
                             consume(CTokenType.SEMICOLON, "Expected ';' after function declaration");
                             if(ERROR_OCCURRED) return 1;
+                            add_function(func);
                         }
-                        add_function(func);
                     } else {
                         // It's a global variable (function pointer, pointer-to-array, etc.)
                         CGlobalVar gvar;
@@ -622,6 +648,8 @@ struct CParser {
                         consume(CTokenType.SEMICOLON, "Expected ';' after variable declaration");
                         if(ERROR_OCCURRED) return 1;
 
+                        // Register variable type for lookups
+                        global_var_types[name.lexeme] = gvar.var_type;
                         globals ~= gvar;
                     }
                 } else {
@@ -2372,12 +2400,13 @@ struct CParser {
                 auto param_result = parse_parameter_type_list();
                 if(param_result.err) return null;
                 decl.is_varargs = param_result.is_varargs;
-                // Store param types
+                // Store param types and full params
                 auto param_types = make_barray!(CType*)(allocator);
                 foreach(ref p; param_result.params[]){
                     param_types ~= p.type;
                 }
                 decl.param_types = param_types[];
+                decl.params = param_result.params[];
 
                 consume(CTokenType.RIGHT_PAREN, "Expected ')' after parameters");
                 if(ERROR_OCCURRED) return null;

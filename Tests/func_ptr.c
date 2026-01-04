@@ -141,11 +141,11 @@ int main() {
     test_funcptr_assignment();
     test_funcptr_param();
     test_funcptr_return();
-    // test_null_funcptr();
-    // test_funcptr_compare();
-    // test_funcptr_array();
-    // test_funcptr_typedef();
-    // test_funcptr_struct();
-    // test_funcptr_chain();
+    test_null_funcptr();
+    test_funcptr_compare();
+    test_funcptr_array();
+    test_funcptr_typedef();
+    test_funcptr_struct();
+    test_funcptr_chain();
     return 0;
 }
