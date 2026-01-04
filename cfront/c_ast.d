@@ -37,6 +37,7 @@ version(Windows){
 // =============================================================================
 
 enum CTypeKind {
+    UNSET,
     VOID,
     CHAR,
     SHORT,
@@ -49,12 +50,41 @@ enum CTypeKind {
     LONG_DOUBLE,
     POINTER,
     ARRAY,
+    VECTOR,
     FUNCTION,
     STRUCT,
     UNION,
     ENUM,
     EMBED,
     INIT_LIST,
+    ANY, // magically converts to any other type during type checking, but causes errors
+         // at codegen. For stubbed out functionality like __builtins().
+}
+// FIXME: metaprogam this
+str str_for(CTypeKind k){
+    final switch(k)with(k){
+        case UNSET       : return "UNSET";
+        case VOID        : return "VOID";
+        case CHAR        : return "CHAR";
+        case SHORT       : return "SHORT";
+        case INT         : return "INT";
+        case LONG        : return "LONG";
+        case LONG_LONG   : return "LONG_LONG";
+        case INT128      : return "INT128";
+        case FLOAT       : return "FLOAT";
+        case DOUBLE      : return "DOUBLE";
+        case LONG_DOUBLE : return "LONG_DOUBLE";
+        case POINTER     : return "POINTER";
+        case ARRAY       : return "ARRAY";
+        case VECTOR      : return "VECTOR";
+        case FUNCTION    : return "FUNCTION";
+        case STRUCT      : return "STRUCT";
+        case UNION       : return "UNION";
+        case ENUM        : return "ENUM";
+        case EMBED       : return "EMBED";
+        case INIT_LIST   : return "INIT_LIST";
+        case ANY         : return "ANY";
+    }
 }
 
 // Struct field definition
@@ -105,11 +135,13 @@ struct CType {
     CTypeKind kind;
     bool is_unsigned;
     bool is_const;
+    bool is_magic_builtin; // For gnu __builtin_* function-like builtins.
     CType* pointed_to;     // For pointers and arrays
     CType* return_type;    // For functions
     CType*[] param_types;  // For functions
     bool is_varargs;       // For functions
     size_t array_size;     // For arrays
+    size_t vector_size;    // For vectors, size in bytes (for some reason)
     // Struct fields
     str struct_name;       // For named structs
     StructField[] fields;  // For structs
@@ -118,6 +150,7 @@ struct CType {
     // Get size in bytes (for pointer arithmetic)
     size_t size_of(){
         final switch(kind){
+            case CTypeKind.UNSET:       return 0;
             case CTypeKind.VOID:        return 0;
             case CTypeKind.CHAR:        return 1;
             case CTypeKind.SHORT:       return 2;
@@ -138,7 +171,7 @@ struct CType {
             case CTypeKind.POINTER:
                 static if(IS_64BIT) return 8;
                 else return 4;
-            case CTypeKind.ARRAY:    return pointed_to ? pointed_to.size_of() * array_size : 0;
+            case CTypeKind.ARRAY:    return pointed_to.size_of() * array_size;
             case CTypeKind.FUNCTION:
                 static if(IS_64BIT) return 8;
                 else return 4;
@@ -147,12 +180,15 @@ struct CType {
             case CTypeKind.ENUM:     return 4;  // Enums are ints
             case CTypeKind.EMBED:    return 0; // maybe assert? idk
             case CTypeKind.INIT_LIST:return 0; // maybe assert? idk
+            case CTypeKind.ANY:      return 8; // maybe assert? idk
+            case CTypeKind.VECTOR:   return vector_size;
         }
     }
 
     // Get alignment in bytes
     size_t align_of(){
         final switch(kind){
+            case CTypeKind.UNSET:       return 0;
             case CTypeKind.VOID:        return 1;
             case CTypeKind.CHAR:        return 1;
             case CTypeKind.SHORT:       return 2;
@@ -189,6 +225,8 @@ struct CType {
             case CTypeKind.ENUM:     return 4;
             case CTypeKind.EMBED:    return 0; // maybe assert? idk
             case CTypeKind.INIT_LIST:return 0; // maybe assert? idk
+            case CTypeKind.ANY:      return 8; // maybe assert? idk
+            case CTypeKind.VECTOR:   return vector_size;
         }
     }
 
@@ -205,7 +243,7 @@ struct CType {
     bool is_void(){ return kind == CTypeKind.VOID; }
     bool is_pointer(){ return kind == CTypeKind.POINTER; }
     bool is_array(){ return kind == CTypeKind.ARRAY; }
-    bool is_array_or_pointer(){ return kind == CTypeKind.ARRAY || kind == CTypeKind.POINTER; }
+    bool is_indexable(){ return kind == CTypeKind.ARRAY || kind == CTypeKind.POINTER || kind == CTypeKind.VECTOR; }
     bool is_object(){ return kind != CTypeKind.FUNCTION;}
     bool is_struct(){ return kind == CTypeKind.STRUCT; }
     bool is_union(){ return kind == CTypeKind.UNION; }
@@ -229,6 +267,7 @@ struct CType {
     }
     bool is_boolable(){
         final switch(kind)with(kind){
+            case UNSET       : return false;
             case VOID        : return false;
             case CHAR        : return true;
             case SHORT       : return true;
@@ -247,6 +286,8 @@ struct CType {
             case ENUM        : return true;
             case EMBED       : return false;
             case INIT_LIST   : return false;
+            case ANY         : return true;
+            case VECTOR      : return false;
         }
     }
 
@@ -262,6 +303,8 @@ struct CType {
     // Get element type for arrays/pointers
     CType* element_type(){
         if(kind == CTypeKind.ARRAY || kind == CTypeKind.POINTER)
+            return pointed_to;
+        if(vector_size)
             return pointed_to;
         assert(0, "element type for nonnull array/pointer");
         return null;
@@ -309,6 +352,8 @@ __gshared CType TYPE_LONG_PTR = { kind: CTypeKind.POINTER, pointed_to: &TYPE_LON
 // This might break things, but we'll see
 __gshared CType TYPE_EMBED = {kind: CTypeKind.EMBED};
 __gshared CType TYPE_INIT_LIST = {kind: CTypeKind.INIT_LIST};
+__gshared CType TYPE_UNIMPLEMENTED_BUILTIN = {kind: CTypeKind.FUNCTION, is_magic_builtin:true, return_type:&TYPE_ANY};
+__gshared CType TYPE_ANY = {kind: CTypeKind.ANY, is_magic_builtin:true};
 
 CType* make_pointer_type(Allocator a, CType* base){
     auto data = a.alloc(CType.sizeof);
@@ -324,6 +369,14 @@ CType* make_array_type(Allocator a, CType* element_type, size_t size){
     result.kind = CTypeKind.ARRAY;
     result.pointed_to = element_type;  // Element type stored in pointed_to
     result.array_size = size;
+    return result;
+}
+CType* make_vector_type(Allocator a, CType* element_type, size_t size){
+    void[] data = a.alloc(CType.sizeof);
+    CType* result = cast(CType*)data.ptr;
+    result.kind = CTypeKind.VECTOR;
+    result.pointed_to = element_type;  // Element type stored in pointed_to
+    result.vector_size = size;
     return result;
 }
 

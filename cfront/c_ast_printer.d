@@ -505,6 +505,7 @@ void print_type(CType* t) {
     if (t.is_const) fprintf(stderr, "const ");
 
     final switch (t.kind) with (CTypeKind) {
+        case UNSET: fprintf(stderr, "UNSET"); break;
         case VOID: fprintf(stderr, "void"); break;
         case CHAR:
             if (t.is_unsigned) fprintf(stderr, "unsigned ");
@@ -559,6 +560,12 @@ void print_type(CType* t) {
             break;
         case INIT_LIST:
             fprintf(stderr, "INIT_LIST");
+            break;
+        case ANY:
+            fprintf(stderr, "ANY");
+            break;
+        case VECTOR:
+            fprintf(stderr, "VECTOR");
             break;
     }
 }

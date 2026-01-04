@@ -259,6 +259,7 @@ struct CPreprocessor {
 
             // TODO: the other ones
             define_object_macro("__INT_MAX__", "2147483648");
+            define_object_macro("__LONG_LONG_MAX__", "9223372036854775808ll");
         }
 
         // OS detection
@@ -313,9 +314,6 @@ struct CPreprocessor {
         } else {
             define_object_macro("__USER_LABEL_PREFIX__", "");
         }
-
-        // Function-like macros that expand to nothing
-        define_empty_func_macro("__attribute__", 1);
 
         // Compiler feature checks - always return 0 (not supported)
         define_func_macro_const("__has_feature", 1, "0");

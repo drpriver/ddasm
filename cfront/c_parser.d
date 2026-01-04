@@ -8,8 +8,9 @@ import core.stdc.stdio : fprintf, stderr;
 import dlib.aliases;
 import dlib.allocator : Allocator;
 import dlib.barray : Barray, make_barray;
-import dlib.stringbuilder : StringBuilder;
+import dlib.stringbuilder : StringBuilder, Q;
 import dlib.table : Table;
+import dlib.str_util: startswith;
 
 import cfront.c_pp_to_c : CToken, CTokenType;
 import cfront.c_ast;
@@ -33,9 +34,29 @@ struct CParser {
     Table!(str, CType*) local_var_types;  // Local variable types (cleared per function)
     Table!(str, CType*) func_types;        // Function name -> function type (for setting expr types)
     Table!(str, size_t) func_info;         // Function name -> index in functions array
-    Barray!(CFunction)* functions_ptr;     // Pointer to functions array (set during parse)
+    // Track function names to indices for merging forward declarations with definitions
+    Table!(str, size_t) func_indices;
     CType* current_return_type;            // Current function's return type (for return checking)
+    StringBuilder error_sb;
+    Barray!CFunction functions;
+    Barray!CGlobalVar globals;
+    Barray!CStructDef structs;
+    Barray!CUnionDef unions;
+    Barray!CEnumDef enums;
 
+
+    void errorf(A...)(CToken tok, A args){
+        error_sb.FORMAT(tok.file, ':', tok.line, ':', tok.column, ": ParseError: ");
+        foreach(a; args)
+            error_sb.write(a);
+        error_sb.write('\n');
+        if(tok.expansion_file.length){
+            error_sb.FORMAT("  note: expanded from macro used at ", tok.expansion_file, ':', tok.expansion_line, ':', tok.expansion_column, '\n');
+        }
+        str msg = error_sb.borrow();
+        fprintf(stderr, "%.*s", cast(int)msg.length, msg.ptr);
+        error_sb.reset();
+    }
     void error(CToken token, str message){
         ERROR_OCCURRED = true;
         // Show expansion location first (where macro was used), then definition location
@@ -135,7 +156,7 @@ struct CParser {
                 auto call = cast(CCall*)e;
                 if(CIdentifier* id = call.callee.as_identifier()){
                     if(size_t* idx = id.name.lexeme in func_info){
-                        return (*functions_ptr)[*idx].return_type;
+                        return functions[*idx].return_type;
                     }
                 }
                 return null;
@@ -248,49 +269,43 @@ struct CParser {
     // Top-Level Parsing
     // =========================================================================
 
-    int parse(CTranslationUnit* unit){
-        auto functions = make_barray!CFunction(allocator);
-        functions_ptr = &functions;  // Set for use by helper methods
-        auto globals = make_barray!CGlobalVar(allocator);
-        auto structs = make_barray!CStructDef(allocator);
-        auto unions = make_barray!CUnionDef(allocator);
-        auto enums = make_barray!CEnumDef(allocator);
-
-        // Track function names to indices for merging forward declarations with definitions
-        Table!(str, size_t) func_indices;
-        func_indices.data.allocator = allocator;
-        scope(exit) func_indices.cleanup();
-
-        // Helper to add function, merging forward declarations with definitions
-        void add_function(CFunction func){
-            str fname = func.name.lexeme;
-            if(auto idx_ptr = fname in func_indices){
-                // Already have an entry for this function
-                size_t idx = *idx_ptr;
-                if(func.is_definition && !functions[idx].is_definition){
-                    // Current is definition, existing is declaration - replace
-                    functions[idx] = func;
-                    // func_info already has the correct index
-                }
-                // Otherwise (existing is definition or both declarations): skip
-            } else {
-                // New function
-                size_t idx = functions.count;
-                func_indices[fname] = idx;
-                func_info[fname] = idx;
-                functions ~= func;
-
-                // Create and store function type for identifier resolution
-                auto param_types = make_barray!(CType*)(allocator);
-                foreach(ref p; func.params){
-                    param_types ~= p.type;
-                }
-                CType* ftype = make_function_type(allocator, func.return_type, param_types[], func.is_varargs);
-                func_types[fname] = ftype;
+    // Helper to add function, merging forward declarations with definitions
+    void add_function(ref CFunction func){
+        str fname = func.name.lexeme;
+        if(auto idx_ptr = fname in func_indices){
+            // Already have an entry for this function
+            size_t idx = *idx_ptr;
+            if(func.is_definition && !functions[idx].is_definition){
+                // Current is definition, existing is declaration - replace
+                functions[idx] = func;
+                // func_info already has the correct index
             }
-        }
+            // Otherwise (existing is definition or both declarations): skip
+        } else {
+            // New function
+            size_t idx = functions.count;
+            func_indices[fname] = idx;
+            func_info[fname] = idx;
+            functions ~= func;
 
+            // Create and store function type for identifier resolution
+            auto param_types = make_barray!(CType*)(allocator);
+            foreach(ref p; func.params){
+                param_types ~= p.type;
+            }
+            CType* ftype = make_function_type(allocator, func.return_type, param_types[], func.is_varargs);
+            func_types[fname] = ftype;
+        }
+    }
+
+    int parse(CTranslationUnit* unit){
         // Initialize type tables
+        functions = make_barray!CFunction(allocator);
+        globals = make_barray!CGlobalVar(allocator);
+        structs = make_barray!CStructDef(allocator);
+        unions = make_barray!CUnionDef(allocator);
+        enums = make_barray!CEnumDef(allocator);
+
         struct_types.data.allocator = allocator;
         union_types.data.allocator = allocator;
         enum_types.data.allocator = allocator;
@@ -300,6 +315,8 @@ struct CParser {
         local_var_types.data.allocator = allocator;
         func_types.data.allocator = allocator;
         func_info.data.allocator = allocator;
+        func_indices.data.allocator = allocator;
+        error_sb.allocator = allocator;
 
         while(!at_end){
             // Handle #pragma (emitted as # pragma library ( "..." ) tokens)
@@ -367,7 +384,6 @@ struct CParser {
                         CFunction func;
                         int err = parse_function_rest(type_, name, &func, saw_inline);
                         if(err) return err;
-                        add_function(func);
                     } else {
                         // Global variable - use unified init-declarator-list parsing
                         int err = parse_init_declarator_list(&globals, type_, name, saw_extern, current_library);
@@ -415,7 +431,6 @@ struct CParser {
                         CFunction func;
                         int err = parse_function_rest(type_, name, &func, saw_inline);
                         if(err) return err;
-                        add_function(func);
                     } else {
                         // Global variable - use unified init-declarator-list parsing
                         int err = parse_init_declarator_list(&globals, type_, name, saw_extern, current_library);
@@ -449,7 +464,6 @@ struct CParser {
                         CFunction func;
                         int err = parse_function_rest(type_, name, &func, saw_inline);
                         if(err) return err;
-                        add_function(func);
                     } else {
                         // Global variable - use unified init-declarator-list parsing
                         int err = parse_init_declarator_list(&globals, type_, name, saw_extern, current_library);
@@ -503,7 +517,6 @@ struct CParser {
                     int err = parse_function_rest(type_, name, &func, saw_static_inline);
                     if(err) return err;
                     func.is_static = true;
-                    add_function(func);
                 } else {
                     // Static variable - skip (internal linkage, not relevant for us)
                     int brace_depth = 0;
@@ -620,7 +633,6 @@ struct CParser {
                         CFunction func;
                         int err = parse_function_rest(base_type, name, &func, saw_inline);
                         if(err) return err;
-                        add_function(func);
                     } else {
                         // Global variable - use unified init-declarator-list parsing
                         int err = parse_init_declarator_list(&globals, base_type, name, saw_extern, current_library);
@@ -1499,10 +1511,13 @@ struct CParser {
     //           typedef enum { ... } Name;
     int parse_typedef(Barray!(CEnumDef)* enums_out){
         advance();  // consume 'typedef'
+        Attributes attrs;
+        parse_gnu_attributes(attrs);
 
         // Check for struct/union/enum definition within typedef
         if(check(CTokenType.STRUCT)){
             advance();  // consume 'struct'
+            parse_gnu_attributes(attrs);
 
             // Check if there's a name and/or brace
             CToken struct_name;
@@ -1513,6 +1528,7 @@ struct CParser {
                 struct_name = advance();
                 has_name = true;
             }
+            parse_gnu_attributes(attrs);
             if(check(CTokenType.LEFT_BRACE)){
                 has_body = true;
             }
@@ -1531,6 +1547,7 @@ struct CParser {
 
                 consume(CTokenType.RIGHT_BRACE, "Expected '}'");
                 if(ERROR_OCCURRED) return 1;
+                parse_gnu_attributes(attrs);
 
                 // Check if there's an existing forward-declared type to update
                 if(has_name){
@@ -1572,6 +1589,7 @@ struct CParser {
                 // Skip pointer qualifiers
                 while(match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)){}
             }
+            parse_gnu_attributes(attrs);
 
             // Check for function pointer typedef: typedef struct X *(*name)(...)
             if(check(CTokenType.LEFT_PAREN)){
@@ -1620,34 +1638,12 @@ struct CParser {
             }
 
             // Skip attribute macros (like SDL_AUDIOCVT_PACKED, __attribute__((packed))) before typedef name
-            while(check(CTokenType.IDENTIFIER)){
-                auto cur_lexeme = peek().lexeme;
-                auto next = peek_at(1).type;
-
-                // Only skip __attribute__(...) or known attribute macros
-                if(cur_lexeme == "__attribute__" && next == CTokenType.LEFT_PAREN){
-                    advance();
-                    skip_balanced_parens();
-                } else if(next == CTokenType.IDENTIFIER){
-                    // Check if next token is __attribute__ - if so, current is the typedef name
-                    auto next_lexeme = peek_at(1).lexeme;
-                    if(next_lexeme == "__attribute__"){
-                        break;  // Current is typedef name, stop skipping
-                    }
-                    // Skip simple attribute identifier (like SDL_AUDIOCVT_PACKED)
-                    advance();
-                } else if(next == CTokenType.LEFT_PAREN){
-                    // Skip function-like macro attribute
-                    advance();
-                    skip_balanced_parens();
-                } else {
-                    break;  // Next token is the typedef name followed by ;
-                }
-            }
+            parse_gnu_attributes(attrs);
 
             // Now get the typedef name
             CToken typedef_name = consume(CTokenType.IDENTIFIER, "Expected typedef name");
             if(ERROR_OCCURRED) return 1;
+            parse_gnu_attributes(attrs);
 
             // Check for array dimensions (e.g., typedef struct X name[1])
             if(check(CTokenType.LEFT_BRACKET)){
@@ -1679,12 +1675,7 @@ struct CParser {
                     struct_type = make_array_type(allocator, struct_type, 1);
                 }
             }
-
-            // Skip __attribute__((xxx)) after typedef name
-            if(check(CTokenType.IDENTIFIER) && peek().lexeme == "__attribute__"){
-                advance();
-                skip_balanced_parens();
-            }
+            parse_gnu_attributes(attrs);
 
             consume(CTokenType.SEMICOLON, "Expected ';' after typedef");
             if(ERROR_OCCURRED) return 1;
@@ -1873,8 +1864,10 @@ struct CParser {
             // Function pointer: typedef <ret_type> (* <name>)(<params>);
             // Function pointer with calling conv: typedef <ret_type> (SDLCALL * <name>)(<params>);
 
+            parse_gnu_attributes(attrs);
             CType* base_type = parse_type();
             if(base_type is null) return 1;
+            parse_gnu_attributes(attrs);
 
             // Check for function pointer syntax: starts with '('
             if(check(CTokenType.LEFT_PAREN)){
@@ -1938,11 +1931,12 @@ struct CParser {
                 if(ERROR_OCCURRED) return 1;
                 base_type = make_array_type(allocator, base_type, cast(size_t) size_result.value);
             }
-
-            // Skip __attribute__((xxx)) after typedef name
-            if(check(CTokenType.IDENTIFIER) && peek().lexeme == "__attribute__"){
-                advance();
-                skip_balanced_parens();
+            parse_gnu_attributes(attrs);
+            if(attrs.vector_size.type == CTokenType.NUMBER){
+                import dlib.parse_numbers: parse_uint64;
+                size_t sz = parse_uint64(attrs.vector_size.lexeme).value;
+                if(0) errorf(attrs.vector_size, "Making a vector, was ", str_for(base_type.kind), " with vector size: ", sz);
+                base_type = make_vector_type(allocator, base_type, sz);
             }
 
             consume(CTokenType.SEMICOLON, "Expected ';' after typedef");
@@ -1967,6 +1961,8 @@ struct CParser {
 
     // Parse function after type and name have been consumed
     int parse_function_rest(CType* ret_type, CToken name, CFunction* func, bool saw_inline = false){
+        Attributes attrs;
+        parse_gnu_attributes(attrs);
         // Parse parameters using unified parameter parsing
         consume(CTokenType.LEFT_PAREN, "Expected '(' after function name");
         if(ERROR_OCCURRED) return 1;
@@ -1976,6 +1972,8 @@ struct CParser {
 
         consume(CTokenType.RIGHT_PAREN, "Expected ')' after parameters");
         if(ERROR_OCCURRED) return 1;
+
+        parse_gnu_attributes(attrs);
 
         // Handle asm label for symbol renaming: __asm("symbol_name")
         if(match(CTokenType.ASM)){
@@ -1988,15 +1986,7 @@ struct CParser {
             consume(CTokenType.RIGHT_PAREN, "Expected ')' after asm label");
             if(ERROR_OCCURRED) return 1;
         }
-
-        // Skip __attribute__((...)) specifiers
-        while(check(CTokenType.IDENTIFIER) && peek().lexeme == "__attribute__"){
-            advance();  // consume __attribute__
-            // __attribute__ uses double parens: __attribute__((...))
-            if(check(CTokenType.LEFT_PAREN)){
-                skip_balanced_parens();
-            }
-        }
+        parse_gnu_attributes(attrs);
 
         func.name = name;
         func.return_type = ret_type;
@@ -2005,11 +1995,16 @@ struct CParser {
         func.is_inline = saw_inline;
         func.library = current_library;
 
+        parse_gnu_attributes(attrs);
+
         // Check if declaration or definition
         if(match(CTokenType.SEMICOLON)){
             func.is_definition = false;
+            add_function(*func);
             return 0;
         }
+        // add it here so it is in table for recursive functions.
+        add_function(*func);
 
         // Parse function body
         func.is_definition = true;
@@ -2026,6 +2021,10 @@ struct CParser {
         // Add function parameters to local_var_types
         foreach(ref param; func.params){
             if(param.name.lexeme.length > 0){
+                errorf(param.name, "adding param ", Q(param.name.lexeme), " with type: ", str_for(param.type.kind));
+                if(param.type.is_pointer){
+                    errorf(param.name, "  (points to): ", str_for(param.type.pointed_to.kind));
+                }
                 local_var_types[param.name.lexeme] = param.type;
             }
         }
@@ -2047,6 +2046,7 @@ struct CParser {
         current_return_type = null;
 
         func.body = body[];
+        add_function(*func);
         return 0;
     }
 
@@ -2101,6 +2101,9 @@ struct CParser {
             }
         }
 
+        // Register variable type for sizeof lookups in constant expressions
+        global_var_types[name.lexeme] = gvar.var_type;
+
         // Check for initializer
         if(match(CTokenType.EQUAL)){
             gvar.initializer = parse_initializer();
@@ -2138,8 +2141,6 @@ struct CParser {
             }
         }
 
-        // Register variable type for sizeof lookups in constant expressions
-        global_var_types[name.lexeme] = gvar.var_type;
 
         // Don't consume semicolon here - caller handles comma-separated declarations
         return 0;
@@ -2896,6 +2897,8 @@ struct CParser {
             }
 
         } while(match(CTokenType.COMMA));
+        // parse attributes
+        skip_attributes();
 
         consume(CTokenType.SEMICOLON, "Expected ';' after field declaration");
         if(ERROR_OCCURRED) return 1;
@@ -3161,7 +3164,9 @@ struct CParser {
         bool is_const = false;
 
         // Handle qualifiers and modifiers
+        Attributes attrs;
         while(true){
+            parse_gnu_attributes(attrs);
             if(match(CTokenType.CONST)){
                 is_const = true;
             } else if(match(CTokenType.VOLATILE)){
@@ -3189,6 +3194,7 @@ struct CParser {
 
         CType* result;
 
+        parse_gnu_attributes(attrs);
         if(match(CTokenType.VOID)){
             result = &TYPE_VOID;
         } else if(match(CTokenType.CHAR)){
@@ -3565,19 +3571,26 @@ struct CParser {
             error("Expected type specifier");
             return null;
         }
+        parse_gnu_attributes(attrs);
 
         // Handle 'long int', 'long long', etc.
         if(result.kind == CTypeKind.LONG || result.kind == CTypeKind.SHORT){
             match(CTokenType.INT);  // Optional 'int' after long/short
         }
+        parse_gnu_attributes(attrs);
 
         if(is_const && result !is &TYPE_VOID){
             // Need to allocate a new type with const flag
-            auto data = allocator.alloc(CType.sizeof);
-            auto new_type = cast(CType*)data.ptr;
+            void[] data = allocator.zalloc(CType.sizeof);
+            CType* new_type = cast(CType*)data.ptr;
             *new_type = *result;
-            new_type.is_const = true;
+            new_type.is_const = is_const;
             result = new_type;
+        }
+        CToken vector_size = attrs.vector_size;
+        if(vector_size.type == CTokenType.NUMBER){
+            import dlib.parse_numbers: parse_uint64;
+            result = make_vector_type(allocator, result, parse_uint64(vector_size.lexeme).value);
         }
 
         return result;
@@ -4054,6 +4067,8 @@ struct CParser {
                 error("Expected variable name");
                 return null;
             }
+            // Register local variable type for type checking
+            local_var_types[name.lexeme] = var_type;
 
             CExpr* initializer = null;
             if(match(CTokenType.EQUAL)){
@@ -4065,9 +4080,6 @@ struct CParser {
                     initializer = implicit_cast(initializer, var_type, name);
                 }
             }
-
-            // Register local variable type for type checking
-            local_var_types[name.lexeme] = var_type;
 
             decls ~= CVarDecl.make(allocator, var_type, name, initializer, type_tok);
 
@@ -4520,11 +4532,34 @@ struct CParser {
             CExpr* operand = parse_unary();
             if(operand is null) return null;
             CType* type;
-            switch(op.type)with(op.type){
-                // TODO:
-                default: assert(0, "TODO");
+            switch(op.type)with(CTokenType){
+                case BANG:
+                    // Logical not always produces int (0 or 1)
+                    type = &TYPE_INT;
+                    break;
+                case MINUS, PLUS, TILDE:
+                    // Unary arithmetic: result is operand type (after integer promotion)
+                    type = operand.type;
+                    break;
+                case STAR:
+                    // Dereference: result is pointed-to type
+                    if(!operand.type.is_pointer && !operand.type.is_array){
+                        error(op, "Cannot dereference non-pointer type");
+                        return null;
+                    }
+                    type = operand.type.pointed_to;
+                    break;
+                case AMP:
+                    // Address-of: result is pointer to operand type
+                    type = make_pointer_type(allocator, operand.type);
+                    break;
+                case PLUS_PLUS, MINUS_MINUS:
+                    // Prefix inc/dec: result is operand type
+                    type = operand.type;
+                    break;
+                default:
+                    assert(0, "Unhandled prefix unary operator");
             }
-            // TODO: insert implicit casts here.
             return CUnary.make(allocator, op.type, operand, true, op, type);
         }
 
@@ -4680,8 +4715,8 @@ struct CParser {
                 if(index is null) return null;
                 consume(CTokenType.RIGHT_BRACKET, "Expected ']' after subscript");
                 if(ERROR_OCCURRED) return null;
-                if(!expr.type.is_array_or_pointer){
-                    error(bracket, "Indexing requires an array or pointer type");
+                if(!expr.type.is_indexable){
+                    errorf(bracket, "Indexing requires an array or pointer type, type is ", str_for(expr.type.kind));
                     return null;
                 }
                 expr = CSubscript.make(allocator, expr, index, bracket, expr.type.element_type());
@@ -4735,16 +4770,9 @@ struct CParser {
                     return null;
                 }
             } else if(match(CTokenType.PLUS_PLUS) || match(CTokenType.MINUS_MINUS)){
-                // Postfix increment/decrement
+                // Postfix increment/decrement: result is operand type (original value)
                 CToken op = previous();
-                CType* type;
-                switch(op.type)with(op.type){
-                    case PLUS_PLUS:
-                    case MINUS_MINUS:
-                    default:
-                        assert(0, "TODO");
-                }
-                expr = CUnary.make(allocator, op.type, expr, false, op, type);
+                expr = CUnary.make(allocator, op.type, expr, false, op, expr.type);
             } else {
                 break;
             }
@@ -4765,82 +4793,96 @@ struct CParser {
         if(function_type.is_pointer)
             function_type = function_type.pointed_to;
         if(!function_type.is_function){
-            error(paren, "Attempt to call a non-function type");
+            errorf(paren, "Attempt to call a non-function type, type: ", str_for(function_type.kind));
             return null;
         }
+        if(function_type.is_magic_builtin){
+            current--;
+            skip_balanced_parens();
+            current--;
+        }
+        else {
+            if(!check(CTokenType.RIGHT_PAREN)){
+                size_t arg_idx = 0;
+                do {
+                    CToken tok = peek();
+                    // Use parse_assignment, not parse_expression, to avoid comma operator
+                    CExpr* arg = parse_assignment();
+                    if(arg is null) return null;
 
-        if(!check(CTokenType.RIGHT_PAREN)){
-            size_t arg_idx = 0;
-            do {
-                CToken tok = peek();
-                // Use parse_assignment, not parse_expression, to avoid comma operator
-                CExpr* arg = parse_assignment();
-                if(arg is null) return null;
-
-                // Apply implicit cast if we have parameter type info
-                if(arg_idx < function_type.param_types.length){
-                    CType* param_type = function_type.param_types[arg_idx];
-                    arg = implicit_cast(arg, param_type, tok);
-                    if(!arg) return null;
-                    // FIXME: type check??
-                } else if(function_type.is_varargs && arg_idx >= function_type.param_types.length){
-                    // Varargs: float promotes to double
-                    final switch(arg.type.kind) with(arg.type.kind){
-                        case VOID:
-                            error(tok, "Void-returning arguments to functions are illlegal");
-                            return null;
-                        case CHAR:
-                        case SHORT:
-                        case INT:
-                            arg = implicit_cast(arg, arg.type.is_unsigned?&TYPE_UINT:&TYPE_INT, tok);
-                            if(!arg) return null;
-                            break;
-                        case LONG:
-                        case LONG_LONG:
-                            // no conversion needed
-                            break;
-                        case INT128:
-                            error(tok, "int128 cannot be passed as varargs");
-                            // Or can it?
-                            return null;
-                        case FLOAT:
-                            arg = implicit_cast(arg, &TYPE_DOUBLE, tok);
-                            if(!arg) return null;
-                            break;
-                        case DOUBLE:
-                            // no conversion needed
-                            break;
-                        case LONG_DOUBLE:
-                            // Idk if this is correct.
-                            error(tok, "long double cannot be passed as varargs");
-                            return null;
-                        case POINTER:
-                            // No conversion
-                            break;
-                        case ARRAY:
-                            // Do we need array decay here or is this ok?
-                            break;
-                        case FUNCTION:
-                             // Do we need function pointer decay here?
-                        case STRUCT:
-                            error(tok, "Cannot pass a struct to varags");
-                            return null;
-                        case UNION:
-                            error(tok, "Cannot pass a union to varags");
-                            return null;
-                        case EMBED:
-                            error(tok, "UNIMPLEMENTED: EMBED");
-                            return null;
-                        case INIT_LIST:
-                            error(tok, "ICE: INIT_LIST ESCAPED");
-                            return null;
-                        case ENUM:
-                            break;
+                    // Apply implicit cast if we have parameter type info
+                    if(arg_idx < function_type.param_types.length){
+                        CType* param_type = function_type.param_types[arg_idx];
+                        arg = implicit_cast(arg, param_type, tok);
+                        if(!arg) return null;
+                        // FIXME: type check??
+                    } else if(function_type.is_varargs && arg_idx >= function_type.param_types.length){
+                        // Varargs: float promotes to double
+                        final switch(arg.type.kind) with(arg.type.kind){
+                            case UNSET:
+                                error(tok, "ICE: type unset");
+                                return null;
+                            case VOID:
+                                error(tok, "Void-returning arguments to functions are illlegal");
+                                return null;
+                            case CHAR:
+                            case SHORT:
+                            case INT:
+                                arg = implicit_cast(arg, arg.type.is_unsigned?&TYPE_UINT:&TYPE_INT, tok);
+                                if(!arg) return null;
+                                break;
+                            case LONG:
+                            case LONG_LONG:
+                                // no conversion needed
+                                break;
+                            case INT128:
+                                error(tok, "int128 cannot be passed as varargs");
+                                // Or can it?
+                                return null;
+                            case FLOAT:
+                                arg = implicit_cast(arg, &TYPE_DOUBLE, tok);
+                                if(!arg) return null;
+                                break;
+                            case DOUBLE:
+                                // no conversion needed
+                                break;
+                            case LONG_DOUBLE:
+                                // Idk if this is correct.
+                                error(tok, "long double cannot be passed as varargs");
+                                return null;
+                            case POINTER:
+                                // No conversion
+                                break;
+                            case ARRAY:
+                                // Do we need array decay here or is this ok?
+                                break;
+                            case FUNCTION:
+                                 // Do we need function pointer decay here?
+                            case STRUCT:
+                                error(tok, "Cannot pass a struct to varags");
+                                return null;
+                            case UNION:
+                                error(tok, "Cannot pass a union to varags");
+                                return null;
+                            case EMBED:
+                                error(tok, "UNIMPLEMENTED: EMBED");
+                                return null;
+                            case VECTOR:
+                                error(tok, "UNIMPLEMENTED: VECTOR");
+                                return null;
+                            case INIT_LIST:
+                                error(tok, "ICE: INIT_LIST ESCAPED");
+                                return null;
+                            case ENUM:
+                                break;
+                            case ANY:
+                                break;
+                        }
                     }
-                }
-                args ~= arg;
-                arg_idx++;
-            } while(match(CTokenType.COMMA));
+                    args ~= arg;
+                    arg_idx++;
+                } while(match(CTokenType.COMMA));
+            }
         }
 
         consume(CTokenType.RIGHT_PAREN, "Expected ')' after arguments");
@@ -5088,6 +5130,12 @@ struct CParser {
                 type = *t;
             else if(auto t = id_tok.lexeme in func_types)
                 type = *t;
+            else if(long* e = id_tok.lexeme in enum_constants){
+                type = &TYPE_INT;
+            }
+            else if(id_tok.lexeme.startswith("__builtin_")){
+                type = &TYPE_UNIMPLEMENTED_BUILTIN;
+            }
             else {
                 error(id_tok, "Unknown identifier");
                 return null;
@@ -5151,6 +5199,24 @@ struct CParser {
         }
         return false;
     }
+    bool match(CTokenType type, ref CToken tok){
+        if(check(type)){
+            tok = peek;
+            advance();
+            return true;
+        }
+        return false;
+    }
+
+    bool match_id(str name){
+        if(check(CTokenType.IDENTIFIER)){
+            if(peek().lexeme == name){
+                advance();
+                return true;
+            }
+        }
+        return false;
+    }
 
     bool check(CTokenType type){
         if(at_end) return false;
@@ -5180,6 +5246,46 @@ struct CParser {
             if(check(CTokenType.LEFT_PAREN)) depth++;
             else if(check(CTokenType.RIGHT_PAREN)) depth--;
             advance();
+        }
+    }
+    static struct Attributes {
+        CToken vector_size;
+    };
+
+    void parse_gnu_attributes(ref Attributes attr){
+        if(match_id("__attribute__")){
+            if(!match(CTokenType.LEFT_PAREN)) return;
+            int depth = 1;
+            while(depth > 0 && !at_end){
+                if(match(CTokenType.LEFT_PAREN)){
+                    depth++;
+                    continue;
+                }
+                if(match(CTokenType.RIGHT_PAREN)){
+                    depth--;
+                    continue;
+                }
+                if(match_id("vector_size") || match_id("__vector_size__")){
+                    if(match(CTokenType.LEFT_PAREN)){
+                        depth++;
+                    }
+                    if(match(CTokenType.NUMBER, attr.vector_size)){
+                        if(0) errorf(attr.vector_size, "found a vector size: ", attr.vector_size.lexeme);
+                    }
+                    while(!match(CTokenType.RIGHT_PAREN) && !at_end){
+                        advance();
+                    }
+                    depth--;
+                    continue;
+                }
+                advance();
+            }
+        }
+    }
+
+    void skip_attributes(){
+        if(match_id("__attribute__")){
+            skip_balanced_parens();
         }
     }
 
@@ -5280,6 +5386,7 @@ struct CParser {
             return;
         }
         final switch(t.kind) with(CTypeKind) {
+            case UNSET: fprintf(stderr, "UNSET"); break;
             case VOID: fprintf(stderr, "void"); break;
             case CHAR:
                 if(t.is_unsigned) fprintf(stderr, "unsigned ");
@@ -5333,6 +5440,12 @@ struct CParser {
                 break;
             case INIT_LIST:
                 fprintf(stderr, "INIT_LIST");
+                break;
+            case ANY:
+                fprintf(stderr, "ANY");
+                break;
+            case VECTOR:
+                fprintf(stderr, "VECTOR");
                 break;
         }
     }
