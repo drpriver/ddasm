@@ -933,6 +933,18 @@ struct Machine {
                         return err;
                     }
                 }break;
+                case CALL_R_NARGS_FLOATS:{
+                    if(int b = begin(CALL_R_NARGS_FLOATS)) return b;
+                    Function* f = cast(Function*)read_reg;
+                    size_t n_args = cast(size_t)get_unsigned;
+                    uint call_floats = cast(uint)get_unsigned;
+                    int err = do_call(f, n_args, call_floats);
+                    if(err) {
+                        backtrace;
+                        badend = true;
+                        return err;
+                    }
+                }break;
                 case TAIL_CALL_I:{
                     if(int b = begin(TAIL_CALL_I)) return b;
                     Function* f = cast(Function*)get_unsigned;

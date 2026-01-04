@@ -63,6 +63,7 @@ enum Instruction: uintptr_t {
     CALL_I_NARGS_FLOATS,  // For varargs with float arguments
     CALL_R,
     CALL_R_NARGS,
+    CALL_R_NARGS_FLOATS,  // For indirect varargs with float arguments
     TAIL_CALL_I,
     TAIL_CALL_R,
     RET,
@@ -170,6 +171,7 @@ immutable InstructionInfo[Instruction.max+1] INSTRUCTION_INFOS = [
     InstructionInfo(Instruction.CALL_I_NARGS_FLOATS, "CALL_I_NARGS_FLOATS", "call", [IMM, IMM, IMM]),
     InstructionInfo(Instruction.CALL_R,           "CALL_R",           "call", [AK.REGISTER]),
     InstructionInfo(Instruction.CALL_R_NARGS,     "CALL_R_NARGS",     "call", [AK.REGISTER, IMM]),
+    InstructionInfo(Instruction.CALL_R_NARGS_FLOATS, "CALL_R_NARGS_FLOATS", "call", [AK.REGISTER, IMM, IMM]),
     InstructionInfo(Instruction.TAIL_CALL_I,      "TAIL_CALL_I",      "tail_call", [IMM]),
     InstructionInfo(Instruction.TAIL_CALL_R,      "TAIL_CALL_R",      "tail_call", [AK.REGISTER]),
     InstructionInfo(Instruction.RET,              "RET",              "ret"),

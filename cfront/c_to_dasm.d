@@ -3095,6 +3095,19 @@ struct CDasmWriter {
             }
         }
 
+        // Function-to-pointer decay: when a function name is used as an expression
+        // (not being called), it decays to a pointer to the function
+        if(name in func_return_types){
+            // Check if it's an external function
+            if(str* mod_alias = name in extern_funcs){
+                used_funcs[name] = true;  // Mark as used for dlimport
+                sb.writef("    move r% function %.%\n", target, *mod_alias, name);
+            } else {
+                sb.writef("    move r% function %\n", target, name);
+            }
+            return 0;
+        }
+
         if(int* r = name in reglocals){
             if(target == *r) return 0;  // Already in target register
             sb.writef("    move r% r%\n", target, *r);
@@ -4323,7 +4336,11 @@ struct CDasmWriter {
                 }
             }
 
-            sb.writef("    call r% %\n", func_reg, total_args);
+            if(callee_is_varargs && varargs_float_mask != 0){
+                sb.writef("    call r% % %\n", func_reg, total_args, H(varargs_float_mask));
+            } else {
+                sb.writef("    call r% %\n", func_reg, total_args);
+            }
 
             if(!callee_is_varargs){
                 for(int i = before - 1; i >= N_REG_ARGS; i--){

@@ -83,8 +83,8 @@ struct CDeclarator {
     int pointer_depth;        // Number of pointer indirections (each * adds 1)
 
     // For array declarators: direct-declarator [ assignment-expression_opt ]
-    bool is_array;
-    size_t array_dim;         // Array size (0 for unsized arrays like [])
+    // Supports multi-dimensional arrays like arr[2][3][4]
+    size_t[] array_dims;      // Array dimensions (empty if not an array)
 
     // For function declarators: direct-declarator ( parameter-type-list_opt )
     bool is_function;
@@ -94,6 +94,8 @@ struct CDeclarator {
     // For nested declarators like (*ptr) or (*func)(int)
     // Used for function pointers and pointer-to-array
     CDeclarator* nested;
+
+    bool is_array() { return array_dims.length > 0; }
 }
 
 struct CType {
@@ -197,6 +199,7 @@ struct CType {
     bool is_union(){ return kind == CTypeKind.UNION; }
     bool is_struct_or_union(){ return kind == CTypeKind.STRUCT || kind == CTypeKind.UNION; }
     bool is_enum(){ return kind == CTypeKind.ENUM; }
+    bool is_function(){ return kind == CTypeKind.FUNCTION; }
     bool is_integer(){
         return kind == CTypeKind.CHAR || kind == CTypeKind.SHORT ||
                kind == CTypeKind.INT || kind == CTypeKind.LONG ||

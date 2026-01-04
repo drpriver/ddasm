@@ -2211,18 +2211,21 @@ struct CParser {
         }
 
         // Handle array suffix: [size]
+        auto dims = make_barray!size_t(allocator);
         while(check(CTokenType.LEFT_BRACKET)){
             advance();  // consume '['
-            decl.is_array = true;
+            size_t dim = 0;
             if(!check(CTokenType.RIGHT_BRACKET)){
                 auto size_result = parse_enum_const_expr();
                 if(!size_result.err && size_result.value > 0){
-                    decl.array_dim = cast(size_t)size_result.value;
+                    dim = cast(size_t)size_result.value;
                 }
             }
+            dims ~= dim;
             consume(CTokenType.RIGHT_BRACKET, "Expected ']'");
             if(ERROR_OCCURRED) return null;
         }
+        decl.array_dims = dims[];
 
         return decl;
     }
@@ -2329,12 +2332,12 @@ struct CParser {
 
         // Handle array and function suffixes (left-to-right)
         // These suffixes apply to the direct-declarator (which may include a nested declarator)
+        auto dims = make_barray!size_t(allocator);
         while(true){
             if(check(CTokenType.LEFT_BRACKET)){
                 // (6.7.7.1) array-declarator:
                 //     direct-declarator [ type-qualifier-list_opt assignment-expression_opt ]
                 advance();  // consume '['
-                decl.is_array = true;
 
                 // Parse array size if present
                 size_t dim = 0;
@@ -2344,7 +2347,7 @@ struct CParser {
                         dim = cast(size_t)size_result.value;
                     }
                 }
-                decl.array_dim = dim;
+                dims ~= dim;
 
                 consume(CTokenType.RIGHT_BRACKET, "Expected ']' after array size");
                 if(ERROR_OCCURRED) return null;
@@ -2375,6 +2378,9 @@ struct CParser {
                 break;
             }
         }
+
+        // Store accumulated array dimensions
+        decl.array_dims = dims[];
 
         return decl;
     }
@@ -2439,12 +2445,15 @@ struct CParser {
             result = make_pointer_type(allocator, result);
         }
 
-        // Apply array suffix
-        if(decl.is_array){
-            if(decl.array_dim > 0){
-                result = make_array_type(allocator, result, decl.array_dim);
-            } else {
-                result = make_pointer_type(allocator, result);
+        // Apply array suffix(es)
+        if(decl.array_dims.length > 0){
+            for(size_t i = decl.array_dims.length; i > 0; i--){
+                size_t dim = decl.array_dims[i - 1];
+                if(dim > 0){
+                    result = make_array_type(allocator, result, dim);
+                } else {
+                    result = make_pointer_type(allocator, result);
+                }
             }
         }
 
@@ -2471,7 +2480,7 @@ struct CParser {
     //
     // Example: int (*funcs[10])(void)
     //   - Outer declarator: is_function=true, params=void, pointer_depth=0
-    //   - Nested declarator: pointer_depth=1, is_array=true, array_dim=10, name=funcs
+    //   - Nested declarator: pointer_depth=1, array_dims=[10], name=funcs
     //   Build: int -> int(void) -> int(*)(void) -> int(*[10])(void)
     CType* apply_declarator_to_type(CType* base, CDeclarator* decl){
         if(decl is null || base is null) return base;
@@ -2486,12 +2495,17 @@ struct CParser {
 
         // Step 2: Apply suffixes (array, function)
         // These have higher precedence than the nested declarator's modifiers
-        if(decl.is_array){
-            if(decl.array_dim > 0){
-                result = make_array_type(allocator, result, decl.array_dim);
-            } else {
-                // Unsized array - treat as pointer (e.g., int x[])
-                result = make_pointer_type(allocator, result);
+        // For arrays, apply dimensions in reverse order (rightmost dimension is innermost)
+        // e.g., int arr[2][3] -> array of 2 arrays of 3 ints
+        if(decl.array_dims.length > 0){
+            for(size_t i = decl.array_dims.length; i > 0; i--){
+                size_t dim = decl.array_dims[i - 1];
+                if(dim > 0){
+                    result = make_array_type(allocator, result, dim);
+                } else {
+                    // Unsized array - treat as pointer (e.g., int x[])
+                    result = make_pointer_type(allocator, result);
+                }
             }
         }
 
@@ -3988,6 +4002,11 @@ struct CParser {
         CType* base_type = parse_base_type();
         if(base_type is null) return null;
 
+        // Handle postfix qualifiers (e.g., "int const *" instead of "const int *")
+        while(match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)){
+            // Just skip - we don't track these
+        }
+
         // Handle type-only declarations (e.g., "enum Foo { A, B };")
         if(match(CTokenType.SEMICOLON)){
             return CEmptyStmt.get();
@@ -3996,34 +4015,33 @@ struct CParser {
         auto decls = make_barray!(CStmt*)(allocator);
 
         do {
-            // Parse pointer modifiers for this declarator
-            CType* var_type = parse_pointer_modifiers(base_type);
+            // Use parse_declarator to handle all declarator types including:
+            // - Simple: int x
+            // - Pointers: int *p
+            // - Arrays: int arr[2][3]
+            // - Function pointers: int (*fp)(int)
+            // - Complex: int *(*fp[10])(int, int)
+            CDeclarator* decl = parse_declarator(false);
+            if(decl is null) return null;
 
-            CToken name = consume(CTokenType.IDENTIFIER, "Expected variable name");
-            if(ERROR_OCCURRED) return null;
+            // Build the final type
+            CType* var_type = apply_declarator_to_type(base_type, decl);
 
-            // Check for array declaration: int arr[2][3] etc.
-            // Collect dimensions and apply in reverse order (rightmost is innermost)
-            size_t[8] dims;
-            size_t num_dims = 0;
-            while(match(CTokenType.LEFT_BRACKET)){
-                auto size_result = parse_enum_const_expr();
-                if(size_result.err) return null;
-                if(size_result.value <= 0){
-                    error("Array size must be positive");
-                    return null;
+            // Get the name from the declarator (may be in nested declarator)
+            CToken name = decl.name;
+            if(name.lexeme.length == 0 && decl.nested !is null){
+                CDeclarator* inner = decl.nested;
+                while(inner !is null && inner.name.lexeme.length == 0){
+                    inner = inner.nested;
                 }
-
-                consume(CTokenType.RIGHT_BRACKET, "Expected ']' after array size");
-                if(ERROR_OCCURRED) return null;
-
-                if(num_dims < 8){
-                    dims[num_dims++] = cast(size_t) size_result.value;
+                if(inner !is null){
+                    name = inner.name;
                 }
             }
-            // Apply dimensions in reverse order
-            for(size_t i = num_dims; i > 0; i--){
-                var_type = make_array_type(allocator, var_type, dims[i - 1]);
+
+            if(name.lexeme.length == 0){
+                error("Expected variable name");
+                return null;
             }
 
             CExpr* initializer = null;
