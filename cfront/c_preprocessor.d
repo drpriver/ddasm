@@ -425,8 +425,14 @@ struct CPreprocessor {
     PPMacroDef get_file_macro(PPToken tok){
         PPToken file_tok = tok;
         file_tok.type = PPTokenType.PP_STRING;
-        // Use file_override if set by #line, otherwise use current_file
-        str filename = file_override.length > 0 ? file_override : current_file;
+        // Use expansion_file if from macro expansion, else file_override if set, else current_file
+        str filename;
+        if(tok.expansion_file.length > 0)
+            filename = tok.expansion_file;
+        else if(file_override.length > 0)
+            filename = file_override;
+        else
+            filename = current_file;
         file_tok.lexeme = mwritef(allocator, "\"%\"", E(filename))[];
         Box!PPToken box = boxed(allocator, &file_tok);
         return PPMacroDef(tok.lexeme, box[], is_builtin:true);
@@ -434,8 +440,9 @@ struct CPreprocessor {
     PPMacroDef get_line_macro(PPToken tok){
         PPToken line_tok = tok;
         line_tok.type = PPTokenType.PP_NUMBER;
-        // Apply #line offset if set
-        int effective_line = tok.line + line_offset;
+        // Use expansion_line if from macro expansion, else tok.line
+        int base_line = tok.expansion_file.length > 0 ? tok.expansion_line : tok.line;
+        int effective_line = base_line + line_offset;
         line_tok.lexeme = mwritef(allocator, "%", effective_line)[];
         Box!PPToken box = boxed(allocator, &line_tok);
         return PPMacroDef(tok.lexeme, box[], is_builtin:true);
