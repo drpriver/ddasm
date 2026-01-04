@@ -90,6 +90,9 @@ int compile_c_to_dasm(const(ubyte)[] source, Box!(char[])* progtext, str source_
     while(actual_len && source[actual_len-1] == 0)
         actual_len--;
     const(ubyte)[] trimmed_source = source[0 .. actual_len];
+    // skip utf-8 bom if present
+    if(trimmed_source.length >= 3 && trimmed_source[0] == 0xef && trimmed_source[1] == 0xbb && trimmed_source[2] == 0xbf)
+        trimmed_source = trimmed_source[3..$];
 
     // Phase 3: Tokenize source to PPTokens
     Barray!PPToken pp_tokens = make_barray!PPToken(arena.allocator());
