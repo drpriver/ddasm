@@ -4,3 +4,7 @@
 int test_complex(void) {
     return 0;
 }
+int main(){
+    test_complex();
+    return 0;
+}

@@ -4,3 +4,7 @@
 size_t test_string(const char *s) {
     return strlen(s);
 }
+int main(){
+    test_string("hello");
+    return 0;
+}

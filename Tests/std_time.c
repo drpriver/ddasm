@@ -4,3 +4,7 @@
 time_t test_time(void) {
     return time(0);
 }
+int main(){
+    test_time();
+    return 0;
+}

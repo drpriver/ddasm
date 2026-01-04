@@ -27,3 +27,4 @@ void start(){
     printf("x2: %p\n", x2);
     printf("x3: %p\n", x3);
 }
+int main(){ return 0; }

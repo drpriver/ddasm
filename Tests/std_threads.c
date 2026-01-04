@@ -4,3 +4,7 @@
 int test_threads(void) {
     return 0;
 }
+int main(){
+    test_threads();
+    return 0;
+}

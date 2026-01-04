@@ -15,3 +15,9 @@ int test_array_partial(void) {
 //     int arr[] = {1, 2, 3, 4, 5};
 //     return sizeof(arr) / sizeof(arr[0]);
 // }
+int main(){
+    test_array_init();
+    test_array_partial();
+    // test_array_auto_size();  // Not yet supported
+    return 0;
+}

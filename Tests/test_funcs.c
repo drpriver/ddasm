@@ -19,3 +19,4 @@ void start() {
     int fact5 = factorial(5);
     printf("factorial(5) = %d\n", fact5);
 }
+int main(){ return 0; }

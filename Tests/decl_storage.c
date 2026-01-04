@@ -26,3 +26,8 @@ int test_static_global(void) {
 int use_static_func(int x) {
     return static_func(x) + static_global;
 }
+int main(){
+    test_static();
+    test_static_global();
+    return 0;
+}

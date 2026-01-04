@@ -12,4 +12,5 @@ int main(){
     printf("4: %s\n", &((char [6]){'h', 'i'})[0]);
     printf("5: %s\n", &(struct { char c[6];}){'h', 'i'}.c[0]);
     printf("6: %s\n", (char*)&(S){'h', 'i'});
+    return 0;
 }

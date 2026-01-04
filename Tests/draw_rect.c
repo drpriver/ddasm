@@ -22,3 +22,4 @@ void start(){
     draw_rect_local(1, 2, 3, 4);
     draw_rect_literal(5, 6, 7, 8);
 }
+int main(){ return 0; }

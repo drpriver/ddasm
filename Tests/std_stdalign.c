@@ -19,3 +19,9 @@ int test_alignof_expr(void) {
     int x;
     return _Alignof(x);  // 4 (GNU extension)
 }
+int main(){
+    test_alignof_type();
+    test_alignof_struct();
+    test_alignof_expr();
+    return 0;
+}

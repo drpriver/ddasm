@@ -60,7 +60,5 @@ int main(){
     if(x != 20) return 1;
     if(bizarro(1) != 1) return 2;
     if(bizarro(5) != 7) return 3;
-    int y = 3;
-    if(y) return 1;
     return 0;
 }

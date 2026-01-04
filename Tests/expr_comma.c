@@ -32,3 +32,10 @@ int test_comma_in_for(int n) {
     }
     return sum;
 }
+int main(){
+    test_simple_comma();
+    test_comma_side_effects();
+    test_comma_in_call();
+    test_comma_in_for(1);
+    return 0;
+}

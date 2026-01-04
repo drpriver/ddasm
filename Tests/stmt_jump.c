@@ -60,3 +60,13 @@ int test_continue_in_while(int n) {
     }
     return sum;
 }
+int main(){
+    test_return_void();
+    test_return_expr(1);
+    test_early_return(1);
+    test_break_in_for();
+    test_break_in_while();
+    test_continue_in_for();
+    test_continue_in_while(1);
+    return 0;
+}

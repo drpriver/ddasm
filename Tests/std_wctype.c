@@ -4,3 +4,7 @@
 int test_wctype(wint_t c) {
     return iswalpha(c);
 }
+int main(){
+    test_wctype(1);
+    return 0;
+}

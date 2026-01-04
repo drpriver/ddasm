@@ -32,3 +32,11 @@ int test_char_init(void) {
     char d = 65;
     return c + d;
 }
+int main(){
+    test_local_no_init();
+    test_local_init();
+    test_local_expr_init();
+    test_ptr_init();
+    test_char_init();
+    return 0;
+}

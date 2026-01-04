@@ -9,3 +9,4 @@ int max(int a, int b) {
 int nested(int x) {
     return x > 10 ? 100 : x > 5 ? 50 : 0;
 }
+int main(){ return 0; }

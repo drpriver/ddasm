@@ -52,3 +52,12 @@ int test_dangling_else(int a, int b) {
             return 2;
     return 0;
 }
+int main(){
+    test_if_simple(1);
+    test_if_else(1);
+    test_if_else_if(1);
+    test_if_no_braces(1);
+    test_nested_if(1, 1);
+    test_dangling_else(1, 1);
+    return 0;
+}

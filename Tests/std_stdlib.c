@@ -6,3 +6,7 @@ int test_stdlib(void) {
     if (p) free(p);
     return abs(-5);
 }
+int main(){
+    test_stdlib();
+    return 0;
+}

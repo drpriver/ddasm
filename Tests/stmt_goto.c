@@ -50,3 +50,11 @@ two:
 other:
     return 0;
 }
+int main(){
+    test_goto(1);
+    test_forward_goto();
+    test_backward_goto();
+    test_nested_labels(1);
+    test_multiple_gotos(1);
+    return 0;
+}

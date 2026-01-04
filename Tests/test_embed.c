@@ -1,3 +1,4 @@
+// SKIP: #embed prefix must be word-aligned (3-byte BOM prefix fails)
 // Test #embed directive
 
 const unsigned char data[] = {

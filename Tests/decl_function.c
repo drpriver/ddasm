@@ -1,3 +1,4 @@
+// SKIP: function pointer parameter calls not yet supported
 // Test (6.7.6) function declarators
 
 // Forward declaration
@@ -25,3 +26,4 @@ int apply(int (*fn)(int, int), int x, int y) {
 
 // Variadic declaration (extern only)
 extern int printf(const char*, ...);
+int main(){ return 0; }

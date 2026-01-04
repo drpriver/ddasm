@@ -22,3 +22,4 @@ int test2 = 0;
 int start() {
     return test1 + test2;
 }
+int main(){ return 0; }

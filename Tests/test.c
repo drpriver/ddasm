@@ -9,3 +9,4 @@ void start() {
     int x = add(10, 20);
     printf("Result: %d\n", x);
 }
+int main(){ return 0; }

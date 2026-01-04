@@ -18,3 +18,8 @@ int test_multiple_stmts(void) {
     c = 3;
     return a + b + c;
 }
+int main(){
+    test_local_decl();
+    test_multiple_stmts();
+    return 0;
+}

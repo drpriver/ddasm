@@ -22,3 +22,11 @@ void* test_void_pointer(int* p) {
     void* v = p;
     return v;
 }
+int main(){
+    int x = 42;
+    test_pointer_return(&x);
+    test_pointer_local();
+    test_const_pointer(&x);
+    test_void_pointer(&x);
+    return 0;
+}

@@ -48,3 +48,11 @@ enum {
 int test_anon_enum(void) {
     return CONST_A + CONST_B;
 }
+int main(){
+    test_enum_value();
+    test_enum_explicit();
+    test_enum_arithmetic(1);
+    test_enum_flags();
+    test_anon_enum();
+    return 0;
+}

@@ -24,3 +24,4 @@ int nested(int x) {
 int ternary_call(int cond) {
     return cond ? max(1, 2) : min(3, 4);
 }
+int main(){ return 0; }

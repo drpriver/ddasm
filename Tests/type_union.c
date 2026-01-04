@@ -30,3 +30,10 @@ int test_union_size(void) {
 int test_union_param(union Data d) {
     return d.int_val;
 }
+int main(){
+    test_union_int();
+    test_union_ptr(1);
+    test_union_size();
+    test_union_param(1);
+    return 0;
+}

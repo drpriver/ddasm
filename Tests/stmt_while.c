@@ -47,3 +47,11 @@ int test_while_continue(int n) {
     }
     return sum;
 }
+int main(){
+    test_while_simple(1);
+    test_while_condition(1);
+    test_while_no_braces(1);
+    test_while_break(1);
+    test_while_continue(1);
+    return 0;
+}

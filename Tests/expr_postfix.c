@@ -38,3 +38,13 @@ int test_postfix_incr(int x) {
     int b = x--;
     return a + b;
 }
+int main(){
+    int arr[3] = {1, 2, 3};
+    struct Point p = {5, 10};
+    test_subscript(arr);
+    test_call(1);
+    test_member_dot(p);
+    test_member_arrow(&p);
+    test_postfix_incr(1);
+    return 0;
+}

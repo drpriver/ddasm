@@ -17,3 +17,4 @@ void start(){
         exit(1);
     }
 }
+int main(){ return 0; }

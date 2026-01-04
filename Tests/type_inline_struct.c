@@ -10,3 +10,7 @@ int test_simple(void) {
     s.inner.x = 10;
     return s.inner.x;
 }
+int main(){
+    test_simple();
+    return 0;
+}

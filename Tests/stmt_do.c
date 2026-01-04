@@ -50,3 +50,11 @@ int test_nested_do_while(void) {
     } while (i < 2);
     return result;  // 2 * 3 = 6
 }
+int main(){
+    test_do_while(1);
+    test_do_while_once();
+    test_do_while_break(1);
+    test_do_while_continue();
+    test_nested_do_while();
+    return 0;
+}

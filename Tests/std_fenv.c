@@ -4,3 +4,7 @@
 int test_fenv(void) {
     return 0;
 }
+int main(){
+    test_fenv();
+    return 0;
+}

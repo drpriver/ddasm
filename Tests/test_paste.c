@@ -3,3 +3,4 @@
 
 int PASTE(foo, bar);
 COMPILE_TIME_ASSERT(mytest, 1);
+int main(){ return 0; }

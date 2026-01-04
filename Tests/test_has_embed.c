@@ -39,3 +39,4 @@ int test_nofile = HAS_NOFILE;
 int test_limit0 = LIMIT0_EMPTY;
 int test_found = FOUND_EQ_1;
 int test_notfound = NOTFOUND_EQ_0;
+int main(){ return 0; }

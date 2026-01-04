@@ -8,3 +8,4 @@ int sum(int n, ...) {
     va_end(ap);
     return x;
 }
+int main(){ return 0; }

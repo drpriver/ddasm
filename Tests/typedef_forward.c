@@ -40,3 +40,7 @@ union _data {
 int get_ival(MyData *d) {
     return d->ival;
 }
+int main(){
+    test_local();
+    return 0;
+}

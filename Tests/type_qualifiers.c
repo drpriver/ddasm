@@ -36,3 +36,16 @@ int test_atomic_type(_Atomic(int) x) {
 int test_atomic_ptr(_Atomic(void*) p) {
     return p != 0;
 }
+int main(){
+    int x = 42;
+    int y = 10;
+    test_const_param(1);
+    test_const_ptr(&x);
+    test_ptr_to_const(&x);
+    test_volatile(1);
+    test_restrict(&x, &y);
+    test_atomic_qual(1);
+    test_atomic_type(1);
+    test_atomic_ptr(0);
+    return 0;
+}

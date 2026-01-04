@@ -37,3 +37,11 @@ int test_arrays_and_scalars(void) {
     y = 2;
     return x + arr[0] + arr[1] + arr[2] + y;  // 63
 }
+int main(){
+    test_multiple_ints();
+    test_mixed_pointers();
+    test_with_initializers();
+    test_partial_init();
+    test_arrays_and_scalars();
+    return 0;
+}

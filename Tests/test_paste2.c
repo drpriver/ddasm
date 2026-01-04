@@ -3,3 +3,4 @@
 
 int PASTE(foo, bar);
 int PASTE_SPACE(baz, qux);
+int main(){ return 0; }

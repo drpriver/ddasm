@@ -4,3 +4,7 @@
 int test_uchar(void) {
     return 0;
 }
+int main(){
+    test_uchar();
+    return 0;
+}

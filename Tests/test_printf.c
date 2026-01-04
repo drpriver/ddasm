@@ -7,3 +7,4 @@ void start() {
     int sum = a + b;
     printf("5 + 3 = %d\n", sum);
 }
+int main(){ return 0; }

@@ -29,3 +29,11 @@ int test_sizes(void) {
     int l_size = sizeof(long);
     return c_size + s_size + i_size + l_size;
 }
+int main(){
+    test_char(1);
+    test_short(1);
+    test_int(1);
+    test_long(1);
+    test_sizes();
+    return 0;
+}

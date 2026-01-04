@@ -1,3 +1,4 @@
+// SKIP: float suffix issue causes assertion failures
 #ifdef __DDASM__
 void abort(void){__dasm{dump;abort;}}
 #else

@@ -16,3 +16,4 @@ void start(){
     printf("&pp->x: %p\n", &pp->x);
     printf("&pp->y: %p\n", &pp->y);
 }
+int main(){ return 0; }

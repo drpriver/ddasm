@@ -26,3 +26,4 @@ void start() {
         printf("x > 5: false\n");
     }
 }
+int main(){ return 0; }

@@ -1,4 +1,4 @@
-
+// SKIP: uses BSD/macOS-specific __swbuf
 typedef struct {
     int _w;
     int _lbfsize;
@@ -11,3 +11,4 @@ int __sputc(int _c, FILE *_p) {
 	else
 		return (__swbuf(_c, _p));
 }
+int main(){ return 0; }

@@ -20,3 +20,4 @@ union wait {
 		    w_Filler:16;                /* upper bits filler */
 	} w_S;
 };
+int main(){ return 0; }

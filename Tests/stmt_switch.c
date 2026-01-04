@@ -78,3 +78,11 @@ int test_switch_expressions(int x) {
     }
     return result;
 }
+int main(){
+    test_switch_basic(1);
+    test_switch_no_default(1);
+    test_switch_fallthrough(1);
+    test_switch_default_middle(1);
+    test_switch_expressions(1);
+    return 0;
+}

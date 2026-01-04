@@ -1,3 +1,4 @@
+// SKIP: sin() not available in libc.so.6 (needs libm)
 #ifdef __DDASM__
 void abort(void){__dasm{dump;abort;}}
 #else

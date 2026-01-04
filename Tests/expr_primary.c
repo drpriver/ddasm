@@ -26,3 +26,10 @@ char* test_strings(void) {
 int test_parens(int x) {
     return (x + 1) * (x - 1);
 }
+int main(){
+    test_identifiers(1);
+    test_constants();
+    test_strings();
+    test_parens(1);
+    return 0;
+}

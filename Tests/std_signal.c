@@ -9,3 +9,7 @@ int test_signal(void) {
     signal(SIGINT, handler);
     return 0;
 }
+int main(){
+    test_signal();
+    return 0;
+}

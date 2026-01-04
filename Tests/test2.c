@@ -3,3 +3,4 @@ int start() {
     int b = 3;
     return a + b;
 }
+int main(){ return 0; }

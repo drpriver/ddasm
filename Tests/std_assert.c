@@ -17,3 +17,7 @@ int test_assert(void) {
     // assert macro is defined
     return 0;
 }
+int main(){
+    test_assert();
+    return 0;
+}

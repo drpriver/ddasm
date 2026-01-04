@@ -49,3 +49,9 @@ int test_multi_embedded(void) {
     m.size.h = 20;
     return m.pos.x + m.pos.y + m.size.w + m.size.h;
 }
+int main(){
+    test_named_embedded();
+    test_named_embedded_union();
+    test_multi_embedded();
+    return 0;
+}

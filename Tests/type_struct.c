@@ -47,3 +47,14 @@ int test_linked_node(struct Node* n) {
     }
     return n->value;
 }
+int main(){
+    struct Point p = {5, 10};
+    struct Rect r = {{1, 2}, 100, 200};
+    struct Node n = {42, 0};
+    test_struct_local();
+    test_struct_param(p);
+    test_struct_ptr(&p);
+    test_nested_struct(r);
+    test_linked_node(&n);
+    return 0;
+}

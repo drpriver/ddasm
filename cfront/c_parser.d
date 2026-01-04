@@ -31,6 +31,7 @@ struct CParser {
 
     // Type tracking for implicit casts
     Table!(str, CType*) local_var_types;  // Local variable types (cleared per function)
+    Table!(str, CType*) func_types;        // Function name -> function type (for setting expr types)
     Table!(str, size_t) func_info;         // Function name -> index in functions array
     Barray!(CFunction)* functions_ptr;     // Pointer to functions array (set during parse)
     CType* current_return_type;            // Current function's return type (for return checking)
@@ -185,6 +186,7 @@ struct CParser {
     // Check if a type needs conversion to target type
     // Returns true if implicit cast is needed
     bool needs_conversion(CType* from, CType* to){
+        // FIXME: pointer types??
         if(from is null || to is null) return false;
         if(from is to) return false;
         if(from.kind == to.kind && from.is_unsigned == to.is_unsigned) return false;
@@ -277,6 +279,14 @@ struct CParser {
                 func_indices[fname] = idx;
                 func_info[fname] = idx;
                 functions ~= func;
+
+                // Create and store function type for identifier resolution
+                auto param_types = make_barray!(CType*)(allocator);
+                foreach(ref p; func.params){
+                    param_types ~= p.type;
+                }
+                CType* ftype = make_function_type(allocator, func.return_type, param_types[], func.is_varargs);
+                func_types[fname] = ftype;
             }
         }
 
@@ -288,6 +298,7 @@ struct CParser {
         typedef_types.data.allocator = allocator;
         global_var_types.data.allocator = allocator;
         local_var_types.data.allocator = allocator;
+        func_types.data.allocator = allocator;
         func_info.data.allocator = allocator;
 
         while(!at_end){
@@ -4193,7 +4204,7 @@ struct CParser {
             CToken op = advance();
             CExpr* right = parse_assignment();
             if(right is null) return null;
-            expr = CBinary.make(allocator, expr, op.type, right, op);
+            expr = CBinary.make(allocator, expr, op.type, right, op, right.type);
         }
 
         return expr;
@@ -4218,18 +4229,19 @@ struct CParser {
             if(value is null) return null;
 
             // Apply implicit cast for assignments
-            CType* target_type = get_expr_type(expr);
-            if(target_type !is null){
-                if(op_tok.type == CTokenType.EQUAL){
-                    // Simple assignment: cast RHS to LHS type
-                    value = implicit_cast(value, target_type, op_tok);
-                } else if(target_type.is_float()){
-                    // Compound assignment with float LHS: cast RHS to double for arithmetic
-                    value = implicit_cast(value, &TYPE_DOUBLE, op_tok);
-                }
+            // CType* target_type = get_expr_type(expr);
+            CType* target_type = expr.type;
+            if(target_type.is_float() && op_tok.type != CTokenType.EQUAL){
+                // Compound assignment with float LHS: cast RHS to double for arithmetic
+                value = implicit_cast(value, &TYPE_DOUBLE, op_tok);
+                if(!value) return null;
             }
-
-            return CAssign.make(allocator, expr, op_tok.type, value, op_tok);
+            else {
+                // Simple assignment: cast RHS to LHS type
+                value = implicit_cast(value, target_type, op_tok);
+                if(!value) return null;
+            }
+            return CAssign.make(allocator, expr, op_tok.type, value, op_tok, target_type);
         }
 
         return expr;
@@ -4239,11 +4251,16 @@ struct CParser {
     //     logical-OR-expression
     //     logical-OR-expression ? expression : conditional-expression
     CExpr* parse_ternary(){
+        CToken tok = peek();
         CExpr* condition = parse_logical_or();
         if(condition is null) return null;
 
         if(!check(CTokenType.QUESTION)){
             return condition;
+        }
+        if(!condition.type.is_boolable){
+            error(tok, "condition of ?: must be a boolable condition");
+            return null;
         }
 
         CToken question_tok = advance();  // consume '?'
@@ -4261,8 +4278,11 @@ struct CParser {
         // After ':', parse conditional-expression (right-associative)
         CExpr* if_false = parse_ternary();
         if(if_false is null) return null;
+        // FIXME: unify types for other than arithmetic
+        usual_arithmetic_conversions(if_true, if_false, question_tok);
+        // FIXME: pointers etc.
 
-        return CTernary.make(allocator, condition, if_true, if_false, question_tok);
+        return CTernary.make(allocator, condition, if_true, if_false, question_tok, if_true.type);
     }
 
     // (6.5.15) logical-OR-expression:
@@ -4276,7 +4296,16 @@ struct CParser {
             CToken op = advance();
             CExpr* right = parse_logical_and();
             if(right is null) return null;
-            expr = CBinary.make(allocator, expr, op.type, right, op);
+            if(!expr.type.is_boolable()){
+                error(expr.token, "lhs of || needs to be boolable");
+                return null;
+            }
+            if(!right.type.is_boolable()){
+                error(expr.token, "lhs of || needs to be boolable");
+                return null;
+            }
+            // TODO: insert implicit casts here.
+            expr = CBinary.make(allocator, expr, op.type, right, op, &TYPE_INT);
         }
 
         return expr;
@@ -4293,7 +4322,16 @@ struct CParser {
             CToken op = advance();
             CExpr* right = parse_bitwise_or();
             if(right is null) return null;
-            expr = CBinary.make(allocator, expr, op.type, right, op);
+            if(!expr.type.is_boolable()){
+                error(expr.token, "lhs of || needs to be boolable");
+                return null;
+            }
+            if(!right.type.is_boolable()){
+                error(expr.token, "lhs of || needs to be boolable");
+                return null;
+            }
+            // TODO: implicit casts
+            expr = CBinary.make(allocator, expr, op.type, right, op, &TYPE_INT);
         }
 
         return expr;
@@ -4310,7 +4348,9 @@ struct CParser {
             CToken op = advance();
             CExpr* right = parse_bitwise_xor();
             if(right is null) return null;
-            expr = CBinary.make(allocator, expr, op.type, right, op);
+            usual_arithmetic_conversions(expr, right, op);
+            // TODO: implicit casts
+            expr = CBinary.make(allocator, expr, op.type, right, op, expr.type);
         }
 
         return expr;
@@ -4327,7 +4367,9 @@ struct CParser {
             CToken op = advance();
             CExpr* right = parse_bitwise_and();
             if(right is null) return null;
-            expr = CBinary.make(allocator, expr, op.type, right, op);
+            usual_arithmetic_conversions(expr, right, op);
+            // TODO: implicit casts
+            expr = CBinary.make(allocator, expr, op.type, right, op, expr.type);
         }
 
         return expr;
@@ -4344,7 +4386,9 @@ struct CParser {
             CToken op = advance();
             CExpr* right = parse_equality();
             if(right is null) return null;
-            expr = CBinary.make(allocator, expr, op.type, right, op);
+            usual_arithmetic_conversions(expr, right, op);
+            // TODO: implicit casts
+            expr = CBinary.make(allocator, expr, op.type, right, op, expr.type);
         }
 
         return expr;
@@ -4363,7 +4407,8 @@ struct CParser {
             CExpr* right = parse_comparison();
             if(right is null) return null;
             usual_arithmetic_conversions(expr, right, op);
-            expr = CBinary.make(allocator, expr, op.type, right, op);
+            // TODO: implicit casts
+            expr = CBinary.make(allocator, expr, op.type, right, op, expr.type);
         }
 
         return expr;
@@ -4384,8 +4429,9 @@ struct CParser {
             CToken op = advance();
             CExpr* right = parse_shift();
             if(right is null) return null;
+            // TODO: this can fail, emit error and return null
             usual_arithmetic_conversions(expr, right, op);
-            expr = CBinary.make(allocator, expr, op.type, right, op);
+            expr = CBinary.make(allocator, expr, op.type, right, op, expr.type);
         }
 
         return expr;
@@ -4403,7 +4449,8 @@ struct CParser {
             CToken op = advance();
             CExpr* right = parse_additive();
             if(right is null) return null;
-            expr = CBinary.make(allocator, expr, op.type, right, op);
+            // TODO: implicit casts
+            expr = CBinary.make(allocator, expr, op.type, right, op, expr.type);
         }
 
         return expr;
@@ -4421,8 +4468,9 @@ struct CParser {
             CToken op = advance();
             CExpr* right = parse_multiplicative();
             if(right is null) return null;
+            // TODO: this can fail, emit error and return null
             usual_arithmetic_conversions(expr, right, op);
-            expr = CBinary.make(allocator, expr, op.type, right, op);
+            expr = CBinary.make(allocator, expr, op.type, right, op, expr.type);
         }
 
         return expr;
@@ -4441,8 +4489,9 @@ struct CParser {
             CToken op = advance();
             CExpr* right = parse_unary();
             if(right is null) return null;
+            // TODO: this can fail, emit error and return null
             usual_arithmetic_conversions(expr, right, op);
-            expr = CBinary.make(allocator, expr, op.type, right, op);
+            expr = CBinary.make(allocator, expr, op.type, right, op, expr.type);
         }
 
         return expr;
@@ -4456,8 +4505,8 @@ struct CParser {
     //     sizeof unary-expression
     //     sizeof ( type-name )
     //     alignof ( type-name )
-    //     _Countof unary-expression        (NOT IMPLEMENTED)
-    //     _Countof ( type-name )           (NOT IMPLEMENTED)
+    //     _Countof unary-expression
+    //     _Countof ( type-name )
     //
     // (6.5.4.1) unary-operator: one of
     //     & * + - ~ !
@@ -4470,7 +4519,13 @@ struct CParser {
             CToken op = advance();
             CExpr* operand = parse_unary();
             if(operand is null) return null;
-            return CUnary.make(allocator, op.type, operand, true, op);
+            CType* type;
+            switch(op.type)with(op.type){
+                // TODO:
+                default: assert(0, "TODO");
+            }
+            // TODO: insert implicit casts here.
+            return CUnary.make(allocator, op.type, operand, true, op, type);
         }
 
         // sizeof operator: sizeof(type) or sizeof expr
@@ -4625,23 +4680,71 @@ struct CParser {
                 if(index is null) return null;
                 consume(CTokenType.RIGHT_BRACKET, "Expected ']' after subscript");
                 if(ERROR_OCCURRED) return null;
-                expr = CSubscript.make(allocator, expr, index, bracket);
+                if(!expr.type.is_array_or_pointer){
+                    error(bracket, "Indexing requires an array or pointer type");
+                    return null;
+                }
+                expr = CSubscript.make(allocator, expr, index, bracket, expr.type.element_type());
             } else if(match(CTokenType.DOT)){
                 // Member access: expr.member
                 CToken dot = previous();
                 CToken member = consume(CTokenType.IDENTIFIER, "Expected member name after '.'");
                 if(ERROR_OCCURRED) return null;
-                expr = CMemberAccess.make(allocator, expr, member, false, dot);
+                if(expr.type.is_pointer() && expr.type.pointed_to.is_struct_or_union()){
+                    // EXTENSION: allow dot operator on pointers by creating an implicit
+                    // dereference.
+                    // Could maybe do this via a synthetic arrow?
+                    // But this "just works" so whatever.
+                    expr = CUnary.make(allocator, CTokenType.STAR, expr, true, dot, expr.type.pointed_to);
+                    if(!expr) return null;
+                }
+                CType* obj_type = expr.type;
+                if(!obj_type.is_struct_or_union()){
+                    error(dot, "'.' operator requires a struct or union type");
+                    return null;
+                }
+                // Set type from struct field
+                if(StructField *field = obj_type.get_field(member.lexeme)){
+                    CType* type = field.type;
+                    expr = CMemberAccess.make(allocator, expr, member, false, dot, field.type);
+                }
+                else {
+                    error(member, "Unknown field name");
+                    return null;
+                }
             } else if(match(CTokenType.ARROW)){
                 // Pointer member access: expr->member
                 CToken arrow = previous();
                 CToken member = consume(CTokenType.IDENTIFIER, "Expected member name after '->'");
                 if(ERROR_OCCURRED) return null;
-                expr = CMemberAccess.make(allocator, expr, member, true, arrow);
+                CType* obj_type = expr.type;
+                if(!obj_type.is_pointer){
+                    error(arrow, "'->' operator requires a pointer type");
+                    return null;
+                }
+                if(!obj_type.pointed_to.is_struct_or_union){
+                    error(arrow, "'->' operator requires a pointer to a structure or union");
+                    return null;
+                }
+                if(StructField *field = obj_type.pointed_to.get_field(member.lexeme)){
+                    CType* type = field.type;
+                    expr = CMemberAccess.make(allocator, expr, member, true, arrow, field.type);
+                }
+                else {
+                    error(member, "Unknown field name");
+                    return null;
+                }
             } else if(match(CTokenType.PLUS_PLUS) || match(CTokenType.MINUS_MINUS)){
                 // Postfix increment/decrement
                 CToken op = previous();
-                expr = CUnary.make(allocator, op.type, expr, false, op);
+                CType* type;
+                switch(op.type)with(op.type){
+                    case PLUS_PLUS:
+                    case MINUS_MINUS:
+                    default:
+                        assert(0, "TODO");
+                }
+                expr = CUnary.make(allocator, op.type, expr, false, op, type);
             } else {
                 break;
             }
@@ -4658,32 +4761,83 @@ struct CParser {
         auto args = make_barray!(CExpr*)(allocator);
 
         // Try to get function parameter types for implicit casts
-        CFunction* func = null;
-        if(CIdentifier* id = callee.as_identifier()){
-            if(size_t* idx = id.name.lexeme in func_info){
-                func = &(*functions_ptr)[*idx];
-            }
+        CType* function_type = callee.type;
+        if(function_type.is_pointer)
+            function_type = function_type.pointed_to;
+        if(!function_type.is_function){
+            error(paren, "Attempt to call a non-function type");
+            return null;
         }
 
         if(!check(CTokenType.RIGHT_PAREN)){
             size_t arg_idx = 0;
             do {
+                CToken tok = peek();
                 // Use parse_assignment, not parse_expression, to avoid comma operator
                 CExpr* arg = parse_assignment();
                 if(arg is null) return null;
 
                 // Apply implicit cast if we have parameter type info
-                if(func !is null && arg_idx < func.params.length){
-                    CType* param_type = func.params[arg_idx].type;
-                    arg = implicit_cast(arg, param_type, paren);
-                } else if(func !is null && func.is_varargs && arg_idx >= func.params.length){
+                if(arg_idx < function_type.param_types.length){
+                    CType* param_type = function_type.param_types[arg_idx];
+                    arg = implicit_cast(arg, param_type, tok);
+                    if(!arg) return null;
+                    // FIXME: type check??
+                } else if(function_type.is_varargs && arg_idx >= function_type.param_types.length){
                     // Varargs: float promotes to double
-                    CType* arg_type = get_expr_type(arg);
-                    if(arg_type && arg_type.kind == CTypeKind.FLOAT){
-                        arg = implicit_cast(arg, &TYPE_DOUBLE, paren);
+                    final switch(arg.type.kind) with(arg.type.kind){
+                        case VOID:
+                            error(tok, "Void-returning arguments to functions are illlegal");
+                            return null;
+                        case CHAR:
+                        case SHORT:
+                        case INT:
+                            arg = implicit_cast(arg, arg.type.is_unsigned?&TYPE_UINT:&TYPE_INT, tok);
+                            if(!arg) return null;
+                            break;
+                        case LONG:
+                        case LONG_LONG:
+                            // no conversion needed
+                            break;
+                        case INT128:
+                            error(tok, "int128 cannot be passed as varargs");
+                            // Or can it?
+                            return null;
+                        case FLOAT:
+                            arg = implicit_cast(arg, &TYPE_DOUBLE, tok);
+                            if(!arg) return null;
+                            break;
+                        case DOUBLE:
+                            // no conversion needed
+                            break;
+                        case LONG_DOUBLE:
+                            // Idk if this is correct.
+                            error(tok, "long double cannot be passed as varargs");
+                            return null;
+                        case POINTER:
+                            // No conversion
+                            break;
+                        case ARRAY:
+                            // Do we need array decay here or is this ok?
+                            break;
+                        case FUNCTION:
+                             // Do we need function pointer decay here?
+                        case STRUCT:
+                            error(tok, "Cannot pass a struct to varags");
+                            return null;
+                        case UNION:
+                            error(tok, "Cannot pass a union to varags");
+                            return null;
+                        case EMBED:
+                            error(tok, "UNIMPLEMENTED: EMBED");
+                            return null;
+                        case INIT_LIST:
+                            error(tok, "ICE: INIT_LIST ESCAPED");
+                            return null;
+                        case ENUM:
+                            break;
                     }
                 }
-
                 args ~= arg;
                 arg_idx++;
             } while(match(CTokenType.COMMA));
@@ -4692,7 +4846,7 @@ struct CParser {
         consume(CTokenType.RIGHT_PAREN, "Expected ')' after arguments");
         if(ERROR_OCCURRED) return null;
 
-        return CCall.make(allocator, callee, args[], paren);
+        return CCall.make(allocator, callee, args[], paren, function_type.return_type);
     }
 
     // GNU statement expression: ({ stmt; stmt; expr; })
@@ -4702,7 +4856,6 @@ struct CParser {
         if(ERROR_OCCURRED) return null;
 
         auto statements = make_barray!(CStmt*)(allocator);
-        CExpr* result_expr = null;
 
         while(!check(CTokenType.RIGHT_BRACE) && !at_end){
             // Try to parse a statement
@@ -4716,9 +4869,13 @@ struct CParser {
         consume(CTokenType.RIGHT_PAREN, "Expected ')' after statement expression");
         if(ERROR_OCCURRED) return null;
 
-        // The result is the last expression statement if any
-        // For now, we don't extract it specially - codegen will handle it
-        return CStmtExpr.make(allocator, statements[], result_expr, tok);
+        CExpr* result_expr = null;
+        if(statements.count){
+            if(CExprStmt *s = statements[$-1].as_expr_stmt)
+                result_expr = s.expression;
+        }
+
+        return CStmtExpr.make(allocator, statements[], tok, result_expr?result_expr.type:&TYPE_VOID);
     }
 
     // (6.5.2) primary-expression:
@@ -4794,7 +4951,12 @@ struct CParser {
             }
             consume(CTokenType.RIGHT_PAREN, "Expected ')' after _Generic");
             if(ERROR_OCCURRED) return null;
-            return CGeneric.make(allocator, ctrl, assocs[], gen_tok);
+            CExpr* picked = resolve_generic(assocs[], ctrl.type);
+            if(!picked){
+                error(gen_tok, "None of the types match the _Generic association list");
+                return null;
+            }
+            return CGeneric.make(allocator, ctrl, assocs[], gen_tok, picked, picked.type);
         }
 
         if(check(CTokenType.IDENTIFIER)){
@@ -4873,7 +5035,7 @@ struct CParser {
                 }
                 consume(CTokenType.RIGHT_PAREN, "Expected ')' after __builtin_offsetof");
                 if(ERROR_OCCURRED) return null;
-                return CLiteral.make_int(allocator, cast(long)offset, off_tok);
+                return CLiteral.make_size_t(allocator, offset, off_tok);
             }
             // __embed("path", offset, length) - emitted by preprocessor for #embed
             if(peek().lexeme == "__embed"){
@@ -4917,7 +5079,21 @@ struct CParser {
 
                 return CEmbed.make(allocator, path, offset, length, embed_tok);
             }
-            return CIdentifier.make(allocator, advance());
+            CToken id_tok = advance();
+            CType* type = null; 
+            // Set type from symbol tables
+            if(auto t = id_tok.lexeme in local_var_types)
+                type = *t;
+            else if(auto t = id_tok.lexeme in global_var_types)
+                type = *t;
+            else if(auto t = id_tok.lexeme in func_types)
+                type = *t;
+            else {
+                error(id_tok, "Unknown identifier");
+                return null;
+            }
+            CExpr* id_expr = CIdentifier.make(allocator, id_tok, type);
+            return id_expr;
         }
 
         if(match(CTokenType.LEFT_PAREN)){
@@ -5121,6 +5297,10 @@ struct CParser {
                 if(t.is_unsigned) fprintf(stderr, "unsigned ");
                 fprintf(stderr, "long");
                 break;
+            case LONG_LONG:
+                if(t.is_unsigned) fprintf(stderr, "unsigned ");
+                fprintf(stderr, "long long");
+                break;
             case INT128:
                 if(t.is_unsigned) fprintf(stderr, "unsigned ");
                 fprintf(stderr, "__int128");
@@ -5147,6 +5327,12 @@ struct CParser {
                 break;
             case FUNCTION:
                 fprintf(stderr, "function");
+                break;
+            case EMBED:
+                fprintf(stderr, "EMBED");
+                break;
+            case INIT_LIST:
+                fprintf(stderr, "INIT_LIST");
                 break;
         }
     }

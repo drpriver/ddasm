@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Simple test runner for C parser tests and DASM tests.
-Runs c2dasm on each .c file and ddasm on each .dasm file in Tests/.
+"""Test runner for C and DASM tests.
+Compiles C files with c2dasm and runs them with ddasm.
+Runs DASM files directly with ddasm.
 """
 
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 # Colors for terminal output
@@ -37,8 +39,8 @@ def main():
     fail_count = 0
     skip_count = 0
 
-    # Run C parser tests
-    print("Running C parser tests...")
+    # Run C tests (compile and execute)
+    print("Running C tests...")
     print("=========================")
     print()
 
@@ -55,24 +57,51 @@ def main():
                 skip_count += 1
                 continue
 
-        # Run c2dasm and capture output
-        result = subprocess.run(
+        # Step 1: Compile C to DASM
+        compile_result = subprocess.run(
             [str(c2dasm), str(test_file)],
             capture_output=True,
             text=True
         )
 
-        if result.returncode == 0:
-            print(f"{GREEN}PASS{NC}: {filename}")
-            pass_count += 1
-        else:
-            print(f"{RED}FAIL{NC}: {filename}")
-            # Show first 5 lines of error output
-            error_output = result.stderr or result.stdout
+        if compile_result.returncode != 0:
+            print(f"{RED}FAIL{NC}: {filename} (compile error)")
+            error_output = compile_result.stderr or compile_result.stdout
             error_lines = error_output.strip().split('\n')[:5]
             for line in error_lines:
                 print(f"      {line}")
             fail_count += 1
+            continue
+
+        # Step 2: Run the compiled DASM
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.dasm', delete=False) as tmp:
+            tmp.write(compile_result.stdout)
+            tmp_path = tmp.name
+
+        try:
+            run_result = subprocess.run(
+                [str(ddasm), tmp_path],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+
+            if run_result.returncode == 0:
+                print(f"{GREEN}PASS{NC}: {filename}")
+                pass_count += 1
+            else:
+                print(f"{RED}FAIL{NC}: {filename} (runtime error, exit code {run_result.returncode})")
+                error_output = run_result.stderr or run_result.stdout
+                if error_output:
+                    error_lines = error_output.strip().split('\n')[:5]
+                    for line in error_lines:
+                        print(f"      {line}")
+                fail_count += 1
+        except subprocess.TimeoutExpired:
+            print(f"{RED}FAIL{NC}: {filename} (timeout)")
+            fail_count += 1
+        finally:
+            os.unlink(tmp_path)
 
     # Run DASM tests
     print()

@@ -7,3 +7,4 @@ void print(const char* s){
 void start(){
     print("hello");
 }
+int main(){ return 0; }

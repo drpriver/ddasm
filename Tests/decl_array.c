@@ -21,3 +21,10 @@ int sum_array(int* arr, int n) {
     }
     return sum;
 }
+int main(){
+    int arr[10] = {1,2,3,4,5,6,7,8,9,10};
+    test_array_local();
+    test_array_param(arr);
+    sum_array(arr, 10);
+    return 0;
+}

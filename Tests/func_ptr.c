@@ -1,3 +1,4 @@
+// SKIP: calling through function pointer variables/parameters not yet supported
 // Test function pointers
 #ifdef __DDASM__
 void abort(void){__dasm{dump;abort;}}

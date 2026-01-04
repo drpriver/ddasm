@@ -48,3 +48,14 @@ int test_assign_in_expr(int* p) {
     *p = x = 5;
     return x;
 }
+int main(){
+    int x = 0;
+    test_simple_assign();
+    test_compound_add_sub(1);
+    test_compound_mul_div_mod(1);
+    test_compound_bitwise(1);
+    test_compound_shift(1);
+    test_chain_assign();
+    test_assign_in_expr(&x);
+    return 0;
+}

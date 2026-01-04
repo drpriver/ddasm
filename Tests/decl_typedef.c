@@ -32,3 +32,12 @@ Color test_typedef_enum(void) {
     Color c = RED;
     return c;
 }
+int main(){
+    int x = 42;
+    Point p = {1, 2};
+    test_typedef_basic(1);
+    test_typedef_ptr(&x);
+    test_typedef_struct(p);
+    test_typedef_enum();
+    return 0;
+}

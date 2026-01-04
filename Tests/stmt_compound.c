@@ -33,3 +33,10 @@ int test_block_scope(void) {
     }
     return x;  // Should return 10
 }
+int main(){
+    test_empty_block();
+    test_simple_block();
+    test_nested_blocks();
+    test_block_scope();
+    return 0;
+}

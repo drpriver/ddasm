@@ -67,3 +67,19 @@ int test_precedence_bitwise(int a, int b, int c) {
 int test_precedence_compare(int a, int b, int c) {
     return a == b < c;  // a == (b < c)
 }
+int main(){
+    test_multiplicative(1, 1);
+    test_additive(1, 1);
+    test_shift(1);
+    test_relational(1, 1);
+    test_equality(1, 1);
+    test_bitwise_and(1, 1);
+    test_bitwise_xor(1, 1);
+    test_bitwise_or(1, 1);
+    test_logical_and(1, 1);
+    test_logical_or(1, 1);
+    test_precedence_logical(1, 1, 1);
+    test_precedence_bitwise(1, 1, 1);
+    test_precedence_compare(1, 1, 1);
+    return 0;
+}

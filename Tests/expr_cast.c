@@ -20,3 +20,10 @@ int test_nested_cast(int x) {
 int test_cast_in_expr(int x, int y) {
     return (int)x + (int)y;
 }
+int main(){
+    test_basic_cast();
+    test_pointer_cast(1);
+    test_nested_cast(1);
+    test_cast_in_expr(1, 1);
+    return 0;
+}

@@ -42,6 +42,7 @@ enum CTypeKind {
     SHORT,
     INT,
     LONG,
+    LONG_LONG,
     INT128,
     FLOAT,
     DOUBLE,
@@ -52,6 +53,8 @@ enum CTypeKind {
     STRUCT,
     UNION,
     ENUM,
+    EMBED,
+    INIT_LIST,
 }
 
 // Struct field definition
@@ -123,6 +126,7 @@ struct CType {
             case CTypeKind.LONG:
                 static if(IS_LP64) return 8;
                 else return 4;
+            case CTypeKind.LONG_LONG:   return 8;
             case CTypeKind.INT128:      return 16;
             case CTypeKind.FLOAT:       return 4;
             case CTypeKind.DOUBLE:      return 8;
@@ -141,6 +145,8 @@ struct CType {
             case CTypeKind.STRUCT:   return struct_size;
             case CTypeKind.UNION:    return struct_size;  // Union size is max of all members
             case CTypeKind.ENUM:     return 4;  // Enums are ints
+            case CTypeKind.EMBED:    return 0; // maybe assert? idk
+            case CTypeKind.INIT_LIST:return 0; // maybe assert? idk
         }
     }
 
@@ -155,6 +161,7 @@ struct CType {
             case CTypeKind.LONG:
                 static if(IS_LP64) return 8;
                 else return 4;
+            case CTypeKind.LONG_LONG:   return 8;
             case CTypeKind.INT128:      return 16;
             case CTypeKind.FLOAT:       return 4;
             case CTypeKind.DOUBLE:      return 8;
@@ -180,6 +187,8 @@ struct CType {
                 }
                 return max_align;
             case CTypeKind.ENUM:     return 4;
+            case CTypeKind.EMBED:    return 0; // maybe assert? idk
+            case CTypeKind.INIT_LIST:return 0; // maybe assert? idk
         }
     }
 
@@ -189,17 +198,21 @@ struct CType {
             size_t s = pointed_to.size_of();
             return s ? s : 1;  // void* arithmetic uses size 1
         }
+        assert(0, "element size for non pointer/array");
         return 1;
     }
 
     bool is_void(){ return kind == CTypeKind.VOID; }
     bool is_pointer(){ return kind == CTypeKind.POINTER; }
     bool is_array(){ return kind == CTypeKind.ARRAY; }
+    bool is_array_or_pointer(){ return kind == CTypeKind.ARRAY || kind == CTypeKind.POINTER; }
+    bool is_object(){ return kind != CTypeKind.FUNCTION;}
     bool is_struct(){ return kind == CTypeKind.STRUCT; }
     bool is_union(){ return kind == CTypeKind.UNION; }
     bool is_struct_or_union(){ return kind == CTypeKind.STRUCT || kind == CTypeKind.UNION; }
     bool is_enum(){ return kind == CTypeKind.ENUM; }
     bool is_function(){ return kind == CTypeKind.FUNCTION; }
+    bool is_embed(){ return kind == CTypeKind.EMBED;}
     bool is_integer(){
         return kind == CTypeKind.CHAR || kind == CTypeKind.SHORT ||
                kind == CTypeKind.INT || kind == CTypeKind.LONG ||
@@ -213,6 +226,28 @@ struct CType {
     }
     bool is_arithmetic(){
         return is_integer() || is_float();
+    }
+    bool is_boolable(){
+        final switch(kind)with(kind){
+            case VOID        : return false;
+            case CHAR        : return true;
+            case SHORT       : return true;
+            case INT         : return true;
+            case LONG        : return true;
+            case LONG_LONG   : return true;
+            case INT128      : return true;
+            case FLOAT       : return true;
+            case DOUBLE      : return true;
+            case LONG_DOUBLE : return true;
+            case POINTER     : return true;
+            case ARRAY       : return true;
+            case FUNCTION    : return true; // a bit weird
+            case STRUCT      : return false;
+            case UNION       : return false;
+            case ENUM        : return true;
+            case EMBED       : return false;
+            case INIT_LIST   : return false;
+        }
     }
 
     // Get a struct/union field by name
@@ -228,6 +263,7 @@ struct CType {
     CType* element_type(){
         if(kind == CTypeKind.ARRAY || kind == CTypeKind.POINTER)
             return pointed_to;
+        assert(0, "element type for nonnull array/pointer");
         return null;
     }
 
@@ -250,20 +286,29 @@ __gshared CType TYPE_VOID = { kind: CTypeKind.VOID };
 __gshared CType TYPE_CHAR = { kind: CTypeKind.CHAR };
 __gshared CType TYPE_INT = { kind: CTypeKind.INT };
 __gshared CType TYPE_LONG = { kind: CTypeKind.LONG };
+__gshared CType TYPE_LLONG = { kind: CTypeKind.LONG_LONG };
 __gshared CType TYPE_FLOAT = { kind: CTypeKind.FLOAT };
 __gshared CType TYPE_DOUBLE = { kind: CTypeKind.DOUBLE };
 __gshared CType TYPE_LONG_DOUBLE = { kind: CTypeKind.LONG_DOUBLE };
 __gshared CType TYPE_UCHAR = { kind: CTypeKind.CHAR, is_unsigned: true };
 __gshared CType TYPE_UINT = { kind: CTypeKind.INT, is_unsigned: true };
 __gshared CType TYPE_ULONG = { kind: CTypeKind.LONG, is_unsigned: true };
+__gshared CType TYPE_ULLONG = { kind: CTypeKind.LONG_LONG, is_unsigned: true };
 __gshared CType TYPE_INT128 = { kind: CTypeKind.INT128 };
 __gshared CType TYPE_UINT128 = { kind: CTypeKind.INT128, is_unsigned: true };
+// FIXME: cfront.compat? or something?
+alias TYPE_SIZE_T = TYPE_ULLONG;
+alias TYPE_PTRDIFF_T = TYPE_LLONG;
 
 // Pointer types
 __gshared CType TYPE_VOID_PTR = { kind: CTypeKind.POINTER, pointed_to: &TYPE_VOID };
 __gshared CType TYPE_CHAR_PTR = { kind: CTypeKind.POINTER, pointed_to: &TYPE_CHAR };
 __gshared CType TYPE_INT_PTR = { kind: CTypeKind.POINTER, pointed_to: &TYPE_INT };
 __gshared CType TYPE_LONG_PTR = { kind: CTypeKind.POINTER, pointed_to: &TYPE_LONG };
+
+// This might break things, but we'll see
+__gshared CType TYPE_EMBED = {kind: CTypeKind.EMBED};
+__gshared CType TYPE_INIT_LIST = {kind: CTypeKind.INIT_LIST};
 
 CType* make_pointer_type(Allocator a, CType* base){
     auto data = a.alloc(CType.sizeof);
@@ -311,8 +356,8 @@ CType* make_enum_type(Allocator a, str name){
 }
 
 CType* make_function_type(Allocator a, CType* ret_type, CType*[] param_types, bool is_varargs){
-    auto data = a.alloc(CType.sizeof);
-    auto result = cast(CType*)data.ptr;
+    void[] data = a.zalloc(CType.sizeof);
+    CType* result = cast(CType*)data.ptr;
     result.kind = CTypeKind.FUNCTION;
     result.return_type = ret_type;
     result.param_types = param_types;
@@ -423,8 +468,10 @@ struct CExpr {
 
     CExpr* ungroup(){
         if(kind == CExprKind.GROUPING){
-            return (cast(CGrouping*)&this).expression.ungroup();
+            return this.as_grouping.expression.ungroup();
         }
+        if(kind == CExprKind.GENERIC)
+            return this.as_generic.picked;
         return &this;
     }
 }
@@ -444,13 +491,25 @@ struct CLiteral {
     }
 
     // Create a synthetic integer literal
-    static CExpr* make_int(Allocator a, long val, CToken tok){
+    static CExpr* make_int(Allocator a, int val, CToken tok){
         import dlib.stringbuilder : mwritef;
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.LITERAL;
         result.expr.token = tok;
         result.expr.type = &TYPE_INT;
+        result.value = tok;
+        result.value.lexeme = mwritef(a, "%", val)[];
+        result.value.type = CTokenType.NUMBER;
+        return &result.expr;
+    }
+    static CExpr* make_size_t(Allocator a, size_t val, CToken tok){
+        import dlib.stringbuilder : mwritef;
+        auto data = a.zalloc(typeof(this).sizeof);
+        auto result = cast(typeof(this)*)data.ptr;
+        result.expr.kind = CExprKind.LITERAL;
+        result.expr.token = tok;
+        result.expr.type = &TYPE_SIZE_T;
         result.value = tok;
         result.value.lexeme = mwritef(a, "%", val)[];
         result.value.type = CTokenType.NUMBER;
@@ -469,7 +528,7 @@ struct CSizeof {
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.SIZEOF;
         result.expr.token = tok;
-        result.expr.type = &TYPE_LONG;  // sizeof returns size_t (use long)
+        result.expr.type = &TYPE_SIZE_T;
         result.sizeof_type = t;
         result.sizeof_expr = null;
         result.size = sz;
@@ -481,7 +540,7 @@ struct CSizeof {
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.SIZEOF;
         result.expr.token = tok;
-        result.expr.type = &TYPE_LONG;
+        result.expr.type = &TYPE_SIZE_T;
         result.sizeof_type = null;
         result.sizeof_expr = e;
         result.size = 0;  // Will be computed during codegen
@@ -500,7 +559,7 @@ struct CAlignof {
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.ALIGNOF;
         result.expr.token = tok;
-        result.expr.type = &TYPE_LONG;  // _Alignof returns size_t
+        result.expr.type = &TYPE_SIZE_T;
         result.alignof_type = t;
         result.alignof_expr = null;
         result.alignment = align_;
@@ -512,10 +571,10 @@ struct CAlignof {
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.ALIGNOF;
         result.expr.token = tok;
-        result.expr.type = &TYPE_LONG;
+        result.expr.type = &TYPE_SIZE_T;
         result.alignof_type = null;
         result.alignof_expr = e;
-        result.alignment = 0;  // Will be computed during codegen
+        result.alignment = 0;
         return &result.expr;
     }
 }
@@ -531,7 +590,7 @@ struct CCountof {
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.COUNTOF;
         result.expr.token = tok;
-        result.expr.type = &TYPE_LONG;  // _Countof returns size_t
+        result.expr.type = &TYPE_SIZE_T;
         result.countof_type = t;
         result.countof_expr = null;
         result.count = count_;
@@ -543,7 +602,7 @@ struct CCountof {
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.COUNTOF;
         result.expr.token = tok;
-        result.expr.type = &TYPE_LONG;
+        result.expr.type = &TYPE_SIZE_T;
         result.countof_type = null;
         result.countof_expr = e;
         result.count = count_;
@@ -572,11 +631,12 @@ struct CIdentifier {
     CExpr expr;
     CToken name;
 
-    static CExpr* make(Allocator a, CToken t){
+    static CExpr* make(Allocator a, CToken t, CType* type){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.IDENTIFIER;
         result.expr.token = t;
+        result.expr.type = type;
         result.name = t;
         return &result.expr;
     }
@@ -591,11 +651,12 @@ struct CBinary {
     CExpr* left(){ return left_.ungroup(); }
     CExpr* right(){ return right_.ungroup(); }
 
-    static CExpr* make(Allocator a, CExpr* l, CTokenType op, CExpr* r, CToken t){
+    static CExpr* make(Allocator a, CExpr* l, CTokenType op, CExpr* r, CToken t, CType* type){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.BINARY;
         result.expr.token = t;
+        result.expr.type = type;
         result.left_ = l;
         result.op = op;
         result.right_ = r;
@@ -611,11 +672,11 @@ struct CUnary {
 
     CExpr* operand(){ return operand_.ungroup(); }
 
-    static CExpr* make(Allocator a, CTokenType op, CExpr* operand, bool prefix, CToken t){
-        auto data = a.zalloc(typeof(this).sizeof);
-        auto result = cast(typeof(this)*)data.ptr;
+    static CExpr* make(Allocator a, CTokenType op, CExpr* operand, bool prefix, CToken t, CType* type){
+        CUnary* result = a.zalloc!(typeof(this))(1).ptr;
         result.expr.kind = CExprKind.UNARY;
         result.expr.token = t;
+        result.expr.type = type;
         result.op = op;
         result.operand_ = operand;
         result.is_prefix = prefix;
@@ -630,14 +691,24 @@ struct CCall {
 
     CExpr* callee(){ return callee_.ungroup(); }
 
-    static CExpr* make(Allocator a, CExpr* callee, CExpr*[] args, CToken t){
+    static CExpr* make(Allocator a, CExpr* callee, CExpr*[] args, CToken t, CType* type){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.CALL;
         result.expr.token = t;
+        result.expr.type = type;
         result.callee_ = callee;
         result.args = args;
         return &result.expr;
+    }
+
+    CType* callee_function_type(){
+        CType* t = callee.type;
+        if(t is null) return null; // XXX
+        if(t.is_pointer)
+            t = t.pointed_to;
+        if(!t.is_function) return null; // XXX
+        return t;
     }
 }
 
@@ -650,11 +721,12 @@ struct CAssign {
     CExpr* target(){ return target_.ungroup(); }
     CExpr* value(){ return value_.ungroup(); }
 
-    static CExpr* make(Allocator a, CExpr* target, CTokenType op, CExpr* value, CToken t){
+    static CExpr* make(Allocator a, CExpr* target, CTokenType op, CExpr* value, CToken t, CType* type){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.ASSIGN;
         result.expr.token = t;
+        result.expr.type = type;
         result.target_ = target;
         result.op = op;
         result.value_ = value;
@@ -671,6 +743,7 @@ struct CGrouping {
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.GROUPING;
         result.expr.token = t;
+        result.expr.type = e.type;
         result.expression = e;
         return &result.expr;
     }
@@ -686,11 +759,12 @@ struct CTernary {
     CExpr* if_true(){ return if_true_.ungroup(); }
     CExpr* if_false(){ return if_false_.ungroup(); }
 
-    static CExpr* make(Allocator a, CExpr* cond, CExpr* t, CExpr* f, CToken tok){
+    static CExpr* make(Allocator a, CExpr* cond, CExpr* t, CExpr* f, CToken tok, CType* type){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.TERNARY;
         result.expr.token = tok;
+        result.expr.type = type;
         result.condition_ = cond;
         result.if_true_ = t;
         result.if_false_ = f;
@@ -734,6 +808,7 @@ struct CInitList {
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.INIT_LIST;
         result.expr.token = tok;
+        result.expr.type = &TYPE_INIT_LIST;
         result.elements = elems;
         return &result.expr;
     }
@@ -785,10 +860,11 @@ struct CSubscript {
     CExpr* array(){ return array_.ungroup(); }
     CExpr* index(){ return index_.ungroup(); }
 
-    static CExpr* make(Allocator a, CExpr* arr, CExpr* idx, CToken t){
+    static CExpr* make(Allocator a, CExpr* arr, CExpr* idx, CToken t, CType* type){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.SUBSCRIPT;
+        result.expr.type = type;
         result.expr.token = t;
         result.array_ = arr;
         result.index_ = idx;
@@ -804,11 +880,12 @@ struct CMemberAccess {
 
     CExpr* object(){ return object_.ungroup(); }
 
-    static CExpr* make(Allocator a, CExpr* obj, CToken member_, bool arrow, CToken t){
+    static CExpr* make(Allocator a, CExpr* obj, CToken member_, bool arrow, CToken t, CType* type){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.MEMBER_ACCESS;
         result.expr.token = t;
+        result.expr.type = type;
         result.object_ = obj;
         result.member = member_;
         result.is_arrow = arrow;
@@ -823,18 +900,21 @@ struct CGenericAssoc {
 
 struct CGeneric {
     CExpr expr;
-    CExpr* controlling_;
-    CGenericAssoc[] associations;
+    CExpr* _controlling_;
+    CGenericAssoc[] _associations;
+    CExpr* picked;
 
-    CExpr* controlling(){ return controlling_.ungroup(); }
+    CExpr* _controlling(){ return _controlling_.ungroup(); }
 
-    static CExpr* make(Allocator a, CExpr* ctrl, CGenericAssoc[] assocs, CToken tok){
+    static CExpr* make(Allocator a, CExpr* ctrl, CGenericAssoc[] assocs, CToken tok, CExpr* picked, CType* type){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.GENERIC;
         result.expr.token = tok;
-        result.controlling_ = ctrl;
-        result.associations = assocs;
+        result.expr.type = type;
+        result._controlling_ = ctrl;
+        result._associations = assocs;
+        result.picked = picked;
         return &result.expr;
     }
 }
@@ -851,6 +931,7 @@ struct CEmbed {
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.EMBED;
         result.expr.token = tok;
+        result.expr.type = &TYPE_EMBED;
         result.path = path;
         result.offset = offset;
         result.length = length;
@@ -863,16 +944,23 @@ struct CEmbed {
 struct CStmtExpr {
     CExpr expr;
     CStmt*[] statements;  // The statements in the block
-    CExpr* result_expr;   // The final expression (value of the whole thing), may be null
 
-    static CExpr* make(Allocator a, CStmt*[] stmts, CExpr* result, CToken tok){
+    // The final expression (value of the whole thing), may be null
+    CExpr* result_expr(){
+        if(!statements.length) return null;
+        CExprStmt* s = statements[$-1].as_expr_stmt();
+        if(!s) return null;
+        return s.expression;
+    }
+
+    static CExpr* make(Allocator a, CStmt*[] stmts, CToken tok, CType* type){
         auto data = a.zalloc(typeof(this).sizeof);
-        auto result_ptr = cast(typeof(this)*)data.ptr;
-        result_ptr.expr.kind = CExprKind.STMT_EXPR;
-        result_ptr.expr.token = tok;
-        result_ptr.statements = stmts;
-        result_ptr.result_expr = result;
-        return &result_ptr.expr;
+        auto result = cast(typeof(this)*)data.ptr;
+        result.expr.kind = CExprKind.STMT_EXPR;
+        result.expr.token = tok;
+        result.expr.type = type;
+        result.statements = stmts;
+        return &result.expr;
     }
 }
 
@@ -1225,4 +1313,54 @@ struct CTranslationUnit {
     CUnionDef[] unions;
     CEnumDef[] enums;
     str current_library;  // Set by #pragma library
+}
+
+// Resolve _Generic - find matching association
+CExpr* resolve_generic(CGenericAssoc[] associations, CType* ctrl_type){
+    CExpr* default_result = null;
+    foreach(ref CGenericAssoc assoc; associations){
+        if(assoc.type is null){
+            default_result = assoc.result;
+        } else if(types_compatible(ctrl_type, assoc.type)){
+            return assoc.result;
+        }
+    }
+    return default_result;
+}
+
+// FIXME: this impl seems sus
+// Check if two types are compatible for _Generic matching
+bool types_compatible(CType* a, CType* b){
+    if(a is null || b is null) return false;
+    if(a is b) return true;
+    if(a.kind != b.kind) return false;
+    if(a.is_unsigned != b.is_unsigned) return false;
+
+    // For pointers, check pointed-to type
+    if(a.kind == CTypeKind.POINTER){
+        return types_compatible(a.pointed_to, b.pointed_to);
+    }
+    // sus
+    // For arrays, check element type
+    if(a.kind == CTypeKind.ARRAY){
+        return types_compatible(a.pointed_to, b.pointed_to);
+    }
+    // For structs/unions, compare by name or identity
+    if(a.kind == CTypeKind.STRUCT || a.kind == CTypeKind.UNION){
+        if(a.struct_name.length > 0 && b.struct_name.length > 0){
+            return a.struct_name == b.struct_name;
+        }
+        return a is b;  // anonymous structs must be same instance
+    }
+    // For functions, check return type and params
+    if(a.kind == CTypeKind.FUNCTION){
+        if(!types_compatible(a.return_type, b.return_type)) return false;
+        if(a.param_types.length != b.param_types.length) return false;
+        foreach(i, pt; a.param_types){
+            if(!types_compatible(pt, b.param_types[i])) return false;
+        }
+        return true;
+    }
+    // Primitive types match if same kind and signedness (already checked above)
+    return true;
 }

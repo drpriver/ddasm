@@ -7,3 +7,7 @@ int test_iso646(int a, int b) {
     if (not a) return 3;
     return 0;
 }
+int main(){
+    test_iso646(1, 1);
+    return 0;
+}

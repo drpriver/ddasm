@@ -4,3 +4,4 @@
 #error "wtf"
 #else
 #endif
+int main(){ return 0; }

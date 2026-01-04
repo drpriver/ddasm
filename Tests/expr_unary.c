@@ -42,3 +42,14 @@ int test_sizeof_expr(int x) {
     int s = sizeof x;
     return s;
 }
+int main(){
+    int x = 42;
+    test_prefix_incr(1);
+    test_address_deref(&x);
+    test_unary_minus(1);
+    test_bitwise_not(1);
+    test_logical_not(1);
+    test_sizeof_type();
+    test_sizeof_expr(1);
+    return 0;
+}

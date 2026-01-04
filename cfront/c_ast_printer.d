@@ -518,6 +518,10 @@ void print_type(CType* t) {
             if (t.is_unsigned) fprintf(stderr, "unsigned ");
             fprintf(stderr, "int");
             break;
+        case LONG_LONG:
+            if (t.is_unsigned) fprintf(stderr, "unsigned ");
+            fprintf(stderr, "long long");
+            break;
         case LONG:
             if (t.is_unsigned) fprintf(stderr, "unsigned ");
             fprintf(stderr, "long");
@@ -549,6 +553,12 @@ void print_type(CType* t) {
             break;
         case ENUM:
             fprintf(stderr, "enum %.*s", cast(int)t.struct_name.length, t.struct_name.ptr);
+            break;
+        case EMBED:
+            fprintf(stderr, "EMBED");
+            break;
+        case INIT_LIST:
+            fprintf(stderr, "INIT_LIST");
             break;
     }
 }

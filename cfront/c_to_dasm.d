@@ -62,19 +62,23 @@ struct CAnalyzer {
     Table!(str, bool) addr_taken;  // Variables whose address is taken
     Table!(str, bool) arrays;      // Array variables (always need stack)
     Table!(str, bool) structs;     // Struct variables (always need stack)
+    Table!(str, CType*) local_var_types;  // Local variable types (for function pointer analysis)
     Barray!(str) all_vars;         // All local variable names
     Allocator allocator;
     int compound_literal_slots;    // Total slots needed for compound literals
     bool has_calls;                // Whether function contains any calls (non-leaf)
+    int max_call_slots = 0;
 
     void analyze_function(CFunction* func){
         addr_taken.data.allocator = allocator;
         arrays.data.allocator = allocator;
         structs.data.allocator = allocator;
+        local_var_types.data.allocator = allocator;
         all_vars.bdata.allocator = allocator;
         addr_taken.cleanup();
         arrays.cleanup();
         structs.cleanup();
+        local_var_types.cleanup();
         all_vars.clear();
         compound_literal_slots = 0;
         has_calls = false;
@@ -133,6 +137,10 @@ struct CAnalyzer {
             case VAR_DECL:
                 auto decl = cast(CVarDecl*)stmt;
                 all_vars.push(decl.name.lexeme);  // Track variable name
+                // Track variable type for function pointer analysis
+                if(decl.var_type){
+                    local_var_types[decl.name.lexeme] = decl.var_type;
+                }
                 // Track array variables
                 if(decl.var_type && decl.var_type.is_array()){
                     arrays[decl.name.lexeme] = true;
@@ -193,8 +201,26 @@ struct CAnalyzer {
                 analyze_expr(e.operand);
                 break;
             case CALL:
-                auto e = cast(CCall*)expr;
-                has_calls = true;  // Mark as non-leaf function
+                CCall *e = expr.as_call;
+                // inline analysis
+                {
+                    has_calls = true;  // Mark as non-leaf function
+                    CType *func = e.callee_function_type();
+                    int slots = 0;
+                    assert(func.return_type);
+                    if(func.return_type.is_struct_or_union() && !struct_fits_in_registers(func.return_type)){
+                        slots += 1;  // Hidden return pointer
+                    }
+                    foreach(CType* arg; func.param_types){
+                        // small structs can take more than one slot, otherwise they
+                        // are passed via a pointer.
+                        if(arg.is_struct_or_union() && struct_fits_in_registers(arg))
+                            slots += struct_return_regs(arg);
+                        else
+                            slots++;
+                    }
+                    if(slots > max_call_slots) max_call_slots = slots;
+                }
                 analyze_expr(e.callee);
                 foreach(arg; e.args)
                     analyze_expr(arg);
@@ -232,9 +258,7 @@ struct CAnalyzer {
                 break;
             case GENERIC:
                 auto e = cast(CGeneric*)expr;
-                analyze_expr(e.controlling);
-                foreach(assoc; e.associations)
-                    analyze_expr(assoc.result);
+                analyze_expr(e.picked);
                 break;
             case TERNARY:
                 auto e = cast(CTernary*)expr;
@@ -267,8 +291,61 @@ struct CAnalyzer {
     void cleanup(){
         addr_taken.cleanup();
         arrays.cleanup();
+        structs.cleanup();
+        local_var_types.cleanup();
         all_vars.cleanup();
     }
+}
+
+// Check if a struct/union type can be returned in registers (1-2 registers for <= 16 bytes)
+bool struct_fits_in_registers(CType* t){
+    if(t is null || !t.is_struct_or_union()) return false;
+    return t.size_of() <= 16;
+}
+// Get number of registers needed to return a struct/union (0, 1, or 2)
+int struct_return_regs(CType* t){
+    if(t is null || !t.is_struct_or_union()) return 0;
+    size_t size = t.size_of();
+    if(size == 0) return 0;
+    if(size <= 8) return 1;
+    if(size <= 16) return 2;
+    return 0;  // Too big, use hidden pointer
+}
+
+
+
+// Get the read instruction for a given type size and signedness
+str read_instr_for_size(size_t size, bool is_unsigned = true){
+    if(is_unsigned){
+        switch(size){
+            case 1: return "read1";
+            case 2: return "read2";
+            case 4: return "read4";
+            default: return "read";
+        }
+    } else {
+        switch(size){
+            case 1: return "sread1";
+            case 2: return "sread2";
+            case 4: return "sread4";
+            default: return "read";
+        }
+    }
+}
+
+// Get the write instruction for a given type size
+str write_instr_for_size(size_t size){
+    switch(size){
+        case 1: return "write1";
+        case 2: return "write2";
+        case 4: return "write4";
+        default: return "write";
+    }
+}
+
+// Check if a size can be written with a single write instruction (1, 2, 4, or 8 bytes)
+bool needs_memcpy(size_t size){
+    return size != 1 && size != 2 && size != 4 && size != 8;
 }
 
 struct CDasmWriter {
@@ -323,437 +400,6 @@ struct CDasmWriter {
     enum { RARG1 = 0 }  // First argument register (rarg1 = r0)
     enum N_REG_ARGS = 8;  // Number of register arguments (rarg1-rarg8 = r0-r7)
     // Note: Return value uses named register 'rout1', not a numeric register
-
-    // Check if a struct/union type can be returned in registers (1-2 registers for <= 16 bytes)
-    static bool struct_fits_in_registers(CType* t){
-        if(t is null || !t.is_struct_or_union()) return false;
-        return t.size_of() <= 16;
-    }
-
-    // Get number of registers needed to return a struct/union (0, 1, or 2)
-    static int struct_return_regs(CType* t){
-        if(t is null || !t.is_struct_or_union()) return 0;
-        size_t size = t.size_of();
-        if(size == 0) return 0;
-        if(size <= 8) return 1;
-        if(size <= 16) return 2;
-        return 0;  // Too big, use hidden pointer
-    }
-
-    // Calculate max register slots used by any call in the function
-    // This determines how many param registers could be clobbered
-    int calc_max_call_slots(CFunction* func){
-        int max_slots = 0;
-        foreach(stmt; func.body){
-            int s = scan_stmt_for_calls(stmt);
-            if(s > max_slots) max_slots = s;
-        }
-        return max_slots;
-    }
-
-    int scan_stmt_for_calls(CStmt* stmt){
-        if(stmt is null) return 0;
-        int max_slots = 0;
-
-        void update(int s){ if(s > max_slots) max_slots = s; }
-
-        final switch(stmt.kind) with (CStmtKind){
-            case EXPR:
-                update(scan_expr_for_calls((cast(CExprStmt*)stmt).expression));
-                break;
-            case RETURN:
-                if((cast(CReturnStmt*)stmt).value)
-                    update(scan_expr_for_calls((cast(CReturnStmt*)stmt).value));
-                break;
-            case IF:
-                auto s = cast(CIfStmt*)stmt;
-                update(scan_expr_for_calls(s.condition));
-                update(scan_stmt_for_calls(s.then_branch));
-                if(s.else_branch) update(scan_stmt_for_calls(s.else_branch));
-                break;
-            case WHILE:
-                auto s = cast(CWhileStmt*)stmt;
-                update(scan_expr_for_calls(s.condition));
-                update(scan_stmt_for_calls(s.body));
-                break;
-            case DO_WHILE:
-                auto s = cast(CDoWhileStmt*)stmt;
-                update(scan_stmt_for_calls(s.body));
-                update(scan_expr_for_calls(s.condition));
-                break;
-            case FOR:
-                auto s = cast(CForStmt*)stmt;
-                if(s.init_stmt) update(scan_stmt_for_calls(s.init_stmt));
-                if(s.condition) update(scan_expr_for_calls(s.condition));
-                if(s.increment) update(scan_expr_for_calls(s.increment));
-                update(scan_stmt_for_calls(s.body_));
-                break;
-            case BLOCK:
-                foreach(s; (cast(CBlock*)stmt).statements)
-                    update(scan_stmt_for_calls(s));
-                break;
-            case VAR_DECL:
-                auto decl = cast(CVarDecl*)stmt;
-                if(decl.initializer)
-                    update(scan_expr_for_calls(decl.initializer));
-                break;
-            case SWITCH:
-                auto s = cast(CSwitchStmt*)stmt;
-                update(scan_expr_for_calls(s.condition));
-                update(scan_stmt_for_calls(s.body_));
-                break;
-            case GOTO:
-                break;  // goto doesn't contain expressions
-            case LABEL:
-                auto l = cast(CLabelStmt*)stmt;
-                update(scan_stmt_for_calls(l.statement));
-                break;
-            case CASE_LABEL:
-                auto c = cast(CCaseLabelStmt*)stmt;
-                if(c.case_value) update(scan_expr_for_calls(c.case_value));
-                update(scan_stmt_for_calls(c.statement));
-                break;
-            case BREAK:
-            case CONTINUE:
-            case EMPTY:
-            case DASM:
-            case ASM:
-                break;
-        }
-        return max_slots;
-    }
-
-    int scan_expr_for_calls(CExpr* expr){
-        if(expr is null) return 0;
-        expr = expr.ungroup();
-        int max_slots = 0;
-
-        void update(int s){ if(s > max_slots) max_slots = s; }
-
-        final switch(expr.kind) with (CExprKind){
-            case LITERAL:
-            case IDENTIFIER:
-                break;
-            case BINARY:
-                auto e = cast(CBinary*)expr;
-                update(scan_expr_for_calls(e.left));
-                update(scan_expr_for_calls(e.right));
-                break;
-            case UNARY:
-                auto e = cast(CUnary*)expr;
-                update(scan_expr_for_calls(e.operand));
-                break;
-            case CALL:
-                auto call = cast(CCall*)expr;
-                // Calculate register slots for this call
-                int slots = 0;
-
-                // Check for hidden return pointer
-                if(CIdentifier* id = call.callee.as_identifier()){
-                    if(CType** rt = id.name.lexeme in func_return_types){
-                        CType* ret_type = *rt;
-                        if(ret_type !is null && ret_type.is_struct_or_union() && !struct_fits_in_registers(ret_type)){
-                            slots += 1;  // Hidden return pointer
-                        }
-                    }
-                }
-
-                // Count slots for each argument
-                foreach(arg; call.args){
-                    CType* arg_type = get_expr_type(arg);
-                    if(arg_type && arg_type.is_struct_or_union() && struct_fits_in_registers(arg_type)){
-                        slots += struct_return_regs(arg_type);
-                    } else {
-                        slots += 1;
-                    }
-                }
-
-                update(slots);
-
-                // Also scan callee and args for nested calls
-                update(scan_expr_for_calls(call.callee));
-                foreach(arg; call.args)
-                    update(scan_expr_for_calls(arg));
-                break;
-            case ASSIGN:
-                auto e = cast(CAssign*)expr;
-                update(scan_expr_for_calls(e.target));
-                update(scan_expr_for_calls(e.value));
-                break;
-            case TERNARY:
-                auto e = cast(CTernary*)expr;
-                update(scan_expr_for_calls(e.condition));
-                update(scan_expr_for_calls(e.if_true));
-                update(scan_expr_for_calls(e.if_false));
-                break;
-            case CAST:
-                auto e = cast(CCast*)expr;
-                update(scan_expr_for_calls(e.operand));
-                break;
-            case SIZEOF:
-            case ALIGNOF:
-            case COUNTOF:
-                break;
-            case SUBSCRIPT:
-                auto e = cast(CSubscript*)expr;
-                update(scan_expr_for_calls(e.array));
-                update(scan_expr_for_calls(e.index));
-                break;
-            case MEMBER_ACCESS:
-                auto e = cast(CMemberAccess*)expr;
-                update(scan_expr_for_calls(e.object));
-                break;
-            case COMPOUND_LITERAL:
-                auto e = cast(CCompoundLiteral*)expr;
-                update(scan_expr_for_calls(e.initializer));
-                break;
-            case INIT_LIST:
-                auto e = cast(CInitList*)expr;
-                foreach(ref elem; e.elements){
-                    if(elem.value) update(scan_expr_for_calls(elem.value));
-                }
-                break;
-            case VA_ARG:
-                break;
-            case GROUPING:
-                // Already handled by ungroup() at start
-                break;
-            case GENERIC:
-                auto e = cast(CGeneric*)expr;
-                update(scan_expr_for_calls(e.controlling));
-                foreach(ref assoc; e.associations){
-                    update(scan_expr_for_calls(assoc.result));
-                }
-                break;
-            case EMBED:
-                break;  // No calls in embed
-            case STMT_EXPR:
-                auto e = cast(CStmtExpr*)expr;
-                foreach(stmt; e.statements){
-                    if(auto expr_stmt = stmt.as_expr_stmt()){
-                        update(scan_expr_for_calls(expr_stmt.expression));
-                    }
-                }
-                break;
-        }
-        return max_slots;
-    }
-
-    // Get the type of an expression (for pointer arithmetic scaling)
-    CType* get_expr_type(CExpr* e){
-        if(e is null) return null;
-        e = e.ungroup();
-
-        // If type is already set, return it
-        if(e.type !is null) return e.type;
-
-        final switch(e.kind) with (CExprKind){
-            case LITERAL:
-                auto lit = e.as_literal;
-                if(lit.value.type == CTokenType.STRING)
-                    return &TYPE_CHAR_PTR;
-                if(lit.value.type == CTokenType.CHAR_LITERAL)
-                    return &TYPE_CHAR;
-                return &TYPE_INT;  // Integer literals are int
-            case IDENTIFIER:
-                auto id = e.as_identifier;
-                if(auto t = id.name.lexeme in var_types){
-                    CType* typ = *t;
-                    // Arrays decay to pointers
-                    if(typ.is_array()){
-                        // Return pointer to element type
-                        // For type checking purposes, we can use the element_type
-                        // but treat it as a pointer for arithmetic
-                        return typ;  // Array type has element_size() for arithmetic
-                    }
-                    return typ;
-                }
-                if(auto t = id.name.lexeme in global_types)
-                    return *t;
-                return null;
-            case BINARY:
-                auto bin = e.as_binary;
-                // Comparison and logical operators always return int
-                with(CTokenType){
-                    switch(bin.op){
-                        case LESS, LESS_EQUAL, GREATER, GREATER_EQUAL,
-                             EQUAL_EQUAL, BANG_EQUAL, AMP_AMP, PIPE_PIPE:
-                            return &TYPE_INT;
-                        default:
-                            break;
-                    }
-                }
-                // For arithmetic, result type follows the pointer if present
-                auto lt = get_expr_type(bin.left);
-                auto rt = get_expr_type(bin.right);
-                if(lt && lt.is_pointer()) return lt;
-                if(rt && rt.is_pointer()) return rt;
-                return lt ? lt : rt;
-            case UNARY:
-                auto un = e.as_unary;
-                if(un.op == CTokenType.STAR){
-                    // Dereference: *ptr -> pointed-to type
-                    auto pt = get_expr_type(un.operand);
-                    if(pt && pt.is_pointer()) return pt.pointed_to;
-                }
-                if(un.op == CTokenType.AMP){
-                    // Address-of: &x -> pointer to x's type
-                    return null;  // Would need to construct pointer type
-                }
-                return get_expr_type(un.operand);
-            case CALL:
-                // Look up function return type
-                auto call = cast(CCall*)e;
-                if(CIdentifier* id = call.callee.as_identifier()){
-                    if(CType** rt = id.name.lexeme in func_return_types){
-                        return *rt;
-                    }
-                }
-                return null;
-            case ASSIGN:
-                return get_expr_type((cast(CAssign*)e).target);
-            case SUBSCRIPT:
-                auto sub = e.as_subscript;
-                auto at = get_expr_type(sub.array);
-                if(at && (at.is_pointer() || at.is_array())) return at.pointed_to;
-                return null;
-            case MEMBER_ACCESS:
-                auto ma = e.as_member_access;
-                auto obj_type = get_expr_type(ma.object);
-                if(obj_type is null) return null;
-                // For ->, dereference pointer first
-                if(ma.is_arrow && obj_type.is_pointer()){
-                    obj_type = obj_type.pointed_to;
-                }
-                if(obj_type && obj_type.is_struct_or_union()){
-                    auto field = obj_type.get_field(ma.member.lexeme);
-                    if(field) return field.type;
-                }
-                return null;
-            case CAST:
-            case SIZEOF:
-            case ALIGNOF:
-            case COUNTOF:
-            case VA_ARG:
-            case GROUPING:
-                return null;
-            case GENERIC:
-                // _Generic resolves at compile time; return type of matching result
-                auto gen = cast(CGeneric*)e;
-                CType* ctrl_type = get_expr_type(gen.controlling);
-                CExpr* result = resolve_generic(gen, ctrl_type);
-                if(result) return get_expr_type(result);
-                return null;
-            case TERNARY:
-                auto tern = cast(CTernary*)e;
-                // Type of ternary is the common type of branches
-                auto tt = get_expr_type(tern.if_true);
-                if(tt) return tt;
-                return get_expr_type(tern.if_false);
-            case INIT_LIST:
-                // Init list type is determined by context (array/struct type)
-                return null;
-            case COMPOUND_LITERAL:
-                // Compound literal has an explicit type
-                auto cl = cast(CCompoundLiteral*)e;
-                return cl.literal_type;
-            case EMBED:
-                // Embed expands to bytes, type determined by context
-                return null;
-            case STMT_EXPR:
-                // Statement expression: type is the type of the last expression
-                auto se = cast(CStmtExpr*)e;
-                if(se.statements.length > 0){
-                    auto last = se.statements[$-1];
-                    if(auto expr_stmt = last.as_expr_stmt()){
-                        return get_expr_type(expr_stmt.expression);
-                    }
-                }
-                return &TYPE_VOID;
-        }
-    }
-
-    // Check if two types are compatible for _Generic matching
-    static bool types_compatible(CType* a, CType* b){
-        if(a is null || b is null) return false;
-        if(a is b) return true;
-        if(a.kind != b.kind) return false;
-        if(a.is_unsigned != b.is_unsigned) return false;
-
-        // For pointers, check pointed-to type
-        if(a.kind == CTypeKind.POINTER){
-            return types_compatible(a.pointed_to, b.pointed_to);
-        }
-        // For arrays, check element type
-        if(a.kind == CTypeKind.ARRAY){
-            return types_compatible(a.pointed_to, b.pointed_to);
-        }
-        // For structs/unions, compare by name or identity
-        if(a.kind == CTypeKind.STRUCT || a.kind == CTypeKind.UNION){
-            if(a.struct_name.length > 0 && b.struct_name.length > 0){
-                return a.struct_name == b.struct_name;
-            }
-            return a is b;  // anonymous structs must be same instance
-        }
-        // For functions, check return type and params
-        if(a.kind == CTypeKind.FUNCTION){
-            if(!types_compatible(a.return_type, b.return_type)) return false;
-            if(a.param_types.length != b.param_types.length) return false;
-            foreach(i, pt; a.param_types){
-                if(!types_compatible(pt, b.param_types[i])) return false;
-            }
-            return true;
-        }
-        // Primitive types match if same kind and signedness (already checked above)
-        return true;
-    }
-
-    // Resolve _Generic - find matching association
-    static CExpr* resolve_generic(CGeneric* gen, CType* ctrl_type){
-        CExpr* default_result = null;
-        foreach(assoc; gen.associations){
-            if(assoc.type is null){
-                default_result = assoc.result;
-            } else if(types_compatible(ctrl_type, assoc.type)){
-                return assoc.result;
-            }
-        }
-        return default_result;
-    }
-
-    // Get the read instruction for a given type size and signedness
-    static str read_instr_for_size(size_t size, bool is_unsigned = true){
-        if(is_unsigned){
-            switch(size){
-                case 1: return "read1";
-                case 2: return "read2";
-                case 4: return "read4";
-                default: return "read";
-            }
-        } else {
-            switch(size){
-                case 1: return "sread1";
-                case 2: return "sread2";
-                case 4: return "sread4";
-                default: return "read";
-            }
-        }
-    }
-
-    // Get the write instruction for a given type size
-    static str write_instr_for_size(size_t size){
-        switch(size){
-            case 1: return "write1";
-            case 2: return "write2";
-            case 4: return "write4";
-            default: return "write";
-        }
-    }
-
-    // Check if a size can be written with a single write instruction (1, 2, 4, or 8 bytes)
-    static bool needs_memcpy(size_t size){
-        return size != 1 && size != 2 && size != 4 && size != 8;
-    }
 
     @disable this();
 
@@ -1453,7 +1099,7 @@ struct CDasmWriter {
         // Calculate max register slots used by any call in this function
         // Params in registers < max_call_slots must be saved (calls clobber them)
         // Params in registers >= max_call_slots can stay in place
-        int max_call_slots = calc_max_call_slots(func);
+        int max_call_slots = analyzer.max_call_slots;
 
         // Copy address-taken and array info
         foreach(ref item; analyzer.addr_taken.items()){
@@ -2699,7 +2345,7 @@ struct CDasmWriter {
             if(target != TARGET_IS_NOTHING) {
                 if (cv.is_float()) {
                     // Check if target type is float32 vs double
-                    CType* expr_type = get_expr_type(e);
+                    CType* expr_type = e.type;
                     if(expr_type && expr_type.kind == CTypeKind.FLOAT){
                         // Emit as 32-bit float representation
                         float f32 = cast(float)cv.float_val;
@@ -2807,7 +2453,7 @@ struct CDasmWriter {
         if(err) return err;
 
         if(target != TARGET_IS_NOTHING){
-            CType* src_type = get_expr_type(expr.operand);
+            CType* src_type = expr.operand.type;
             CType* dst_type = expr.cast_type;
 
             if(src_type is null || dst_type is null) return 0;
@@ -3306,8 +2952,8 @@ struct CDasmWriter {
         }
 
         // Check for pointer/array arithmetic scaling
-        CType* left_type = get_expr_type(expr.left);
-        CType* right_type = get_expr_type(expr.right);
+        CType* left_type = expr.left.type;
+        CType* right_type = expr.right.type;
         bool left_is_ptr = left_type && (left_type.is_pointer() || left_type.is_array());
         bool right_is_ptr = right_type && (right_type.is_pointer() || right_type.is_array());
         size_t left_elem_size = left_is_ptr ? left_type.element_size() : 0;
@@ -3669,7 +3315,7 @@ struct CDasmWriter {
                 if(target == TARGET_IS_NOTHING) return 0;
 
                 // Get the struct type
-                CType* obj_type = get_expr_type(ma.object);
+                CType* obj_type = ma.object.type;
                 if(obj_type is null){
                     error(expr.expr.token, "Cannot determine type for member access");
                     return 1;
@@ -3744,7 +3390,7 @@ struct CDasmWriter {
             if(err) return err;
             if(target != TARGET_IS_NOTHING){
                 // Get the pointed-to type's size and signedness for proper sized read
-                CType* ptr_type = get_expr_type(expr.operand);
+                CType* ptr_type = expr.operand.type;
                 size_t elem_size = (ptr_type && ptr_type.is_pointer()) ? ptr_type.element_size() : 8;
                 CType* elem_type = (ptr_type && ptr_type.is_pointer()) ? ptr_type.element_type() : null;
                 bool is_unsigned = elem_type ? elem_type.is_unsigned : true;
@@ -3761,7 +3407,7 @@ struct CDasmWriter {
             int before = regallocator.alloced;
 
             // Get operand type to determine increment amount (1 for scalars, element_size for pointers)
-            CType* operand_type = get_expr_type(expr.operand);
+            CType* operand_type = expr.operand.type;
             size_t inc_amount = 1;
             if(operand_type && operand_type.is_pointer()){
                 inc_amount = operand_type.element_size();
@@ -3870,7 +3516,7 @@ struct CDasmWriter {
                 int addr_reg = regallocator.allocate();
 
                 // Get the struct type
-                CType* obj_type = get_expr_type(ma.object);
+                CType* obj_type = ma.object.type;
                 if(obj_type is null){
                     error(expr.expr.token, "Cannot determine type for member access");
                     return 1;
@@ -3941,7 +3587,7 @@ struct CDasmWriter {
         if(err) return err;
 
         if(target != TARGET_IS_NOTHING){
-            CType* operand_type = get_expr_type(expr.operand);
+            CType* operand_type = expr.operand.type;
             bool is_float_op = operand_type && operand_type.is_float();
 
             switch(expr.op) with (CTokenType){
@@ -3991,6 +3637,27 @@ struct CDasmWriter {
                 callee_is_varargs = f.is_varargs;
                 n_fixed_args = cast(int)f.params.length;
             }
+        } else {
+            // Indirect call through function pointer - get type from callee expression
+            CType* callee_type = expr.callee.type;
+            assert(callee_type);
+            if(callee_type){
+                CType* func_type = null;
+                // Callee can be a function pointer (POINTER to FUNCTION) or just a function type
+                if(callee_type.kind == CTypeKind.POINTER && callee_type.pointed_to &&
+                   callee_type.pointed_to.kind == CTypeKind.FUNCTION){
+                    func_type = callee_type.pointed_to;
+                } else if(callee_type.kind == CTypeKind.FUNCTION){
+                    func_type = callee_type;
+                }
+                if(func_type){
+                    callee_return_type = func_type.return_type;
+                    callee_returns_struct = callee_return_type !is null && callee_return_type.is_struct_or_union();
+                    callee_uses_hidden_ptr = callee_returns_struct && !struct_fits_in_registers(callee_return_type);
+                    callee_is_varargs = func_type.is_varargs;
+                    n_fixed_args = cast(int)func_type.param_types.length;
+                }
+            }
         }
 
         // For large struct/union returns, arg registers shift by 1 (rarg1 = hidden return ptr)
@@ -3998,8 +3665,8 @@ struct CDasmWriter {
 
         // Helper to get number of register slots for an argument
         int arg_slots(CExpr* arg){
-            CType* t = get_expr_type(arg);
-            if(t && t.is_struct_or_union() && struct_fits_in_registers(t)){
+            CType* t = arg.type;
+            if(t.is_struct_or_union() && struct_fits_in_registers(t)){
                 return struct_return_regs(t);
             }
             return 1;
@@ -4060,7 +3727,7 @@ struct CDasmWriter {
             // Also build float mask: 2 bits per arg, 0b10 = double (floats promoted to double)
             for(size_t i = n_fixed_args; i < expr.args.length; i++){
                 CExpr* arg = expr.args[i];
-                CType* arg_type = get_expr_type(arg);
+                CType* arg_type = arg.type;
 
                 // Track if this arg is a float/double (for calling convention)
                 if(arg_type && arg_type.is_float() && i < 16){
@@ -4098,7 +3765,7 @@ struct CDasmWriter {
             for(size_t i = 0; i < n_fixed_args; i++){
                 CExpr* arg = expr.args[i];
                 int slot = get_arg_slot(i);
-                CType* arg_type = get_expr_type(arg);
+                CType* arg_type = arg.type;
                 int num_slots = arg_slots(arg);
 
                 // Track if this fixed arg is a float/double (for calling convention)
@@ -4132,7 +3799,7 @@ struct CDasmWriter {
         bool all_args_simple = true;
         if(!callee_is_varargs){
             foreach(arg; expr.args){
-                CType* arg_type = get_expr_type(arg);
+                CType* arg_type = arg.type;
                 // Struct args are not simple
                 if(arg_type && arg_type.is_struct_or_union()){
                     all_args_simple = false;
@@ -4148,7 +3815,7 @@ struct CDasmWriter {
         // Non-varargs: evaluate arguments in order with push/pop preservation
         if(!callee_is_varargs)
         foreach(i, arg; expr.args){
-            CType* arg_type = get_expr_type(arg);
+            CType* arg_type = arg.type;
             int slot = get_arg_slot(i);
             int num_slots = arg_slots(arg);
             // Varargs beyond fixed args always go on stack
@@ -4276,7 +3943,22 @@ struct CDasmWriter {
         int total_args = total_slots;  // Accounts for multi-register struct params
 
         // Generate call
-        if(CIdentifier* id = expr.callee.as_identifier()){
+        // Check if callee is a direct function call (identifier that's a function name, not a variable)
+        CIdentifier* id = expr.callee.as_identifier();
+        bool is_direct_call = false;
+        if(id !is null){
+            // Check if this identifier is a function, not a function pointer variable
+            // It's a direct call if it's in extern_funcs or func_return_types but NOT in var_types
+            bool is_func = (id.name.lexeme in extern_funcs) !is null ||
+                          (id.name.lexeme in func_return_types) !is null ||
+                          (id.name.lexeme in func_info) !is null;
+            bool is_var = (id.name.lexeme in var_types) !is null ||
+                         (id.name.lexeme in global_types) !is null ||
+                         (id.name.lexeme in reglocals) !is null;
+            is_direct_call = is_func && !is_var;
+        }
+
+        if(is_direct_call){
             // Save registers before call:
             // 1. Reglocals in R0-R7 (from max_call_slots optimization)
             // 2. Scratch registers R8+ that were in use
@@ -4572,7 +4254,7 @@ struct CDasmWriter {
 
                     // For float types, convert RHS to double if needed
                     if(is_float_op){
-                        CType* rhs_type = get_expr_type(expr.value);
+                        CType* rhs_type = expr.value.type;
                         if(rhs_type && rhs_type.is_integer()){
                             sb.writef("    itod r% r%\n", val_reg, val_reg);
                         } else if(rhs_type && rhs_type.is_float32()){
@@ -4674,7 +4356,7 @@ struct CDasmWriter {
 
                     // For float types, convert RHS to double if needed
                     if(is_float_op){
-                        CType* rhs_type = get_expr_type(expr.value);
+                        CType* rhs_type = expr.value.type;
                         if(rhs_type && rhs_type.is_integer()){
                             sb.writef("    itod r% r%\n", val_reg, val_reg);
                         } else if(rhs_type && rhs_type.is_float32()){
@@ -4750,7 +4432,7 @@ struct CDasmWriter {
                 if(err) return err;
 
                 // Get pointed-to type's size for proper sized write
-                CType* ptr_type = get_expr_type(deref.operand);
+                CType* ptr_type = deref.operand.type;
                 size_t elem_size = (ptr_type && ptr_type.is_pointer()) ? ptr_type.element_size() : 8;
                 sb.writef("    % r% r%\n", write_instr_for_size(elem_size), ptr_reg, val_reg);
 
@@ -4777,8 +4459,9 @@ struct CDasmWriter {
             if(err) return err;
 
             // Scale index by element size
-            CType* arr_type = get_expr_type(sub.array);
-            size_t elem_size = (arr_type && (arr_type.is_pointer() || arr_type.is_array())) ? arr_type.element_size() : 1;
+            CType* arr_type = sub.array.type;
+            size_t elem_size = arr_type.element_size();
+                // ((arr_type.is_pointer() || arr_type.is_array())) ? arr_type.element_size() : 1;
             if(elem_size > 1){
                 sb.writef("    mul r% r% %\n", idx_reg, idx_reg, elem_size);
             }
@@ -4804,7 +4487,7 @@ struct CDasmWriter {
             int val_reg = regallocator.allocate();
 
             // Get the object type
-            CType* obj_type = get_expr_type(ma.object);
+            CType* obj_type = ma.object.type;
             if(obj_type is null){
                 error(expr.expr.token, "Cannot determine type of struct expression");
                 return 1;
@@ -4886,10 +4569,10 @@ struct CDasmWriter {
         if(err) return err;
 
         // Scale index by element size for proper pointer/array arithmetic
-        CType* arr_type = get_expr_type(expr.array);
-        size_t elem_size = (arr_type && (arr_type.is_pointer() || arr_type.is_array())) ? arr_type.element_size() : 1;
-        CType* elem_type = (arr_type && (arr_type.is_pointer() || arr_type.is_array())) ? arr_type.element_type() : null;
-        bool is_unsigned = elem_type ? elem_type.is_unsigned : true;
+        CType* arr_type = expr.array.type;
+        size_t elem_size = arr_type.element_size();
+        CType* elem_type = arr_type.element_type();
+        bool is_unsigned = elem_type.is_unsigned;
         if(elem_size > 1){
             sb.writef("    mul r% r% %\n", idx_reg, idx_reg, elem_size);
         }
@@ -4921,7 +4604,7 @@ struct CDasmWriter {
         if(err) return err;
 
         // Scale index by element size
-        CType* arr_type = get_expr_type(expr.array);
+        CType* arr_type = expr.array.type;
         size_t elem_size = (arr_type && (arr_type.is_pointer() || arr_type.is_array())) ? arr_type.element_size() : 1;
         if(elem_size > 1){
             sb.writef("    mul r% r% %\n", idx_reg, idx_reg, elem_size);
@@ -4937,7 +4620,7 @@ struct CDasmWriter {
         int obj_reg = regallocator.allocate();
 
         // Get the object type
-        CType* obj_type = get_expr_type(expr.object);
+        CType* obj_type = expr.object.type;
         if(obj_type is null){
             error(expr.expr.token, "Cannot determine type of struct expression");
             return 1;
@@ -5009,8 +4692,8 @@ struct CDasmWriter {
         size_t size = expr.size;
         if(size == 0 && expr.sizeof_expr !is null){
             // sizeof expr - compute size from expression type
-            CType* t = get_expr_type(expr.sizeof_expr);
-            size = t ? t.size_of() : 8;
+            CType* t = expr.sizeof_expr.type;
+            size = t.size_of();
         }
 
         sb.writef("    move r% %\n", target, size);
@@ -5023,8 +4706,8 @@ struct CDasmWriter {
         size_t alignment = expr.alignment;
         if(alignment == 0 && expr.alignof_expr !is null){
             // _Alignof(expr) - compute alignment from expression type
-            CType* t = get_expr_type(expr.alignof_expr);
-            alignment = t ? t.align_of() : 8;
+            CType* t = expr.alignof_expr.type;
+            alignment = t.align_of();
         }
 
         sb.writef("    move r% %\n", target, alignment);
@@ -5037,10 +4720,11 @@ struct CDasmWriter {
         size_t count = expr.count;
         if(count == 0 && expr.countof_expr !is null){
             // _Countof(expr) - compute count from expression type
-            CType* t = get_expr_type(expr.countof_expr);
-            if(t !is null && t.is_array()){
+            CType* t = expr.countof_expr.type;
+            if(t.is_array()){
                 count = t.array_size;
-            } else {
+            }
+            else {
                 error(expr.expr.token, "_Countof requires an array expression");
                 return 1;
             }
@@ -5051,14 +4735,7 @@ struct CDasmWriter {
     }
 
     int gen_generic(CGeneric* expr, int target){
-        // _Generic is resolved at compile time
-        CType* ctrl_type = get_expr_type(expr.controlling);
-        CExpr* result = resolve_generic(expr, ctrl_type);
-        if(result is null){
-            error(expr.expr.token, "No matching type in _Generic");
-            return 1;
-        }
-        return gen_expression(result, target);
+        return gen_expression(expr.picked, target);
     }
 
     int gen_va_arg(CVaArg* expr, int target){
@@ -5152,7 +4829,7 @@ struct CDasmWriter {
 
         // Member access - get address of struct member
         if(CMemberAccess* ma = e.as_member_access()){
-            CType* obj_type = get_expr_type(ma.object);
+            CType* obj_type = ma.object.type;
             if(obj_type is null){
                 error(ma.expr.token, "Cannot determine type for member access");
                 return 1;
@@ -5193,7 +4870,7 @@ struct CDasmWriter {
 
         // Function call returning struct/union - gen_expression returns the address
         if(e.kind == CExprKind.CALL){
-            CType* call_type = get_expr_type(e);
+            CType* call_type = e.type;
             if(call_type && call_type.is_struct_or_union()){
                 return gen_expression(e, target);
             }

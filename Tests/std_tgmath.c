@@ -5,3 +5,7 @@
 int test_tgmath(void) {
     return 0;
 }
+int main(){
+    test_tgmath();
+    return 0;
+}

@@ -77,3 +77,14 @@ int test_for_continue(int n) {
     }
     return sum;
 }
+int main(){
+    test_for_simple(1);
+    test_for_no_init(1);
+    test_for_no_cond();
+    test_for_no_incr(1);
+    test_for_no_braces(1);
+    test_for_nested(1, 1);
+    test_for_break(1);
+    test_for_continue(1);
+    return 0;
+}

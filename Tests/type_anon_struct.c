@@ -88,3 +88,11 @@ int test_nested_anon(void) {
     n.outer = 3;
     return n.deep + n.mid + n.outer;
 }
+int main(){
+    test_anon_struct();
+    test_anon_union();
+    test_named_anon_struct();
+    test_named_anon_union();
+    test_nested_anon();
+    return 0;
+}

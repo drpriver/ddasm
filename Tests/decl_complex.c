@@ -25,3 +25,7 @@ int*** triple_ptr;
 
 // Const pointer to const
 const int* const* cpp;
+int main(){
+    test_fn_ptr();
+    return 0;
+}

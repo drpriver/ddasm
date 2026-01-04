@@ -14,3 +14,8 @@ int test_struct_partial(void) {
     struct Point p = {5};  // y is zero-initialized
     return p.x + p.y;
 }
+int main(){
+    test_struct_init();
+    test_struct_partial();
+    return 0;
+}

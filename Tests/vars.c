@@ -1,3 +1,4 @@
+// SKIP: extern variables a,b,c not available in libc
 int x, y, z;
 extern int a, b, c;
 #pragma library("libc")

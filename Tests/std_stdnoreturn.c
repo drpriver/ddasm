@@ -10,3 +10,7 @@ int test_noreturn(int x) {
     if (x < 0) die();
     return x;
 }
+int main(){
+    test_noreturn(1);
+    return 0;
+}
