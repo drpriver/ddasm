@@ -284,5 +284,33 @@ int main(){
     char c9 = d20;
     if(c9 != 66) abort();
 
+    // === Zero to pointer (null pointer constant) ===
+
+    // 0 -> pointer
+    int *p1 = 0;
+    if(p1 != 0) abort();
+
+    char *p2 = 0;
+    if(p2 != 0) abort();
+
+    void *p3 = 0;
+    if(p3 != 0) abort();
+
+    // Comparison with 0
+    int *p4 = 0;
+    if(p4) abort();  // should be false
+    if(!(p4 == 0)) abort();
+    if(p4 != 0) abort();
+
+    // Pointer to pointer = 0
+    int **pp1 = 0;
+    if(pp1 != 0) abort();
+
+    // Array of pointers initialized with 0
+    char *arr[3] = {0, 0, 0};
+    if(arr[0] != 0) abort();
+    if(arr[1] != 0) abort();
+    if(arr[2] != 0) abort();
+
     return 0;
 }
