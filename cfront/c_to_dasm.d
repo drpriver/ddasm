@@ -775,20 +775,30 @@ struct CDasmWriter {
                     foreach(ref param; func.params){
                         if(slot_idx >= 8) break;
                         if(param.type && param.type.is_struct_or_union() && fits_in_registers(param.type)){
-                            // Check if struct contains only floats
+                            // Classify each eightword (8-byte chunk) of the struct
+                            // per System V ABI: each eightword is classified independently
                             int num_slots = struct_return_regs(param.type);
-                            bool all_floats = true;
-                            foreach(ref field; param.type.fields){
-                                if(field.type is null || !field.type.is_float32()){
-                                    all_floats = false;
-                                    break;
+                            for(int slot = 0; slot < num_slots && slot_idx + slot < 8; slot++){
+                                size_t slot_start = slot * 8;
+                                size_t slot_end = slot_start + 8;
+                                bool slot_has_float = false;
+                                bool slot_has_int = false;
+                                foreach(ref field; param.type.fields){
+                                    if(field.type is null) continue;
+                                    size_t field_end = field.offset + field.type.size_of();
+                                    // Check if field overlaps with this slot
+                                    if(field.offset < slot_end && field_end > slot_start){
+                                        if(field.type.is_float())
+                                            slot_has_float = true;
+                                        else
+                                            slot_has_int = true;
+                                    }
                                 }
-                            }
-                            // If all-float struct, mark each slot as float32
-                            if(all_floats && param.type.fields.length > 0){
-                                for(int i = 0; i < num_slots && slot_idx + i < 8; i++){
-                                    float_arg_mask |= (0b01 << ((slot_idx + i) * 2));
+                                // If slot has only floats (no ints), use XMM
+                                if(slot_has_float && !slot_has_int){
+                                    float_arg_mask |= (0b01 << ((slot_idx + slot) * 2));
                                 }
+                                // Otherwise leave as integer (mask stays 0 for this slot)
                             }
                             slot_idx += num_slots;
                         } else if(param.type && param.type.is_float()){

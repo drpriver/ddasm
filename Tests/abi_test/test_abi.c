@@ -94,7 +94,6 @@ void test_basic_types(void){
 }
 
 void test_small_struct_pass(void) {
-#if 0
     printf("\n=== Small Struct Pass by Value ===\n");
 
     // IntPair (8 bytes, integer register)
@@ -115,22 +114,14 @@ void test_small_struct_pass(void) {
             abort();
         PASS();
     }
-#endif
 
     // Vec2 (8 bytes, XMM register)
     {
-        // TEST("Vec2 pass");
+        TEST("Vec2 pass");
         Vec2 v = {3.0f, 4.0f};
         float result = vec2_length_sq(v);
-        if(float_eq(result,25.0f)){
-        }
-        else {
-            abort();
-        }
-        // printf("\n%f, 0x%x\n", result, *(unsigned*)&result);
-        // CHECK_FLOAT(25.0f, result);
+        CHECK_FLOAT(25.0f, result);
     }
-#if 0
 
     // Vec3 (12 bytes, two XMM registers)
     {
@@ -172,7 +163,6 @@ void test_small_struct_pass(void) {
         int result = color_to_int(c);
         CHECK_INT(0xFF804020, result);
     }
-#endif
 }
 
 void test_multiple_struct_args(void) {
