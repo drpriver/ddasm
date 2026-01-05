@@ -547,20 +547,9 @@ struct CPreprocessor {
         // Skip closing )
         if(i < tokens.length && tokens[i].is_punct(")")) i++;
 
-        // Expand macros in argument first
+        // Expand macros and builtins in argument first
         Barray!PPToken expanded_arg = make_barray!PPToken(allocator);
-        foreach(tok; arg_tokens[]){
-            if(tok.type == PPTokenType.PP_IDENTIFIER){
-                PPMacroDef macro_def = get_macro(tok);
-                if(!macro_def.is_null && !macro_def.is_function_like){
-                    foreach(repl_tok; macro_def.replacement){
-                        expanded_arg ~= repl_tok;
-                    }
-                    continue;
-                }
-            }
-            expanded_arg ~= tok;
-        }
+        expand_tokens(arg_tokens[], &expanded_arg);
 
         // Find the string literal in expanded argument
         str string_content = "";
@@ -642,13 +631,17 @@ struct CPreprocessor {
         // Skip whitespace
         while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
 
-        // Get the environment variable name (identifier)
+        // Get the environment variable name (string)
         str env_name = "";
-        if(i < tokens.length && tokens[i].type == PPTokenType.PP_IDENTIFIER){
-            env_name = tokens[i].lexeme;
+        if(i < tokens.length && tokens[i].type == PPTokenType.PP_STRING){
+            str s = tokens[i].lexeme;
+            // Remove quotes
+            if(s.length >= 2 && s[0] == '"' && s[$-1] == '"'){
+                env_name = s[1..$-1];
+            }
             i++;
         } else {
-            error("__ENV__ requires identifier as first argument");
+            error("__ENV__ requires string as first argument");
             return i;
         }
 
@@ -891,7 +884,10 @@ struct CPreprocessor {
                 PPMacroDef macro_def = get_macro(tok);
                 if(!macro_def.is_null){
                     HideSet hs = HideSet.create(allocator);
-                    i = expand_macro_invocation(input, i, macro_def, hs, output);
+                    // Expand to temp buffer, then process for builtins
+                    Barray!PPToken expanded = make_barray!PPToken(allocator);
+                    i = expand_macro_invocation(input, i, macro_def, hs, &expanded);
+                    expand_tokens(expanded[], output);
                     continue;
                 }
             }
@@ -1646,7 +1642,7 @@ struct CPreprocessor {
 
                 // Expand macros
                 Barray!PPToken expanded = make_barray!PPToken(allocator);
-                expand_for_if(tokens_to_expand[], &expanded);
+                expand_tokens(tokens_to_expand[], &expanded);
 
                 // Build expanded string
                 StringBuilder exp_sb;
@@ -1764,7 +1760,7 @@ struct CPreprocessor {
 
                 // Expand macros
                 Barray!PPToken expanded = make_barray!PPToken(allocator);
-                expand_for_if(msg_tokens[], &expanded);
+                expand_tokens(msg_tokens[], &expanded);
 
                 // Build message from expanded tokens
                 StringBuilder msg_sb;
@@ -2347,7 +2343,7 @@ struct CPreprocessor {
     long evaluate_expression(PPToken[] tokens){
         // First expand macros (except in defined())
         Barray!PPToken expanded = make_barray!PPToken(allocator);
-        expand_for_if(tokens, &expanded);
+        expand_tokens(tokens, &expanded, true);
 
         // Then evaluate
         ExprEvaluator eval;
@@ -2357,8 +2353,8 @@ struct CPreprocessor {
         return eval.eval_conditional();
     }
 
-    // Expand macros for #if evaluation (handles defined() specially)
-    void expand_for_if(PPToken[] tokens, Barray!PPToken* output){
+    // Expand macros and builtins. If for_if=true, also handles defined(), __has_include, etc.
+    void expand_tokens(PPToken[] tokens, Barray!PPToken* output, bool for_if = false){
         size_t i = 0;
         while(i < tokens.length){
             PPToken tok = tokens[i];
@@ -2381,8 +2377,8 @@ struct CPreprocessor {
                 continue;
             }
 
-            // Handle defined operator
-            if(tok.type == PPTokenType.PP_IDENTIFIER && tok.matches("defined")){
+            // Handle defined operator (only in #if context)
+            if(for_if && tok.type == PPTokenType.PP_IDENTIFIER && tok.matches("defined")){
                 i++;
                 // Skip whitespace
                 while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
@@ -2413,8 +2409,8 @@ struct CPreprocessor {
                 }
             }
 
-            // Handle __has_include specially (it takes header-name args)
-            if(tok.type == PPTokenType.PP_IDENTIFIER && tok.matches("__has_include")){
+            // Handle __has_include specially (only in #if context, takes header-name args)
+            if(for_if && tok.type == PPTokenType.PP_IDENTIFIER && tok.matches("__has_include")){
                 i++;
                 // Skip whitespace
                 while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
@@ -2476,8 +2472,8 @@ struct CPreprocessor {
                 continue;
             }
 
-            // Handle __has_include_next (stub - always 0)
-            if(tok.type == PPTokenType.PP_IDENTIFIER && tok.matches("__has_include_next")){
+            // Handle __has_include_next (only in #if context, stub - always 0)
+            if(for_if && tok.type == PPTokenType.PP_IDENTIFIER && tok.matches("__has_include_next")){
                 i++;
                 while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
                 if(i < tokens.length && tokens[i].is_punct("(")){
@@ -2496,9 +2492,9 @@ struct CPreprocessor {
                 continue;
             }
 
-            // Handle __has_embed (C23 - check if embed would succeed)
+            // Handle __has_embed (only in #if context, C23 - check if embed would succeed)
             // Returns: 0 = not found, 1 = found and non-empty, 2 = found but empty
-            if(tok.type == PPTokenType.PP_IDENTIFIER && tok.matches("__has_embed")){
+            if(for_if && tok.type == PPTokenType.PP_IDENTIFIER && tok.matches("__has_embed")){
                 i++;
                 while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
                 if(i >= tokens.length || !tokens[i].is_punct("(")){
@@ -2608,7 +2604,7 @@ struct CPreprocessor {
                 if(!macro_def.is_null && !macro_def.is_function_like){
                     // Expand object-like macro and recursively process
                     i++;
-                    expand_for_if(macro_def.replacement, output);
+                    expand_tokens(macro_def.replacement, output, for_if);
                     continue;
                 }
                 // Handle function-like macros
@@ -2621,8 +2617,8 @@ struct CPreprocessor {
                         Barray!PPToken expanded = make_barray!PPToken(allocator);
                         HideSet hs = HideSet.create(allocator);
                         i = expand_macro_invocation(tokens, i, macro_def, hs, &expanded);
-                        // Recursively process the expanded tokens for defined() etc.
-                        expand_for_if(expanded[], output);
+                        // Recursively process the expanded tokens
+                        expand_tokens(expanded[], output, for_if);
                         continue;
                     }
                 }
@@ -3011,24 +3007,9 @@ struct CPreprocessor {
                 int param_idx = macro_def.find_param(tok.lexeme);
                 if(param_idx >= 0){
                     if(param_idx < args.length){
-                        // Pre-expand argument (macros in args are expanded for regular substitution)
-                        // Use a fresh hide set for argument expansion
+                        // Pre-expand argument (macros and builtins in args are expanded)
                         Barray!PPToken expanded_arg = make_barray!PPToken(allocator);
-                        size_t aj = 0;
-                        while(aj < args[param_idx].length){
-                            PPToken arg_tok = args[param_idx][aj];
-                            if(arg_tok.type == PPTokenType.PP_IDENTIFIER){
-                                PPMacroDef nested = get_macro(arg_tok);
-                                if(!nested.is_null && !hs.is_hidden(arg_tok.lexeme)){
-                                    // Expand the macro in the argument
-                                    HideSet arg_hs = HideSet.create(allocator);
-                                    aj = expand_macro_invocation(args[param_idx], aj, nested, arg_hs, &expanded_arg);
-                                    continue;
-                                }
-                            }
-                            expanded_arg ~= arg_tok;
-                            aj++;
-                        }
+                        expand_tokens(args[param_idx], &expanded_arg);
                         // Output expanded argument
                         foreach(exp_tok; expanded_arg[]){
                             *output ~= exp_tok;

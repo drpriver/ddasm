@@ -10,11 +10,17 @@ stack is used for return addresses so you can't do ROP (Not that that matters
 if you can just overwrite the code...). That was only implemented so that
 backtraces would work.
 
-Dasm only works with machine-word sized values.
+Dasm mostly only works with machine-word sized values, although it does support
+32 bit floats.
 
-Dasm has trivial native interop. An adaptor function has to be written that casts
-from `uintptr_t` to the actual type. You currently can't call native functions
-with floating point arguments.
+Dasm has work-in-progress native interop. You can either do it the lame scripting
+lazy scripting language way where you write an adaptor function and register it,
+or you can expose a builtin module. Or you can expose a shared library with
+appropriate metadata and we can just dynamically call into it with no wrapper functions.
+This is WIP. See dlimport.
+
+Now when I say appropriate metadata, you can either annotate in DASM syntax, or just
+provide a C header and the c front end can parse it.
 
 The Dasm vm has a debugger built in. You can step instructions and read
 registers etc. It has a disassembler, etc. It doesn't try to catch faults in
@@ -51,7 +57,7 @@ end
 
 Hackerman programming in dasm:
 ```
-import
+import io
 function death
   abort
   move rarg1 "Life after Death"
@@ -169,7 +175,7 @@ std c functions.
 
 ## Samples
 A collection of sample dasm files and davescript files are in the
-Sample folder.
+Sample folder. Also C files.
 
 Dasm currently has way more features than davescript.
 
@@ -201,6 +207,12 @@ Dasm currently has way more features than davescript.
   by wrapping that in a `version(){}` block
 * I made it build with dub at some point. I don't know what I'm doing as
   plain `dub` asserts, but `dub build` works.
+
+# C
+The more exciting frontend language for the DVM is C. It aims to be a
+C2y-compatible C compiler.  You can give it real C headers and a shared library
+and it can call functions from it. The main limitation is that you can't write
+C
 
 ## C Preprocessor (cpp)
 
