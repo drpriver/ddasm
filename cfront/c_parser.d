@@ -84,6 +84,7 @@ struct CParser {
     CType* current_return_type;            // Current function's return type (for return checking)
     str current_function_name;             // Current function name (for static local mangling)
     int static_local_counter;              // Counter for static locals in current function
+    int lambda_counter;                     // Counter for anonymous function literals
     StringBuilder error_sb;
     Barray!CFunction functions;
     Barray!CGlobalVar globals;
@@ -4371,6 +4372,201 @@ struct CParser {
         return CEmptyStmt.get();  // No runtime statement needed
     }
 
+    // =========================================================================
+    // EXTENSION: Function Literals
+    // =========================================================================
+    //
+    // Grammar (extending primary-expression):
+    //
+    // (6.5.2) primary-expression:
+    //     identifier
+    //     constant
+    //     string-literal
+    //     ( expression )
+    //     generic-selection
+    //     function-literal                    <-- EXTENSION
+    //
+    // function-literal:
+    //     type-specifier pointer_opt ( parameter-type-list_opt ) compound-statement
+    //
+    // Examples:
+    //     int(int x, int y) { return x + y; }
+    //     void*() { return malloc(10); }
+    //     void(void) { puts("hello"); }
+    //
+    // Disambiguation:
+    //     - Type keywords (int, void, etc.) cannot start expressions in C
+    //     - Typedef names: '{' after ')' distinguishes from function call
+    //       (like compound literals are distinguished from casts)
+
+    // Check if we're at the start of a function literal.
+    // Returns true if: type-specifier [*...] ( ... ) {
+    bool is_function_literal_start(){
+        // Must start with a type specifier
+        if(!is_type_specifier(peek())) return false;
+
+        // For type keywords (int, void, etc.), they can't start expressions,
+        // so if we see type-keyword followed by optional * and (, it must be a function literal
+        // For typedef names, we need to verify '{' follows the parameter list
+
+        // Scan ahead: skip type-specifier, pointers, find '(', match to ')', check for '{'
+        int pos = current;
+
+        // Skip the type specifier token(s)
+        // Handle: int, unsigned int, struct Foo, etc.
+        if(tokens[pos].type == CTokenType.STRUCT ||
+           tokens[pos].type == CTokenType.UNION ||
+           tokens[pos].type == CTokenType.ENUM){
+            pos++;  // skip struct/union/enum
+            if(pos < tokens.length && tokens[pos].type == CTokenType.IDENTIFIER)
+                pos++;  // skip tag name
+        } else if(tokens[pos].type == CTokenType.UNSIGNED ||
+                  tokens[pos].type == CTokenType.SIGNED){
+            pos++;  // skip unsigned/signed
+            // Skip optional int/long/short/char
+            if(pos < tokens.length){
+                auto t = tokens[pos].type;
+                if(t == CTokenType.INT || t == CTokenType.LONG ||
+                   t == CTokenType.SHORT || t == CTokenType.CHAR)
+                    pos++;
+            }
+        } else {
+            pos++;  // skip simple type (int, void, typedef-name, etc.)
+        }
+
+        // Skip pointer modifiers: * const volatile restrict
+        while(pos < tokens.length){
+            auto t = tokens[pos].type;
+            if(t == CTokenType.STAR || t == CTokenType.CONST ||
+               t == CTokenType.VOLATILE || t == CTokenType.RESTRICT){
+                pos++;
+            } else {
+                break;
+            }
+        }
+
+        // Must have '(' for parameter list
+        if(pos >= tokens.length || tokens[pos].type != CTokenType.LEFT_PAREN)
+            return false;
+        pos++;  // skip '('
+
+        // Find matching ')'
+        int depth = 1;
+        while(pos < tokens.length && depth > 0){
+            if(tokens[pos].type == CTokenType.LEFT_PAREN) depth++;
+            else if(tokens[pos].type == CTokenType.RIGHT_PAREN) depth--;
+            pos++;
+        }
+
+        // After ')', must have '{' for function body
+        if(pos >= tokens.length || tokens[pos].type != CTokenType.LEFT_BRACE)
+            return false;
+
+        return true;
+    }
+
+    // Parse a function literal expression
+    // Caller has verified this is a function literal via is_function_literal_start()
+    CExpr* parse_function_literal(){
+        CToken start_tok = peek();
+
+        // Parse return type (base type + optional pointers)
+        CType* return_type = parse_type();
+        if(return_type is null) return null;
+
+        // Consume '('
+        consume(CTokenType.LEFT_PAREN, "Expected '(' in function literal");
+        if(ERROR_OCCURRED) return null;
+
+        // Parse parameter list
+        ParameterListResult param_result = parse_parameter_type_list();
+        if(param_result.err) return null;
+
+        consume(CTokenType.RIGHT_PAREN, "Expected ')' after parameters");
+        if(ERROR_OCCURRED) return null;
+
+        // Generate anonymous function name
+        str lambda_name;
+        if(current_function_name.length > 0){
+            // Inside a function: use outer$lambda$N
+            lambda_name = mwritef(allocator, "%$lambda$%",
+                current_function_name, lambda_counter++)[];
+        } else {
+            // At global scope (e.g., in global initializer)
+            lambda_name = mwritef(allocator, "__lambda$%", lambda_counter++)[];
+        }
+
+        // Create function structure
+        CFunction func;
+        CToken name_tok = start_tok;
+        name_tok.lexeme = lambda_name;
+        func.name = name_tok;
+        func.return_type = return_type;
+        func.params = param_result.params[];
+        func.is_varargs = param_result.is_varargs;
+        func.is_inline = false;
+        func.is_definition = true;
+
+        // Register function before parsing body (for potential recursion, though unlikely)
+        add_function(func);
+
+        // Save outer function context
+        str saved_function_name = current_function_name;
+        CType* saved_return_type = current_return_type;
+        int saved_counter = static_local_counter;
+
+        // Set up lambda function context
+        current_function_name = lambda_name;
+        current_return_type = return_type;
+        static_local_counter = 0;
+
+        // Parse function body
+        push_scope();
+
+        // Add parameters to scope
+        foreach(ref param; param_result.params[]){
+            if(param.name.lexeme.length > 0){
+                current_scope.variables[param.name.lexeme] = param.type;
+            }
+        }
+
+        // Consume '{' and parse body
+        consume(CTokenType.LEFT_BRACE, "Expected '{' for function literal body");
+        if(ERROR_OCCURRED){ pop_scope(); return null; }
+
+        auto body_ = make_barray!(CStmt*)(allocator);
+        while(!check(CTokenType.RIGHT_BRACE) && !at_end){
+            CStmt* stmt = parse_statement();
+            if(stmt is null){ pop_scope(); return null; }
+            body_ ~= stmt;
+        }
+
+        consume(CTokenType.RIGHT_BRACE, "Expected '}' after function literal body");
+        pop_scope();
+
+        // Restore outer function context
+        current_function_name = saved_function_name;
+        current_return_type = saved_return_type;
+        static_local_counter = saved_counter;
+
+        // Update function with body
+        func.body = body_[];
+        if(auto idx = lambda_name in func_indices){
+            functions[*idx].body = body_[];
+        }
+
+        // Create function type and return pointer to function
+        auto param_types = make_barray!(CType*)(allocator);
+        foreach(ref p; param_result.params[]){
+            param_types ~= p.type;
+        }
+        CType* func_type = make_function_type(allocator, return_type, param_types[], param_result.is_varargs);
+        CType* func_ptr_type = make_pointer_type(allocator, func_type);
+
+        // Return identifier expression for the function (acts as function pointer)
+        return CIdentifier.make_func(allocator, name_tok, func_type);
+    }
+
     // (6.7.11) initializer:
     //     assignment-expression
     //     { initializer-list }
@@ -5340,6 +5536,12 @@ struct CParser {
                 return null;
             }
             return CGeneric.make(allocator, ctrl, assocs[], gen_tok, picked, picked.type);
+        }
+
+        // EXTENSION: Function literal
+        // type(params) { body } - like compound literals but for functions
+        if(is_function_literal_start()){
+            return parse_function_literal();
         }
 
         if(check(CTokenType.IDENTIFIER)){

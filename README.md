@@ -586,13 +586,65 @@ void outer() {
 - Accessing outer function's local variables (error at codegen)
 - Closures (no variable capture)
 
-#### Function literals
+#### Function Literals
 
-NOT IMPLEMENTED
+Function literals (anonymous functions/lambdas) can be used as expressions.
+The syntax mirrors a function definition but without a name, using the return
+type directly:
 
-Function literals can be used as expressions. This desugars as a reference
-to a static function. If used within function scope, it desugars to a local
-function.
+```c
+type(parameters) { body }
+```
+
+This desugars to a static function with a generated name. The expression
+evaluates to a pointer to that function.
+
+```c
+#include <stdio.h>
+
+int main() {
+    // Basic function literal
+    int (*add)(int, int) = int(int a, int b) { return a + b; };
+    printf("%d\n", add(3, 4));  // prints 7
+
+    // Pointer return type
+    int* (*identity)(int*) = int*(int* p) { return p; };
+
+    // Void return, no parameters
+    void (*greet)(void) = void(void) { puts("hello"); };
+
+    // Passed directly as argument
+    qsort(arr, n, sizeof(int), int(const void* a, const void* b) {
+        return *(int*)a - *(int*)b;
+    });
+
+    return 0;
+}
+```
+
+**Grammar:**
+```
+function-literal:
+    type-specifier pointer_opt ( parameter-type-list_opt ) compound-statement
+```
+
+**Disambiguation:**
+- Type keywords (`int`, `void`, `struct`, etc.) cannot start expressions in
+  standard C, so `int(...)` is unambiguously a function literal
+- For typedef names, the `{` after `)` distinguishes function literals from
+  function calls, similar to how compound literals `(T){...}` are distinguished
+  from casts `(T)expr`
+
+**What works:**
+- All basic types as return type (`int`, `void`, `char*`, etc.)
+- Typedef names as return type
+- Pointer return types (`int*`, `void*`, etc.)
+- Parameters with or without names
+- Varargs (`...`)
+- Used in any expression context (assignment, argument, etc.)
+
+**What doesn't work:**
+- Capturing variables from enclosing scope (no closures)
 
 
 #### `__unpack()` for argument lists or initializer-lists
