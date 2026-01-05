@@ -5480,6 +5480,13 @@ struct CDasmWriter {
             return gen_expression(e, target);
         }
 
+        // Dereference - address of *ptr is just ptr
+        if(CUnary* u = e.as_unary()){
+            if(u.op == CTokenType.STAR && u.is_prefix){
+                return gen_expression(u.operand, target);
+            }
+        }
+
         error(e.token, "Cannot pass this expression as struct/union by value");
         return 1;
     }
