@@ -457,17 +457,63 @@ Like the feature in GCC/clang.
 
 #### `static if`
 
-NOT IMPLEMENTED
+Compile-time conditional that operates at the parser level. Unlike `#if`, it has
+access to C types, `sizeof`, enum constants, and other compile-time information.
 
-This is in many ways like `#if`, but operates at the c parser level instead.
+```c
+static if(sizeof(void*) == 8)
+    typedef long intptr_t;
+else
+    typedef int intptr_t;
+```
 
-The condition inside of the `if()` is evaluated at parse time.
-If it is truthy, the code within the braces is added.
-If it is falsey, the code within the braces is skipped and the else branch if present is used instead.
+**Valid contexts:**
 
-The braces (if present) after the condition do not introduce a new scope.
-The code in the branch not taken do not need to be syntactically valid, but any
-`()`, `[]` and `{}` need to be balanced.
+| Context | Syntax | Notes |
+|---------|--------|-------|
+| Global scope | `if(expr) decl` | `static` keyword optional |
+| Global scope | `if(expr) { decls }` | `static` keyword optional |
+| Statement scope | `static if(expr) stmt` | `static` keyword required |
+| Statement scope | `static if(expr) { stmts }` | `static` keyword required |
+
+At global scope, bare `if` is unambiguous since runtime `if` statements cannot
+appear outside functions. Inside functions, `static if` is required to
+distinguish from runtime `if`.
+
+**Key properties:**
+
+- The condition is evaluated at parse time as a constant expression
+- Braces do NOT introduce a new scope - variables declared inside are visible outside
+- The skipped branch does not need to be syntactically valid C, only balanced `()`, `[]`, `{}`
+- Supports `else` branches
+
+**Examples:**
+
+```c
+// Global scope - bare if works
+if(USE_FLOAT)
+    typedef float number_t;
+else
+    typedef int number_t;
+
+// Global scope - with braces for multiple declarations
+if(DEBUG){
+    void debug_log(const char* msg);
+    int debug_level;
+}
+
+// Statement scope - static keyword required
+int main(){
+    static if(DEBUG){
+        int x = 42;  // x is visible outside the braces
+    }
+    return x;  // OK - x is in scope
+
+    static if(0){
+        this is not valid C but gets skipped @#$%
+    }
+}
+```
 
 ##### `static switch`
 

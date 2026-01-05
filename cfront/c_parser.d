@@ -964,6 +964,20 @@ struct CParser {
                 continue;
             }
 
+            // EXTENSION: static if at global scope
+            // Both "static if" and bare "if" work (if is unambiguous at global scope)
+            if(check(CTokenType.STATIC) && peek_at(1).type == CTokenType.IF){
+                advance();  // consume 'static'
+                int err = parse_global_static_if();
+                if(err) return err;
+                continue;
+            }
+            if(check(CTokenType.IF)){
+                int err = parse_global_static_if();
+                if(err) return err;
+                continue;
+            }
+
             // Track storage class specifiers (can appear in any order)
             // extern: for functions, this is the default; for objects, means defined elsewhere (dlimport)
             bool saw_extern = false;
@@ -3392,6 +3406,12 @@ struct CParser {
             return parse_label();
         }
 
+        // EXTENSION: static if - compile-time conditional
+        if(check(CTokenType.STATIC) && peek_at(1).type == CTokenType.IF){
+            advance();  // consume 'static'
+            return parse_static_if();
+        }
+
         // Check for variable declaration (starts with type or storage class)
         if(check(CTokenType.STATIC) || is_type_specifier(peek())){
             return parse_var_decl();
@@ -3495,6 +3515,296 @@ struct CParser {
         if(ERROR_OCCURRED) return null;
 
         return CReturnStmt.make(allocator, value, keyword);
+    }
+
+    // EXTENSION: static if at global scope - compile-time conditional for declarations
+    // static if(const-expr) declaration
+    // static if(const-expr) { declarations }
+    // The skipped branch doesn't need to be valid C, just balanced brackets.
+    int parse_global_static_if(){
+        advance();  // consume 'if'
+
+        consume(CTokenType.LEFT_PAREN, "Expected '(' after 'static if'");
+        if(ERROR_OCCURRED) return 1;
+
+        auto result = parse_const_expr();
+        if(result.err) return 1;
+
+        consume(CTokenType.RIGHT_PAREN, "Expected ')' after static if condition");
+        if(ERROR_OCCURRED) return 1;
+
+        bool condition = result.value != 0;
+
+        if(condition){
+            // Parse the taken branch
+            int err = parse_global_static_if_body();
+            if(err) return err;
+
+            // Skip else branch if present
+            if(match(CTokenType.ELSE)){
+                skip_global_static_if_body();
+            }
+        } else {
+            // Skip the false branch
+            skip_global_static_if_body();
+
+            // Check for else branch
+            if(match(CTokenType.ELSE)){
+                int err = parse_global_static_if_body();
+                if(err) return err;
+            }
+        }
+
+        return 0;
+    }
+
+    // Parse the body of a global static if (braced or single declaration)
+    int parse_global_static_if_body(){
+        if(check(CTokenType.LEFT_BRACE)){
+            advance();  // consume '{'
+
+            // Parse declarations until '}'
+            while(!check(CTokenType.RIGHT_BRACE) && !at_end){
+                // Recursively handle nested static if
+                if(check(CTokenType.STATIC) && peek_at(1).type == CTokenType.IF){
+                    advance();  // consume 'static'
+                    int err = parse_global_static_if();
+                    if(err) return err;
+                    continue;
+                }
+
+                // Skip semicolons
+                if(match(CTokenType.SEMICOLON)) continue;
+
+                // Handle pragma
+                if(check(CTokenType.HASH) && peek_at(1).type == CTokenType.IDENTIFIER && peek_at(1).lexeme == "pragma"){
+                    handle_pragma();
+                    continue;
+                }
+
+                // Parse a declaration
+                int err = parse_one_global_declaration();
+                if(err) return err;
+            }
+
+            consume(CTokenType.RIGHT_BRACE, "Expected '}' after static if body");
+            if(ERROR_OCCURRED) return 1;
+        } else {
+            // Single declaration (no braces)
+            // Handle nested static if
+            if(check(CTokenType.STATIC) && peek_at(1).type == CTokenType.IF){
+                advance();  // consume 'static'
+                return parse_global_static_if();
+            }
+
+            return parse_one_global_declaration();
+        }
+
+        return 0;
+    }
+
+    // Skip the body of a global static if (braced or single declaration)
+    void skip_global_static_if_body(){
+        if(check(CTokenType.LEFT_BRACE)){
+            skip_balanced_braces();
+        } else {
+            // Single declaration - skip until semicolon or function body
+            skip_global_declaration();
+        }
+    }
+
+    // Skip a single global declaration (for skipped static if branches)
+    void skip_global_declaration(){
+        // Skip until we see a semicolon at depth 0, or a closing brace after an opening one
+        int brace_depth = 0;
+        while(!at_end){
+            CTokenType t = peek().type;
+            if(t == CTokenType.LEFT_BRACE){
+                brace_depth++;
+                advance();
+            } else if(t == CTokenType.RIGHT_BRACE){
+                if(brace_depth > 0){
+                    brace_depth--;
+                    advance();
+                    if(brace_depth == 0) return;  // End of function body
+                } else {
+                    return;  // Don't consume - might be end of enclosing block
+                }
+            } else if(t == CTokenType.SEMICOLON && brace_depth == 0){
+                advance();  // consume ';'
+                return;
+            } else {
+                advance();
+            }
+        }
+    }
+
+    // Parse a single global declaration (for use in static if bodies)
+    // This is essentially the body of the main parse loop for one declaration
+    int parse_one_global_declaration(){
+        // Handle typedef
+        if(check(CTokenType.TYPEDEF)){
+            return parse_typedef(null);
+        }
+
+        // Handle _Static_assert
+        if(match(CTokenType.STATIC_ASSERT)){
+            return parse_static_assert();
+        }
+
+        // Track storage class specifiers
+        bool saw_extern = false;
+        bool saw_inline = false;
+        bool saw_static = false;
+        while(true){
+            if(match(CTokenType.EXTERN)){ saw_extern = true; }
+            else if(match(CTokenType.INLINE)){ saw_inline = true; }
+            else if(match(CTokenType.STATIC)){ saw_static = true; }
+            else if(match(CTokenType.NORETURN)){ /* skip */ }
+            else if(check(CTokenType.IDENTIFIER) && peek().lexeme == "__forceinline"){
+                advance();
+                saw_inline = true;
+            }
+            else break;
+        }
+
+        // Parse the type
+        CType* type_ = parse_type();
+        if(type_ is null) return 1;
+
+        // Check for type-only declaration
+        if(match(CTokenType.SEMICOLON)){
+            return 0;
+        }
+
+        // Parse declarator name
+        CToken name = consume(CTokenType.IDENTIFIER, "Expected identifier");
+        if(ERROR_OCCURRED) return 1;
+
+        if(check(CTokenType.LEFT_PAREN)){
+            // Function
+            CFunction func;
+            int err = parse_function_rest(type_, name, &func, saw_inline);
+            if(err) return err;
+            if(saw_static) func.is_static = true;
+        } else {
+            // Variable
+            int err = parse_init_declarator_list(type_, name, saw_extern, current_library);
+            if(err) return err;
+            consume(CTokenType.SEMICOLON, "Expected ';' after declaration");
+            if(ERROR_OCCURRED) return 1;
+        }
+
+        return 0;
+    }
+
+    // EXTENSION: static if - compile-time conditional
+    // static if(const-expr) statement
+    // static if(const-expr) statement else statement
+    // The braces do NOT introduce a new scope.
+    // The skipped branch doesn't need to be valid C, just balanced brackets.
+    CStmt* parse_static_if(){
+        CToken keyword = previous();  // 'static'
+        advance();  // consume 'if'
+
+        consume(CTokenType.LEFT_PAREN, "Expected '(' after 'static if'");
+        if(ERROR_OCCURRED) return null;
+
+        auto result = parse_const_expr();
+        if(result.err) return null;
+
+        consume(CTokenType.RIGHT_PAREN, "Expected ')' after static if condition");
+        if(ERROR_OCCURRED) return null;
+
+        bool condition = result.value != 0;
+
+        if(condition){
+            // Parse the taken branch
+            CStmt* then_branch;
+            if(check(CTokenType.LEFT_BRACE)){
+                // Parse block WITHOUT introducing new scope
+                advance();  // consume '{'
+                then_branch = parse_block_body();
+                if(then_branch is null) return null;
+            } else {
+                then_branch = parse_statement();
+                if(then_branch is null) return null;
+            }
+
+            // Skip else branch if present
+            if(match(CTokenType.ELSE)){
+                skip_balanced_statement();
+            }
+
+            return then_branch;
+        } else {
+            // Skip the false branch
+            skip_balanced_statement();
+
+            // Check for else branch
+            if(match(CTokenType.ELSE)){
+                if(check(CTokenType.LEFT_BRACE)){
+                    // Parse block WITHOUT introducing new scope
+                    advance();  // consume '{'
+                    return parse_block_body();
+                } else {
+                    return parse_statement();
+                }
+            }
+
+            // No else, return empty statement
+            return CEmptyStmt.get();
+        }
+    }
+
+    // Skip a balanced statement (for static if/else skipping)
+    // Handles single statements or braced blocks
+    void skip_balanced_statement(){
+        if(check(CTokenType.LEFT_BRACE)){
+            skip_balanced_braces();  // consumes '{' and matching '}'
+        } else {
+            // Single statement - skip until semicolon, but handle nested constructs
+            skip_until_semicolon();
+        }
+    }
+
+    // Skip until semicolon, handling nested (), [], {}
+    void skip_until_semicolon(){
+        int paren_depth = 0;
+        int bracket_depth = 0;
+        int brace_depth = 0;
+        while(!at_end){
+            CTokenType t = peek().type;
+            if(t == CTokenType.LEFT_PAREN) paren_depth++;
+            else if(t == CTokenType.RIGHT_PAREN) paren_depth--;
+            else if(t == CTokenType.LEFT_BRACKET) bracket_depth++;
+            else if(t == CTokenType.RIGHT_BRACKET) bracket_depth--;
+            else if(t == CTokenType.LEFT_BRACE) brace_depth++;
+            else if(t == CTokenType.RIGHT_BRACE) brace_depth--;
+            else if(t == CTokenType.SEMICOLON && paren_depth == 0 && bracket_depth == 0 && brace_depth == 0){
+                advance();  // consume ';'
+                return;
+            }
+            advance();
+        }
+    }
+
+    // Parse block body without the surrounding scope push/pop
+    // Used for static if where braces don't introduce scope
+    CStmt* parse_block_body(){
+        CToken brace = previous();
+        auto statements = make_barray!(CStmt*)(allocator);
+
+        while(!check(CTokenType.RIGHT_BRACE) && !at_end){
+            CStmt* stmt = parse_statement();
+            if(stmt is null) return null;
+            statements ~= stmt;
+        }
+
+        consume(CTokenType.RIGHT_BRACE, "Expected '}' after block");
+        if(ERROR_OCCURRED) return null;
+
+        return CBlock.make(allocator, statements[], brace);
     }
 
     // (6.8.5.1) if statement:
