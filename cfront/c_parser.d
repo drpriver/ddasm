@@ -355,33 +355,175 @@ struct CParser {
         }
         if(match(CTokenType.BOOL))     { specs.base_type = &TYPE_INT; return true; }  // _Bool as int
 
-        // Struct/union reference (simple case: just "struct Name" or "union Name")
+        // (6.7.3.2) struct-or-union-specifier:
+        //     struct-or-union identifier_opt { member-declaration-list }
+        //     struct-or-union identifier
         if(match(CTokenType.STRUCT)){
+            Attributes attrs;
+            parse_gnu_attributes(attrs);
+
+            CToken name_tok;
+            bool has_name = false;
             if(check(CTokenType.IDENTIFIER)){
-                str name = advance().lexeme;
-                if(auto t = name in struct_types){
+                name_tok = advance();
+                has_name = true;
+            }
+
+            parse_gnu_attributes(attrs);
+
+            // Check for definition: struct Name { ... } or struct { ... }
+            if(check(CTokenType.LEFT_BRACE)){
+                advance();  // consume '{'
+                // Parse member-declaration-list
+                auto fields = make_barray!StructField(allocator);
+                size_t total_size = 0;
+                int err = parse_member_declaration_list(&fields, &total_size, false);  // is_union=false
+                if(err){ ERROR_OCCURRED = true; return false; }
+
+                consume(CTokenType.RIGHT_BRACE, "Expected '}' after struct fields");
+                if(ERROR_OCCURRED) return false;
+
+                parse_gnu_attributes(attrs);
+
+                // Register struct type
+                CType* struct_type;
+                if(has_name){
+                    if(auto existing = name_tok.lexeme in struct_types){
+                        // Update existing type in-place so typedefs continue to work
+                        struct_type = *existing;
+                        struct_type.fields = fields[];
+                        struct_type.struct_size = total_size;
+                    } else {
+                        struct_type = make_struct_type(allocator, name_tok.lexeme, fields[], total_size);
+                        struct_types[name_tok.lexeme] = struct_type;
+                    }
+                } else {
+                    struct_type = make_struct_type(allocator, "", fields[], total_size);
+                }
+                specs.base_type = struct_type;
+                return true;
+            } else if(has_name){
+                // Just a reference: struct Name
+                if(auto t = name_tok.lexeme in struct_types){
                     specs.base_type = *t;
                     return true;
                 }
-                // Unknown struct - create incomplete type reference
-                // (caller will handle definition or error)
+                // Create incomplete struct type for forward reference
+                void[] data = allocator.zalloc(CType.sizeof);
+                CType* incomplete = cast(CType*)data.ptr;
+                incomplete.kind = CTypeKind.STRUCT;
+                incomplete.struct_name = name_tok.lexeme;
+                incomplete.struct_size = 0;  // Unknown size
+                struct_types[name_tok.lexeme] = incomplete;
+                specs.base_type = incomplete;
+                return true;
             }
-            return false;  // Incomplete struct specifier
+            return false;  // Incomplete struct specifier (no name, no body)
         }
         if(match(CTokenType.UNION)){
+            CToken name_tok;
+            bool has_name = false;
             if(check(CTokenType.IDENTIFIER)){
-                str name = advance().lexeme;
-                if(auto t = name in union_types){
+                name_tok = advance();
+                has_name = true;
+            }
+
+            // Check for definition: union Name { ... } or union { ... }
+            if(check(CTokenType.LEFT_BRACE)){
+                advance();  // consume '{'
+                // Parse member-declaration-list
+                auto fields = make_barray!StructField(allocator);
+                size_t max_size = 0;
+                int err = parse_member_declaration_list(&fields, &max_size, true);  // is_union=true
+                if(err){ ERROR_OCCURRED = true; return false; }
+
+                consume(CTokenType.RIGHT_BRACE, "Expected '}' after union fields");
+                if(ERROR_OCCURRED) return false;
+
+                // Register union type
+                CType* union_type;
+                if(has_name){
+                    if(auto existing = name_tok.lexeme in union_types){
+                        union_type = *existing;
+                        union_type.fields = fields[];
+                        union_type.struct_size = max_size;
+                    } else {
+                        union_type = make_union_type(allocator, name_tok.lexeme, fields[], max_size);
+                        union_types[name_tok.lexeme] = union_type;
+                    }
+                } else {
+                    union_type = make_union_type(allocator, "", fields[], max_size);
+                }
+                specs.base_type = union_type;
+                return true;
+            } else if(has_name){
+                // Just a reference: union Name
+                if(auto t = name_tok.lexeme in union_types){
                     specs.base_type = *t;
                     return true;
                 }
+                // Create incomplete union type for forward reference
+                void[] data = allocator.zalloc(CType.sizeof);
+                CType* incomplete = cast(CType*)data.ptr;
+                incomplete.kind = CTypeKind.UNION;
+                incomplete.struct_name = name_tok.lexeme;
+                incomplete.struct_size = 0;
+                union_types[name_tok.lexeme] = incomplete;
+                specs.base_type = incomplete;
+                return true;
             }
             return false;  // Incomplete union specifier
         }
         if(match(CTokenType.ENUM)){
+            CToken name_tok;
+            bool has_name = false;
             if(check(CTokenType.IDENTIFIER)){
-                str name = advance().lexeme;
-                if(auto t = name in enum_types){
+                name_tok = advance();
+                has_name = true;
+            }
+
+            // Check for definition: enum Name { ... } or enum { ... }
+            if(check(CTokenType.LEFT_BRACE)){
+                advance();  // consume '{'
+                // Parse enumerator-list
+                long enum_value = 0;
+                while(!check(CTokenType.RIGHT_BRACE) && !at_end){
+                    Attributes enum_attrs;
+                    parse_gnu_attributes(enum_attrs);
+
+                    CToken const_name = consume(CTokenType.IDENTIFIER, "Expected enumerator name");
+                    if(ERROR_OCCURRED) return false;
+
+                    parse_gnu_attributes(enum_attrs);
+
+                    if(match(CTokenType.EQUAL)){
+                        auto val_result = parse_enum_const_expr();
+                        if(val_result.err){ ERROR_OCCURRED = true; return false; }
+                        enum_value = val_result.value;
+                    }
+
+                    // Register enum constant
+                    enum_constants[const_name.lexeme] = enum_value;
+                    enum_value++;
+
+                    if(!match(CTokenType.COMMA)){
+                        break;
+                    }
+                }
+
+                consume(CTokenType.RIGHT_BRACE, "Expected '}' after enum values");
+                if(ERROR_OCCURRED) return false;
+
+                // Enums are just ints
+                CType* enum_type = &TYPE_INT;
+                if(has_name){
+                    enum_types[name_tok.lexeme] = enum_type;
+                }
+                specs.base_type = enum_type;
+                return true;
+            } else if(has_name){
+                // Just a reference: enum Name
+                if(auto t = name_tok.lexeme in enum_types){
                     specs.base_type = *t;
                     return true;
                 }
@@ -435,6 +577,132 @@ struct CParser {
             if(check(CTokenType.LEFT_PAREN)){
                 skip_balanced_parens();
             }
+        }
+    }
+
+    // =========================================================================
+    // External Declaration Parsing (following C grammar)
+    // =========================================================================
+
+    // (6.9.1) external-declaration:
+    //     function-definition
+    //     declaration
+    //
+    // (6.7.1) declaration:
+    //     declaration-specifiers init-declarator-list_opt ;
+    //
+    // This is the unified entry point for parsing top-level declarations.
+    // It handles: function definitions, function declarations, variable declarations,
+    // struct/union/enum definitions (with or without variable declarations).
+    int parse_external_declaration(){
+        CToken first_tok = peek();
+
+        // Parse declaration-specifiers (storage class, type qualifiers, type specifier)
+        DeclSpecifiers specs = parse_declaration_specifiers();
+        if(specs.base_type is null){
+            error("Expected type specifier");
+            return 1;
+        }
+
+        // Handle type-only declaration (e.g., "struct Foo { int x; };")
+        if(check(CTokenType.SEMICOLON)){
+            advance();
+            return 0;
+        }
+
+        // Parse the declarator
+        CDeclarator* decl = parse_declarator(false);  // allow_abstract=false
+        if(decl is null){
+            error("Expected declarator");
+            return 1;
+        }
+        CToken name = get_declarator_name(decl);
+        CType* decl_type = apply_declarator_to_type(specs.base_type, decl);
+
+        // Determine if this is a function definition or declaration
+        bool is_function_type = decl_type !is null && decl_type.kind == CTypeKind.FUNCTION;
+
+        if(is_function_type){
+            // Function - either definition or declaration
+            CFunction func;
+            func.name = name;
+            func.return_type = decl_type.return_type;
+
+            // Get parameters from the declarator's function type
+            auto params = make_barray!CParam(allocator);
+            if(decl_type.param_types.length > 0 || decl_type.is_varargs){
+                // Build parameter list from type info
+                // Note: param names may be in the declarator, not the type
+                foreach(i, pt; decl_type.param_types){
+                    CParam p;
+                    p.type = pt;
+                    // Names are stored in declarator, but for now use placeholder
+                    params ~= p;
+                }
+            }
+            func.params = params[];
+            func.is_varargs = decl_type.is_varargs;
+            func.is_inline = specs.is_inline;
+            func.library = current_library;
+
+            skip_gcc_attributes();
+
+            // Check if declaration or definition
+            if(match(CTokenType.SEMICOLON)){
+                func.is_definition = false;
+                add_function(func);
+                return 0;
+            }
+
+            // Function definition - parse body
+            func.is_definition = true;
+            add_function(func);
+
+            consume(CTokenType.LEFT_BRACE, "Expected '{' for function body");
+            if(ERROR_OCCURRED) return 1;
+
+            // Set up type context for function body
+            current_return_type = func.return_type;
+            current_function_name = func.name.lexeme;
+            static_local_counter = 0;
+
+            push_scope();
+            scope(exit) {
+                current_function_name = null;
+                current_return_type = null;
+                pop_scope();
+            }
+
+            // Add parameters to scope
+            foreach(ref param; func.params){
+                if(param.name.lexeme.length > 0){
+                    current_scope.variables[param.name.lexeme] = param.type;
+                }
+            }
+
+            auto body = make_barray!(CStmt*)(allocator);
+            while(!check(CTokenType.RIGHT_BRACE) && !at_end){
+                CStmt* stmt = parse_statement();
+                if(stmt is null) return 1;
+                body ~= stmt;
+            }
+
+            consume(CTokenType.RIGHT_BRACE, "Expected '}' after function body");
+            if(ERROR_OCCURRED) return 1;
+
+            func.body = body[];
+            if(auto idx = func.name.lexeme in func_indices){
+                functions[*idx].body = body[];
+            }
+            return 0;
+        } else {
+            // Variable declaration - use parse_init_declarator_list
+            bool is_extern = specs.storage == DeclSpecifiers.StorageClass.EXTERN;
+            int err = parse_init_declarator_list(decl_type, name, is_extern, current_library);
+            if(err) return err;
+            consume(CTokenType.SEMICOLON, "Expected ';' after variable declaration");
+            if(ERROR_OCCURRED) return 1;
+            return 0;
         }
     }
 
@@ -712,131 +980,79 @@ struct CParser {
             }
 
             if(check(CTokenType.STRUCT)){
-                // Check if this is a struct definition or forward declaration
-                // Look ahead: struct Name { ... means definition
-                //             struct Name ; means forward declaration
-                //             struct Name var... means variable of struct type
-                if(peek_at(1).type == CTokenType.IDENTIFIER &&
-                    peek_at(2).type == CTokenType.LEFT_BRACE){
-                    CStructDef sdef;
-                    int err = parse_struct_def(&sdef);
+                // Parse struct type (handles definitions and references via parse_base_type)
+                // Grammar: struct Name { ... } [var [= init], ...] ;
+                //       or: struct Name var [= init], ... ;
+                //       or: struct Name ;
+                CType* type_ = parse_type();
+                if(type_ is null) return 1;
+
+                // Check for type-only declaration (e.g., "struct Foo { int x; };")
+                if(match(CTokenType.SEMICOLON)){
+                    // Just a struct definition or forward declaration, no variable
+                    continue;
+                }
+
+                // Parse variable/function name
+                CToken name = consume(CTokenType.IDENTIFIER, "Expected identifier");
+                if(ERROR_OCCURRED) return 1;
+
+                if(check(CTokenType.LEFT_PAREN)){
+                    CFunction func;
+                    int err = parse_function_rest(type_, name, &func, saw_inline);
                     if(err) return err;
-                    structs ~= sdef;
-                } else if(peek_at(1).type == CTokenType.IDENTIFIER &&
-                           peek_at(2).type == CTokenType.SEMICOLON){
-                    // Forward declaration: struct Name;
-                    advance();  // consume 'struct'
-                    CToken struct_name = advance();  // consume name
-                    advance();  // consume ';'
-
-                    // Create incomplete struct type if not already defined
-                    if((struct_name.lexeme in struct_types) is null){
-                        void[] data = allocator.zalloc(CType.sizeof);
-                        CType* incomplete = cast(CType*)data.ptr;
-                        incomplete.kind = CTypeKind.STRUCT;
-                        incomplete.struct_name = struct_name.lexeme;
-                        incomplete.struct_size = 0;  // Unknown size
-                        struct_types[struct_name.lexeme] = incomplete;
-                    }
                 } else {
-                    // It's a variable/function with struct type
-                    CType* type_ = parse_type();
-                    if(type_ is null) return 1;
-
-                    CToken name = consume(CTokenType.IDENTIFIER, "Expected identifier");
+                    // Global variable - use unified init-declarator-list parsing
+                    int err = parse_init_declarator_list(type_, name, saw_extern, current_library);
+                    if(err) return err;
+                    consume(CTokenType.SEMICOLON, "Expected ';' after variable declaration");
                     if(ERROR_OCCURRED) return 1;
-
-                    if(check(CTokenType.LEFT_PAREN)){
-                        CFunction func;
-                        int err = parse_function_rest(type_, name, &func, saw_inline);
-                        if(err) return err;
-                    } else {
-                        // Global variable - use unified init-declarator-list parsing
-                        int err = parse_init_declarator_list( type_, name, saw_extern, current_library);
-                        if(err) return err;
-                        consume(CTokenType.SEMICOLON, "Expected ';' after variable declaration");
-                        if(ERROR_OCCURRED) return 1;
-                    }
                 }
             } else if(check(CTokenType.UNION)){
-                // Check if this is a union definition or forward declaration
-                // Look ahead: union Name { ... means definition
-                //             union Name ; means forward declaration
-                //             union Name var... means variable of union type
-                if(peek_at(1).type == CTokenType.IDENTIFIER &&
-                    peek_at(2).type == CTokenType.LEFT_BRACE){
-                    CUnionDef udef;
-                    int err = parse_union_def(&udef);
+                // Parse union type (handles definitions and references via parse_base_type)
+                CType* type_ = parse_type();
+                if(type_ is null) return 1;
+
+                // Check for type-only declaration (e.g., "union Foo { int x; };")
+                if(match(CTokenType.SEMICOLON)){
+                    continue;
+                }
+
+                CToken name = consume(CTokenType.IDENTIFIER, "Expected identifier");
+                if(ERROR_OCCURRED) return 1;
+
+                if(check(CTokenType.LEFT_PAREN)){
+                    CFunction func;
+                    int err = parse_function_rest(type_, name, &func, saw_inline);
                     if(err) return err;
-                    unions ~= udef;
-                } else if(peek_at(1).type == CTokenType.IDENTIFIER &&
-                           peek_at(2).type == CTokenType.SEMICOLON){
-                    // Forward declaration: union Name;
-                    advance();  // consume 'union'
-                    CToken union_name = advance();  // consume name
-                    advance();  // consume ';'
-
-                    // Create incomplete union type if not already defined
-                    if((union_name.lexeme in union_types) is null){
-                        void[] data = allocator.zalloc(CType.sizeof);
-                        CType* incomplete = cast(CType*)data.ptr;
-                        incomplete.kind = CTypeKind.UNION;
-                        incomplete.struct_name = union_name.lexeme;
-                        incomplete.struct_size = 0;  // Unknown size
-                        union_types[union_name.lexeme] = incomplete;
-                    }
                 } else {
-                    // It's a variable/function with union type
-                    CType* type_ = parse_type();
-                    if(type_ is null) return 1;
-
-                    CToken name = consume(CTokenType.IDENTIFIER, "Expected identifier");
+                    int err = parse_init_declarator_list(type_, name, saw_extern, current_library);
+                    if(err) return err;
+                    consume(CTokenType.SEMICOLON, "Expected ';' after variable declaration");
                     if(ERROR_OCCURRED) return 1;
-
-                    if(check(CTokenType.LEFT_PAREN)){
-                        CFunction func;
-                        int err = parse_function_rest(type_, name, &func, saw_inline);
-                        if(err) return err;
-                    } else {
-                        // Global variable - use unified init-declarator-list parsing
-                        int err = parse_init_declarator_list( type_, name, saw_extern, current_library);
-                        if(err) return err;
-                        consume(CTokenType.SEMICOLON, "Expected ';' after variable declaration");
-                        if(ERROR_OCCURRED) return 1;
-                    }
                 }
             } else if(check(CTokenType.ENUM)){
-                // Check if this is an enum definition
-                // Look ahead: enum Name { ... means named definition
-                //             enum { ... means anonymous definition
-                //             enum Name var... means variable of enum type
-                bool is_anon_enum = peek_at(1).type == CTokenType.LEFT_BRACE;
-                bool is_named_enum = peek_at(1).type == CTokenType.IDENTIFIER &&
-                                     peek_at(2).type == CTokenType.LEFT_BRACE;
-                if(is_anon_enum || is_named_enum){
-                    CEnumDef edef;
-                    int err = parse_enum_def(&edef);
+                // Parse enum type (handles definitions and references via parse_base_type)
+                CType* type_ = parse_type();
+                if(type_ is null) return 1;
+
+                // Check for type-only declaration (e.g., "enum Foo { A, B };")
+                if(match(CTokenType.SEMICOLON)){
+                    continue;
+                }
+
+                CToken name = consume(CTokenType.IDENTIFIER, "Expected identifier");
+                if(ERROR_OCCURRED) return 1;
+
+                if(check(CTokenType.LEFT_PAREN)){
+                    CFunction func;
+                    int err = parse_function_rest(type_, name, &func, saw_inline);
                     if(err) return err;
-                    enums ~= edef;
                 } else {
-                    // It's a variable/function with enum type
-                    CType* type_ = parse_type();
-                    if(type_ is null) return 1;
-
-                    CToken name = consume(CTokenType.IDENTIFIER, "Expected identifier");
+                    int err = parse_init_declarator_list(type_, name, saw_extern, current_library);
+                    if(err) return err;
+                    consume(CTokenType.SEMICOLON, "Expected ';' after variable declaration");
                     if(ERROR_OCCURRED) return 1;
-
-                    if(check(CTokenType.LEFT_PAREN)){
-                        CFunction func;
-                        int err = parse_function_rest(type_, name, &func, saw_inline);
-                        if(err) return err;
-                    } else {
-                        // Global variable - use unified init-declarator-list parsing
-                        int err = parse_init_declarator_list( type_, name, saw_extern, current_library);
-                        if(err) return err;
-                        consume(CTokenType.SEMICOLON, "Expected ';' after variable declaration");
-                        if(ERROR_OCCURRED) return 1;
-                    }
                 }
             } else if(check(CTokenType.TYPEDEF)){
                 // Parse typedef declaration
@@ -3493,11 +3709,15 @@ struct CParser {
             result = &TYPE_DOUBLE;  // Stub
         } else if(match(CTokenType.STRUCT)){
             // struct Name or struct { ... }
+            parse_gnu_attributes(attrs);
+
             bool has_name = check(CTokenType.IDENTIFIER);
             CToken struct_name;
             if(has_name){
                 struct_name = advance();
             }
+
+            parse_gnu_attributes(attrs);
 
             // Check for inline definition
             if(check(CTokenType.LEFT_BRACE)){
@@ -3505,64 +3725,14 @@ struct CParser {
                 auto fields = make_barray!StructField(allocator);
                 size_t total_size = 0;
 
-                while(!check(CTokenType.RIGHT_BRACE) && !at_end){
-                    CType* field_type = parse_type();
-                    if(field_type is null) return null;
-
-                    // Handle comma-separated declarators (e.g., int x:1, y:2;)
-                    CType* base_type = field_type;
-                    do {
-                        // Check for anonymous bit field
-                        if(check(CTokenType.COLON)){
-                            advance();  // consume :
-                            auto width_result = parse_enum_const_expr();
-                            if(width_result.err) return null;
-                            // Skip anonymous bit fields - they're just padding
-                        } else {
-                            CToken field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
-                            if(ERROR_OCCURRED) return null;
-
-                            CType* decl_type = base_type;
-
-                            while(match(CTokenType.LEFT_BRACKET)){
-                                // Check for flexible array member
-                                if(check(CTokenType.RIGHT_BRACKET)){
-                                    advance();
-                                    decl_type = make_array_type(allocator, decl_type, 0);
-                                    continue;
-                                }
-                                auto size_result = parse_enum_const_expr();
-                                if(size_result.err) return null;
-                                if(size_result.value <= 0){
-                                    error("Array size must be positive");
-                                    return null;
-                                }
-                                consume(CTokenType.RIGHT_BRACKET, "Expected ']'");
-                                if(ERROR_OCCURRED) return null;
-                                decl_type = make_array_type(allocator, decl_type, cast(size_t) size_result.value);
-                            }
-
-                            // Handle bit fields
-                            if(match(CTokenType.COLON)){
-                                auto width_result = parse_enum_const_expr();
-                                if(width_result.err) return null;
-                            }
-
-                            StructField field;
-                            field.name = field_name.lexeme;
-                            field.type = decl_type;
-                            field.offset = total_size;
-                            fields ~= field;
-                            total_size += decl_type.size_of();
-                        }
-                    } while(match(CTokenType.COMMA));
-
-                    consume(CTokenType.SEMICOLON, "Expected ';' after field");
-                    if(ERROR_OCCURRED) return null;
-                }
+                // Use unified member parsing which handles anonymous structs/unions
+                int err = parse_member_declaration_list(&fields, &total_size, false);  // is_union=false
+                if(err) return null;
 
                 consume(CTokenType.RIGHT_BRACE, "Expected '}'");
                 if(ERROR_OCCURRED) return null;
+
+                parse_gnu_attributes(attrs);
 
                 // Check if there's an existing forward-declared type to update
                 if(has_name){
@@ -3612,62 +3782,9 @@ struct CParser {
                 auto fields = make_barray!StructField(allocator);
                 size_t max_size = 0;
 
-                while(!check(CTokenType.RIGHT_BRACE) && !at_end){
-                    CType* field_type = parse_type();
-                    if(field_type is null) return null;
-
-                    // Handle comma-separated declarators (e.g., int x:1, y:2;)
-                    CType* base_type = field_type;
-                    do {
-                        // Check for anonymous bit field
-                        if(check(CTokenType.COLON)){
-                            advance();  // consume :
-                            auto width_result = parse_enum_const_expr();
-                            if(width_result.err) return null;
-                            // Skip anonymous bit fields - they're just padding
-                        } else {
-                            CToken field_name = consume(CTokenType.IDENTIFIER, "Expected field name");
-                            if(ERROR_OCCURRED) return null;
-
-                            CType* decl_type = base_type;
-
-                            while(match(CTokenType.LEFT_BRACKET)){
-                                // Check for flexible array member
-                                if(check(CTokenType.RIGHT_BRACKET)){
-                                    advance();
-                                    decl_type = make_array_type(allocator, decl_type, 0);
-                                    continue;
-                                }
-                                auto size_result = parse_enum_const_expr();
-                                if(size_result.err) return null;
-                                if(size_result.value <= 0){
-                                    error("Array size must be positive");
-                                    return null;
-                                }
-                                consume(CTokenType.RIGHT_BRACKET, "Expected ']'");
-                                if(ERROR_OCCURRED) return null;
-                                decl_type = make_array_type(allocator, decl_type, cast(size_t) size_result.value);
-                            }
-
-                            // Handle bit fields
-                            if(match(CTokenType.COLON)){
-                                auto width_result = parse_enum_const_expr();
-                                if(width_result.err) return null;
-                            }
-
-                            StructField field;
-                            field.name = field_name.lexeme;
-                            field.type = decl_type;
-                            field.offset = 0;  // All union fields at offset 0
-                            fields ~= field;
-                            size_t field_size = decl_type.size_of();
-                            if(field_size > max_size) max_size = field_size;
-                        }
-                    } while(match(CTokenType.COMMA));
-
-                    consume(CTokenType.SEMICOLON, "Expected ';' after field");
-                    if(ERROR_OCCURRED) return null;
-                }
+                // Use unified member parsing which handles anonymous structs/unions
+                int err = parse_member_declaration_list(&fields, &max_size, true);  // is_union=true
+                if(err) return null;
 
                 consume(CTokenType.RIGHT_BRACE, "Expected '}'");
                 if(ERROR_OCCURRED) return null;
