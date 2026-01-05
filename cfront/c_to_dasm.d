@@ -2259,12 +2259,12 @@ struct CDasmWriter {
                         int dst_reg = regallocator.allocate();
                         int src_reg = regallocator.allocate();
 
-                        // dst = address of this struct
-                        sb.writef("    add r% rbp %\n", dst_reg, P(slot));
-
-                        // src = address of source struct
+                        // src = address of source struct (do first - may involve function call)
                         int err = gen_struct_address(stmt.initializer, src_reg);
                         if(err) return err;
+
+                        // dst = address of this struct (do after so not clobbered by call)
+                        sb.writef("    add r% rbp %\n", dst_reg, P(slot));
 
                         // memcpy
                         sb.writef("    memcpy r% r% %\n", dst_reg, src_reg, struct_size);

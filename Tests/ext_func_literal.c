@@ -7,10 +7,10 @@ void test_basic() {
     int (*add)(int, int) = int(int a, int b) { return a + b; };
     int result = add(3, 4);
     if(result != 7) {
-        printf("FAIL test_basic: expected 7, got %d\n", result);
+        printf("FAIL %s: expected 7, got %d\n", __func__, result);
         exit(1);
     }
-    printf("PASS test_basic\n");
+    printf("PASS %s\n", __func__);
 }
 
 // Test 2: Function literal with void return
@@ -19,10 +19,10 @@ void test_void_return() {
     void (*greet)(int*) = void(int* p) { *p = 42; };
     greet(&called);
     if(called != 42) {
-        printf("FAIL test_void_return: expected 42, got %d\n", called);
+        printf("FAIL %s: expected 42, got %d\n", __func__, called);
         exit(1);
     }
-    printf("PASS test_void_return\n");
+    printf("PASS %s\n", __func__);
 }
 
 // Test 3: Function literal returning pointer
@@ -31,10 +31,10 @@ void test_pointer_return() {
     int* (*get_ptr)(int*) = int*(int* p) { return p; };
     int* result = get_ptr(&value);
     if(*result != 100) {
-        printf("FAIL test_pointer_return: expected 100, got %d\n", *result);
+        printf("FAIL %s: expected 100, got %d\n", __func__, *result);
         exit(1);
     }
-    printf("PASS test_pointer_return\n");
+    printf("PASS %s\n", __func__);
 }
 
 // Test 4: Function literal with no parameters
@@ -42,10 +42,10 @@ void test_no_params() {
     int (*get_42)(void) = int(void) { return 42; };
     int result = get_42();
     if(result != 42) {
-        printf("FAIL test_no_params: expected 42, got %d\n", result);
+        printf("FAIL %s: expected 42, got %d\n", __func__, result);
         exit(1);
     }
-    printf("PASS test_no_params\n");
+    printf("PASS %s\n", __func__);
 }
 
 // Test 5: Multiple function literals
@@ -57,10 +57,10 @@ void test_multiple() {
     int product = mul(5, 3);
 
     if(sum != 8 || product != 15) {
-        printf("FAIL test_multiple: expected 8 and 15, got %d and %d\n", sum, product);
+        printf("FAIL %s: expected 8 and 15, got %d and %d\n", __func__, sum, product);
         exit(1);
     }
-    printf("PASS test_multiple\n");
+    printf("PASS %s\n", __func__);
 }
 
 // Helper for test_as_argument
@@ -72,10 +72,10 @@ int apply(int (*f)(int), int x) {
 void test_as_argument() {
     int result = apply(int(int x) { return x * 2; }, 21);
     if(result != 42) {
-        printf("FAIL test_as_argument: expected 42, got %d\n", result);
+        printf("FAIL %s: expected 42, got %d\n", __func__, result);
         exit(1);
     }
-    printf("PASS test_as_argument\n");
+    printf("PASS %s\n", __func__);
 }
 
 // Test 7: Typedef return type
@@ -84,10 +84,38 @@ void test_typedef_return() {
     myint (*get_val)(void) = myint(void) { return 99; };
     myint result = get_val();
     if(result != 99) {
-        printf("FAIL test_typedef_return: expected 99, got %d\n", result);
+        printf("FAIL %s: expected 99, got %d\n", __func__, result);
         exit(1);
     }
-    printf("PASS test_typedef_return\n");
+    printf("PASS %s\n", __func__);
+}
+
+// Test 8: Struct return type
+struct Point { int x; int y; };
+void test_struct_return() {
+    struct Point (*make_point)(int, int) = struct Point(int x, int y) {
+        struct Point p;
+        p.x = x;
+        p.y = y;
+        return p;
+    };
+    struct Point p = make_point(10, 20);
+    if(p.x != 10 || p.y != 20) {
+        printf("FAIL %s: expected (10, 20), got (%d, %d)\n", __func__, p.x, p.y);
+        exit(1);
+    }
+    printf("PASS %s\n", __func__);
+}
+
+void test_iife(){
+    int x = int(int a, int b){
+        return a + b;
+    }(1, 2);
+    if(x != 3){
+        printf("FAIL %s: 3, got %d\n", __func__, x);
+        exit(1);
+    }
+    printf("PASS %s\n", __func__);
 }
 
 int main() {
@@ -98,6 +126,8 @@ int main() {
     test_multiple();
     test_as_argument();
     test_typedef_return();
+    test_struct_return();
+    test_iife();
 
     printf("All function literal tests passed!\n");
     return 0;
