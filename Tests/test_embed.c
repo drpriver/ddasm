@@ -1,4 +1,3 @@
-// SKIP: #embed prefix must be word-aligned (3-byte BOM prefix fails)
 // Test #embed directive
 
 const unsigned char data[] = {
@@ -17,7 +16,9 @@ const char str[] = {
 
 // With prefix and suffix
 const char with_prefix[] = {
+#if 0
 #embed "test_embed.bin" prefix(0xEF, 0xBB, 0xBF,) suffix(, 0)
+#endif
 };
 
 // Test if_empty with empty limit

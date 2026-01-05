@@ -1,4 +1,3 @@
-// SKIP: designated initializer calculation incorrect (returns 174 instead of 942)
 // Test (6.7.11) designated initializers per C2y spec
 // EXPECT: 942
 

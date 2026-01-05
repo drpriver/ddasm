@@ -1,4 +1,3 @@
-// SKIP: function pointer parameter calls not yet supported
 // Test (6.7.6) function declarators
 
 // Forward declaration

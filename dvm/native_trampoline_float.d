@@ -43,13 +43,15 @@ version(X86_64) {
         // - Integer return in RAX, float return in XMM0
         // - For structs <=16 bytes with floats: return in XMM0 and XMM1
         // - Stack must be 16-byte aligned before call
+        // - Large structs (>16 bytes): MEMORY class, data copied to stack
         uintptr_t call_native_float(
             void* func_ptr,
             uintptr_t* args,
             size_t n_args,
             ulong arg_types,
             ubyte ret_types = 0,
-            uintptr_t* ret2 = null  // Optional: store second XMM return register here
+            uintptr_t* ret2 = null,  // Optional: store second XMM return register here
+            ushort* struct_arg_sizes = null  // Optional: sizes of struct args that need stack copy
         ) {
             // Separate args into integer and float categories
             uintptr_t[6] int_args = 0;
@@ -62,7 +64,26 @@ version(X86_64) {
             uintptr_t[32] stack_args = void;
             size_t n_stack = 0;
 
+            // Large struct args: pointer and size pairs for stack copying
+            // System V ABI: structs >16 bytes are MEMORY class, data copied to stack
+            uintptr_t[16] struct_ptrs = void;
+            ushort[16] struct_sizes = void;
+            size_t n_structs = 0;
+            size_t struct_total_bytes = 0;
+
             for (size_t i = 0; i < n_args && i < 32; i++) {
+                // Check if this arg is a large struct that needs stack copying
+                ushort struct_size = (struct_arg_sizes !is null) ? struct_arg_sizes[i] : 0;
+                if (struct_size > 0) {
+                    // Large struct: args[i] is a POINTER to the data
+                    // Store for later stack copy
+                    struct_ptrs[n_structs] = args[i];  // pointer to struct data
+                    struct_sizes[n_structs] = struct_size;
+                    struct_total_bytes += (struct_size + 7) & ~cast(size_t)7;  // 8-byte align
+                    n_structs++;
+                    continue;  // Don't put in register
+                }
+
                 ArgType t = get_arg_type(arg_types, i);
                 if (is_float_type(t)) {
                     if (n_float < 8) {
@@ -81,9 +102,37 @@ version(X86_64) {
                 }
             }
 
-            // Calculate stack space (16-byte aligned)
-            size_t stack_bytes = n_stack * 8;
+            // Calculate stack space: struct data + overflow args (16-byte aligned)
+            size_t stack_bytes = struct_total_bytes + n_stack * 8;
             stack_bytes = (stack_bytes + 15) & ~cast(size_t)15;
+
+            // If we have struct args, pre-copy all data into unified stack buffer
+            // This buffer contains: [struct0 data][struct1 data]...[overflow arg0][overflow arg1]...
+            ubyte[512] unified_stack = void;
+            if (n_structs > 0) {
+                size_t offset = 0;
+                // Copy struct data first
+                for (size_t i = 0; i < n_structs; i++) {
+                    ubyte* src = cast(ubyte*)struct_ptrs[i];
+                    ubyte* dst = unified_stack.ptr + offset;
+                    size_t sz = struct_sizes[i];
+                    for (size_t j = 0; j < sz; j++) {
+                        dst[j] = src[j];
+                    }
+                    offset += (sz + 7) & ~cast(size_t)7;  // 8-byte align
+                }
+                // Copy overflow args
+                for (size_t i = 0; i < n_stack; i++) {
+                    *cast(uintptr_t*)(unified_stack.ptr + offset) = stack_args[i];
+                    offset += 8;
+                }
+                // Update stack_args to point to unified buffer, and count to total qwords
+                size_t total_qwords = (struct_total_bytes + n_stack * 8 + 7) / 8;
+                for (size_t i = 0; i < total_qwords; i++) {
+                    stack_args[i] = (cast(uintptr_t*)unified_stack.ptr)[i];
+                }
+                n_stack = total_qwords;
+            }
 
             // We need to pass:
             // - 6 integer args in rdi, rsi, rdx, rcx, r8, r9
@@ -143,6 +192,41 @@ version(X86_64) {
                     "movq %xmm0, %rax\n" ~     // Return xmm0 in rax
                     "movq %rbx, %rsp",         // Restore stack
                     "={rax},{rdi},{rsi},{rdx},{rcx},{r8},{r9},{xmm0},{xmm1},{xmm2},{xmm3},{xmm4},{xmm5},{xmm6},{xmm7},{al},{r10},{r11},{r12},{r13},~{rbx},~{r14},~{r15},~{xmm0},~{xmm1},~{memory}",
+                    int_args[0], int_args[1], int_args[2], int_args[3], int_args[4], int_args[5],
+                    float_args[0], float_args[1], float_args[2], float_args[3],
+                    float_args[4], float_args[5], float_args[6], float_args[7],
+                    cast(ubyte)n_float,
+                    func_ptr, stack_args.ptr, n_stack, stack_bytes
+                );
+            } else if (float_ret && !float_ret2 && ret2 !is null) {
+                // Mixed return: XMM0 (floats) + RAX (ints)
+                // First return in XMM0, second in RAX
+                stack_args[n_stack] = cast(uintptr_t)ret2;
+                return __asm!uintptr_t(
+                    "movq %rsp, %rbx\n" ~
+                    "subq $$16, %rsp\n" ~
+                    "movq %r11, (%rsp)\n" ~
+                    "subq %r13, %rsp\n" ~
+                    "testq %r12, %r12\n" ~
+                    "jz 2f\n" ~
+                    "xorq %r14, %r14\n" ~
+                    "movq %rsp, %r15\n" ~
+                    "1:\n" ~
+                    "movq (%r11, %r14, 8), %rcx\n" ~
+                    "movq %rcx, (%r15)\n" ~
+                    "addq $$8, %r15\n" ~
+                    "addq $$1, %r14\n" ~
+                    "cmpq %r12, %r14\n" ~
+                    "jb 1b\n" ~
+                    "2:\n" ~
+                    "callq *%r10\n" ~
+                    // After call: xmm0 has first return (floats), rax has second (ints)
+                    "movq -16(%rbx), %r11\n" ~
+                    "movq (%r11, %r12, 8), %rcx\n" ~
+                    "movq %rax, (%rcx)\n" ~   // Store rax (ints) to *ret2
+                    "movq %xmm0, %rax\n" ~     // Return xmm0 (floats) in rax
+                    "movq %rbx, %rsp",
+                    "={rax},{rdi},{rsi},{rdx},{rcx},{r8},{r9},{xmm0},{xmm1},{xmm2},{xmm3},{xmm4},{xmm5},{xmm6},{xmm7},{al},{r10},{r11},{r12},{r13},~{rbx},~{r14},~{r15},~{xmm0},~{memory}",
                     int_args[0], int_args[1], int_args[2], int_args[3], int_args[4], int_args[5],
                     float_args[0], float_args[1], float_args[2], float_args[3],
                     float_args[4], float_args[5], float_args[6], float_args[7],

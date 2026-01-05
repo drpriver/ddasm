@@ -1,6 +1,5 @@
-// SKIP: uses macOS-specific libSystem.dylib
 #include "inc.h"
-#pragma library("libSystem.dylib")
+#pragma library("libc")
     extern int printf(const char*, ...);
 int start(){
     printf("%p\n", &x);

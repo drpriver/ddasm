@@ -134,7 +134,7 @@ struct CDeclarator {
 
 struct CType {
     CTypeKind kind;
-    bool is_unsigned;
+    bool is_signed;
     bool is_const;
     bool is_magic_builtin; // For gnu __builtin_* function-like builtins.
     CType* pointed_to;     // For pointers and arrays
@@ -327,19 +327,19 @@ struct CType {
 
 // Pre-allocated common types
 __gshared CType TYPE_VOID = { kind: CTypeKind.VOID };
-__gshared CType TYPE_CHAR = { kind: CTypeKind.CHAR };
-__gshared CType TYPE_INT = { kind: CTypeKind.INT };
-__gshared CType TYPE_LONG = { kind: CTypeKind.LONG };
-__gshared CType TYPE_LLONG = { kind: CTypeKind.LONG_LONG };
+__gshared CType TYPE_CHAR = { kind: CTypeKind.CHAR, is_signed:true};
+__gshared CType TYPE_INT = { kind: CTypeKind.INT, is_signed:true};
+__gshared CType TYPE_LONG = { kind: CTypeKind.LONG, is_signed:true};
+__gshared CType TYPE_LLONG = { kind: CTypeKind.LONG_LONG, is_signed:true};
 __gshared CType TYPE_FLOAT = { kind: CTypeKind.FLOAT };
 __gshared CType TYPE_DOUBLE = { kind: CTypeKind.DOUBLE };
 __gshared CType TYPE_LONG_DOUBLE = { kind: CTypeKind.LONG_DOUBLE };
-__gshared CType TYPE_UCHAR = { kind: CTypeKind.CHAR, is_unsigned: true };
-__gshared CType TYPE_UINT = { kind: CTypeKind.INT, is_unsigned: true };
-__gshared CType TYPE_ULONG = { kind: CTypeKind.LONG, is_unsigned: true };
-__gshared CType TYPE_ULLONG = { kind: CTypeKind.LONG_LONG, is_unsigned: true };
-__gshared CType TYPE_INT128 = { kind: CTypeKind.INT128 };
-__gshared CType TYPE_UINT128 = { kind: CTypeKind.INT128, is_unsigned: true };
+__gshared CType TYPE_UCHAR = { kind: CTypeKind.CHAR};
+__gshared CType TYPE_UINT = { kind: CTypeKind.INT};
+__gshared CType TYPE_ULONG = { kind: CTypeKind.LONG};
+__gshared CType TYPE_ULLONG = { kind: CTypeKind.LONG_LONG};
+__gshared CType TYPE_INT128 = { kind: CTypeKind.INT128, is_signed:true};
+__gshared CType TYPE_UINT128 = { kind: CTypeKind.INT128};
 // FIXME: cfront.compat? or something?
 alias TYPE_SIZE_T = TYPE_ULLONG;
 alias TYPE_PTRDIFF_T = TYPE_LLONG;
@@ -357,23 +357,23 @@ __gshared CType TYPE_UNIMPLEMENTED_BUILTIN = {kind: CTypeKind.FUNCTION, is_magic
 __gshared CType TYPE_ANY = {kind: CTypeKind.ANY, is_magic_builtin:true};
 
 CType* make_pointer_type(Allocator a, CType* base){
-    auto data = a.alloc(CType.sizeof);
-    auto result = cast(CType*)data.ptr;
+    void[] data = a.zalloc(CType.sizeof);
+    CType* result = cast(CType*)data.ptr;
     result.kind = CTypeKind.POINTER;
     result.pointed_to = base;
     return result;
 }
 
 CType* make_array_type(Allocator a, CType* element_type, size_t size){
-    auto data = a.alloc(CType.sizeof);
-    auto result = cast(CType*)data.ptr;
+    void[] data = a.zalloc(CType.sizeof);
+    CType* result = cast(CType*)data.ptr;
     result.kind = CTypeKind.ARRAY;
     result.pointed_to = element_type;  // Element type stored in pointed_to
     result.array_size = size;
     return result;
 }
 CType* make_vector_type(Allocator a, CType* element_type, size_t size){
-    void[] data = a.alloc(CType.sizeof);
+    void[] data = a.zalloc(CType.sizeof);
     CType* result = cast(CType*)data.ptr;
     result.kind = CTypeKind.VECTOR;
     result.pointed_to = element_type;  // Element type stored in pointed_to
@@ -382,7 +382,7 @@ CType* make_vector_type(Allocator a, CType* element_type, size_t size){
 }
 
 CType* make_struct_type(Allocator a, str name, StructField[] fields, size_t total_size){
-    auto data = a.alloc(CType.sizeof);
+    auto data = a.zalloc(CType.sizeof);
     auto result = cast(CType*)data.ptr;
     result.kind = CTypeKind.STRUCT;
     result.struct_name = name;
@@ -392,7 +392,7 @@ CType* make_struct_type(Allocator a, str name, StructField[] fields, size_t tota
 }
 
 CType* make_union_type(Allocator a, str name, StructField[] fields, size_t total_size){
-    auto data = a.alloc(CType.sizeof);
+    auto data = a.zalloc(CType.sizeof);
     auto result = cast(CType*)data.ptr;
     result.kind = CTypeKind.UNION;
     result.struct_name = name;
@@ -402,7 +402,7 @@ CType* make_union_type(Allocator a, str name, StructField[] fields, size_t total
 }
 
 CType* make_enum_type(Allocator a, str name){
-    auto data = a.alloc(CType.sizeof);
+    auto data = a.zalloc(CType.sizeof);
     auto result = cast(CType*)data.ptr;
     result.kind = CTypeKind.ENUM;
     result.struct_name = name;  // Reuse struct_name for enum name
@@ -1388,7 +1388,7 @@ bool types_compatible(CType* a, CType* b){
     if(a is null || b is null) return false;
     if(a is b) return true;
     if(a.kind != b.kind) return false;
-    if(a.is_unsigned != b.is_unsigned) return false;
+    if(a.is_signed != b.is_signed) return false;
 
     // For pointers, check pointed-to type
     if(a.kind == CTypeKind.POINTER){

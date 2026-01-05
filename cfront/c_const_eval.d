@@ -376,22 +376,22 @@ ConstValue eval_cast(CCast* expr, EnumTable* enum_constants) {
 
     switch (t.kind) with (CTypeKind) {
         case CHAR:
-            if (t.is_unsigned)
+            if(!t.is_signed)
                 return ConstValue.from_uint(cast(ubyte)val);
             else
                 return ConstValue.from_int(cast(byte)val);
         case SHORT:
-            if (t.is_unsigned)
+            if(!t.is_signed)
                 return ConstValue.from_uint(cast(ushort)val);
             else
                 return ConstValue.from_int(cast(short)val);
         case INT:
-            if (t.is_unsigned)
+            if(t.is_signed)
                 return ConstValue.from_uint(cast(uint)val);
             else
                 return ConstValue.from_int(cast(int)val);
         case LONG, ENUM:
-            if (t.is_unsigned)
+            if(t.is_signed)
                 return ConstValue.from_uint(cast(ulong)val);
             else
                 return ConstValue.from_int(val);

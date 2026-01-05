@@ -46,6 +46,9 @@ struct DlimportFuncSpec {
     uint arg_types;
     // Return type mask (2 bits per ret): 00=int, 01=float32, 10=float64
     uint ret_types;
+    // Sizes of struct args that need stack copying (0 = not a struct)
+    // Only set for System V x86_64 ABI where large structs are passed by value on stack
+    Barray!(ushort) struct_arg_sizes;
 }
 
 struct DlimportObjSpec {

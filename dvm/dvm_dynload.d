@@ -181,12 +181,20 @@ load_dynamic_module(
         }
 
         // Create Function struct
-        Function* f = cast(Function*)allocator.alloc(Function.sizeof).ptr;
+        Function* f = cast(Function*)allocator.zalloc(Function.sizeof).ptr;
         f.type = spec.is_varargs ? FunctionType.NATIVE_VARARGS : FunctionType.NATIVE;
         f.n_args = spec.n_args;
         f.n_ret = spec.n_ret;
         f.arg_types = spec.arg_types;  // Type mask from dlimport declaration
         f.ret_types = cast(ubyte)spec.ret_types;  // Return type mask
+
+        // Copy struct_arg_sizes if present (for System V x86_64 large struct passing)
+        if(spec.struct_arg_sizes.count > 0){
+            f.struct_arg_sizes_ = cast(ushort*)allocator.zalloc(ushort.sizeof * spec.struct_arg_sizes.count).ptr;
+            memcpy(f.struct_arg_sizes_, spec.struct_arg_sizes[].ptr, ushort.sizeof * spec.struct_arg_sizes.count);
+        } else {
+            f.struct_arg_sizes_ = null;
+        }
 
         // Store the raw function pointer in the union
         // All variants share the same memory location

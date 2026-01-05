@@ -778,6 +778,40 @@ struct ParseContext{
                         }
                     }
                 }
+                // Check for optional struct_args [size0 size1 ...]
+                while(tokenizer.current_token.type == SPACE || tokenizer.current_token.type == TAB)
+                    tokenizer.advance;
+                if(tokenizer.current_token.type == IDENTIFIER && tokenizer.current_token.text == "struct_args"){
+                    tokenizer.advance;
+                    while(tokenizer.current_token.type == SPACE || tokenizer.current_token.type == TAB)
+                        tokenizer.advance;
+                    if(tokenizer.current_token.type != LEFTSQUAREBRACKET){
+                        err_print(tokenizer.current_token, "expected '[' after struct_args");
+                        return PARSE_ERROR;
+                    }
+                    tokenizer.advance;
+                    // Initialize allocator for struct_arg_sizes
+                    spec.struct_arg_sizes.bdata.allocator = allocator;
+                    // Parse sizes until ']'
+                    while(tokenizer.current_token.type != RIGHTSQUAREBRACKET){
+                        while(tokenizer.current_token.type == SPACE || tokenizer.current_token.type == TAB)
+                            tokenizer.advance;
+                        if(tokenizer.current_token.type == RIGHTSQUAREBRACKET)
+                            break;
+                        if(tokenizer.current_token.type != NUMBER){
+                            err_print(tokenizer.current_token, "expected number in struct_args list");
+                            return PARSE_ERROR;
+                        }
+                        IntegerResult!ulong size_res = parse_unsigned_human(tokenizer.current_token.text);
+                        if(size_res.errored || size_res.value > ushort.max){
+                            err_print(tokenizer.current_token, "invalid struct size: ", Q(tokenizer.current_token.text));
+                            return PARSE_ERROR;
+                        }
+                        spec.struct_arg_sizes.push(cast(ushort)size_res.value);
+                        tokenizer.advance;
+                    }
+                    tokenizer.advance; // consume ']'
+                }
                 decl.funcs.push(spec);
             }
             else {

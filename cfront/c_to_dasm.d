@@ -53,6 +53,17 @@ struct LabelAllocator {
     void reset(){ nalloced = 0; }
 }
 
+// Scope tracking for variable shadowing support
+// When entering a block, we save any variable mappings that will be shadowed.
+// When exiting, we restore them.
+struct ShadowedVar {
+    str name;
+    bool had_reg;
+    int reg_value;
+    bool had_stack;
+    int stack_value;
+}
+
 // Analysis pass to detect which variables need stack allocation
 struct CAnalyzer {
     Table!(str, bool) addr_taken;  // Variables whose address is taken
@@ -310,8 +321,8 @@ int struct_return_regs(CType* t){
 
 
 // Get the read instruction for a given type size and signedness
-str read_instr_for_size(size_t size, bool is_unsigned = true){
-    if(is_unsigned){
+str read_instr_for_size(size_t size, bool is_signed){
+    if(!is_signed){
         switch(size){
             case 1: return "read1";
             case 2: return "read2";
@@ -353,6 +364,9 @@ struct CDasmWriter {
     Table!(str, int) reglocals;      // Variables in registers
     Table!(str, int) stacklocals;    // Variables on stack (offset from rbp)
     Table!(str, CType*) var_types;   // Variable types (for pointer arithmetic)
+
+    // Scope tracking for variable shadowing
+    Barray!(Barray!(ShadowedVar)) scope_stack;  // Stack of scopes, each containing shadowed vars
     Table!(str, str) extern_funcs;   // Map: function name -> module alias
     Table!(str, bool) used_funcs;    // Track which extern functions are actually called
     Table!(str, str) extern_objs;    // Map: extern object name -> module alias
@@ -404,6 +418,7 @@ struct CDasmWriter {
         reglocals.data.allocator = a;
         stacklocals.data.allocator = a;
         var_types.data.allocator = a;
+        scope_stack.bdata.allocator = a;
         extern_funcs.data.allocator = a;
         used_funcs.data.allocator = a;
         extern_objs.data.allocator = a;
@@ -431,6 +446,52 @@ struct CDasmWriter {
         addr_taken.cleanup();
         arrays.cleanup();
         global_types.cleanup();
+    }
+
+    // Scope management for variable shadowing
+    void push_var_scope(){
+        auto new_scope = make_barray!ShadowedVar(allocator);
+        scope_stack ~= new_scope;
+    }
+
+    void pop_var_scope(){
+        if(scope_stack.count == 0) return;
+
+        // Restore any shadowed variables
+        auto current = scope_stack.pop();
+        foreach(ref sv; current[]){
+            // Restore the outer variable's mapping (overwrites the inner one)
+            if(sv.had_reg){
+                reglocals[sv.name] = sv.reg_value;
+            }
+            if(sv.had_stack){
+                stacklocals[sv.name] = sv.stack_value;
+            }
+        }
+    }
+
+    // Save current mapping for a variable that's about to be shadowed
+    void save_shadowed_var(str name){
+        if(scope_stack.count == 0) return;
+
+        ShadowedVar sv;
+        sv.name = name;
+        sv.had_reg = false;
+        sv.had_stack = false;
+
+        if(auto r = name in reglocals){
+            sv.had_reg = true;
+            sv.reg_value = *r;
+        }
+        if(auto s = name in stacklocals){
+            sv.had_stack = true;
+            sv.stack_value = *s;
+        }
+
+        // Only save if the variable existed before (it's being shadowed)
+        if(sv.had_reg || sv.had_stack){
+            scope_stack.bdata.data[scope_stack.count - 1] ~= sv;
+        }
     }
 
     void error(CToken token, str message){
@@ -759,30 +820,72 @@ struct CDasmWriter {
                         else
                             float_ret_mask = 0x2;  // double
                     } else if(func.return_type.is_struct_or_union() && fits_in_registers(func.return_type)){
-                        // Check if struct contains only floats
-                        bool all_floats = true;
-                        foreach(ref field; func.return_type.fields){
-                            if(field.type is null || !field.type.is_float32()){
-                                all_floats = false;
-                                break;
+                        // Classify each eightword (8-byte chunk) of the struct
+                        // In System V ABI, each eightword is classified independently
+                        int num_ret_regs = struct_return_regs(func.return_type);
+                        for(int slot = 0; slot < num_ret_regs; slot++){
+                            // Check what types are in this eightword
+                            size_t slot_start = slot * 8;
+                            size_t slot_end = slot_start + 8;
+                            bool slot_has_float = false;
+                            bool slot_has_int = false;
+                            foreach(ref field; func.return_type.fields){
+                                size_t field_end = field.offset + field.type.size_of();
+                                // Check if field overlaps with this slot
+                                if(field.offset < slot_end && field_end > slot_start){
+                                    if(field.type.is_float())
+                                        slot_has_float = true;
+                                    else
+                                        slot_has_int = true;
+                                }
                             }
+                            // If slot has only floats (no ints), use XMM
+                            if(slot_has_float && !slot_has_int){
+                                float_ret_mask |= (0x1 << (slot * 2));  // float32 in this slot
+                            }
+                            // Otherwise use integer register (mask stays 0 for this slot)
                         }
-                        if(all_floats && func.return_type.fields.length > 0){
-                            // All-float struct returned in XMM registers
-                            // Set bits for each return register slot (0x1 for slot 0, 0x4 for slot 1)
-                            int num_ret_regs = struct_return_regs(func.return_type);
-                            for(int i = 0; i < num_ret_regs; i++){
-                                float_ret_mask |= (0x1 << (i * 2));  // float32 in each slot
+                    }
+
+                    // Compute struct_arg_sizes for large structs (System V x86_64: >16 bytes)
+                    // For each register slot, store the size if it's a large struct, 0 otherwise
+                    ushort[16] struct_arg_sizes;
+                    bool has_struct_args = false;
+                    int struct_slot_idx = uses_hidden_ptr ? 1 : 0;
+                    foreach(ref param; func.params){
+                        if(struct_slot_idx >= n_params) break;
+                        if(param.type && param.type.is_struct_or_union()){
+                            if(fits_in_registers(param.type)){
+                                // Small struct - takes 1-2 slots, no special handling
+                                int num_slots = struct_return_regs(param.type);
+                                for(int i = 0; i < num_slots && struct_slot_idx < n_params; i++){
+                                    struct_arg_sizes[struct_slot_idx++] = 0;
+                                }
+                            } else {
+                                // Large struct - needs to be copied to native stack
+                                struct_arg_sizes[struct_slot_idx] = cast(ushort)param.type.size_of();
+                                has_struct_args = true;
+                                struct_slot_idx++;
                             }
+                        } else {
+                            struct_arg_sizes[struct_slot_idx++] = 0;
                         }
                     }
 
                     sb.writef("  function % % %", fname, n_params, n_ret);
                     if(func.is_varargs) sb.write(" varargs");
-                    if(float_arg_mask != 0 || float_ret_mask != 0){
+                    if(float_arg_mask != 0 || float_ret_mask != 0 || has_struct_args){
                         sb.writef(" %", H(float_arg_mask));
-                        if(float_ret_mask != 0)
+                        if(float_ret_mask != 0 || has_struct_args)
                             sb.writef(" %", H(float_ret_mask));
+                    }
+                    if(has_struct_args){
+                        sb.write(" struct_args [");
+                        for(int i = 0; i < n_params; i++){
+                            if(i > 0) sb.write(" ");
+                            sb.writef("%", struct_arg_sizes[i]);
+                        }
+                        sb.write("]");
                     }
                     sb.write("\n");
                 }
@@ -1893,15 +1996,24 @@ struct CDasmWriter {
     }
 
     int gen_block(CBlock* stmt){
+        push_var_scope();
         foreach(s; stmt.statements){
             int err = gen_statement(s);
-            if(err) return err;
+            if(err){
+                pop_var_scope();
+                return err;
+            }
         }
+        pop_var_scope();
         return 0;
     }
 
     int gen_var_decl(CVarDecl* stmt){
         str name = stmt.name.lexeme;
+
+        // Save any existing variable with this name (for shadowing support)
+        save_shadowed_var(name);
+
         var_types[name] = stmt.var_type;
 
         // Check if this is an array or struct/union
@@ -3027,14 +3139,14 @@ struct CDasmWriter {
             }
             CType* gtype = *gtype_;
             size_t var_size = gtype.size_of();
-            bool is_unsigned = gtype.is_unsigned;
+            bool is_signed = gtype.is_signed;
             // Get address into target register, then do sized read
             // For extern objects, use qualified name with module alias
             if(str* mod_alias = name in extern_objs)
                 sb.writef("    move r% var %.%\n", target, *mod_alias, name);
             else
                 sb.writef("    move r% var %\n", target, name);
-            sb.writef("    % r% r%\n", read_instr_for_size(var_size, is_unsigned), target, target);
+            sb.writef("    % r% r%\n", read_instr_for_size(var_size, is_signed), target, target);
         }
         else {
             error(expr.expr.token, "Read of unknown global");
@@ -3627,8 +3739,8 @@ struct CDasmWriter {
                 CType* ptr_type = expr.operand.type;
                 size_t elem_size = (ptr_type && ptr_type.is_pointer()) ? ptr_type.element_size() : 8;
                 CType* elem_type = (ptr_type && ptr_type.is_pointer()) ? ptr_type.element_type() : null;
-                bool is_unsigned = elem_type ? elem_type.is_unsigned : true;
-                sb.writef("    % r% r%\n", read_instr_for_size(elem_size, is_unsigned), target, target);
+                bool is_signed = elem_type.is_signed;
+                sb.writef("    % r% r%\n", read_instr_for_size(elem_size, is_signed), target, target);
             }
             return 0;
         }
@@ -3662,9 +3774,9 @@ struct CDasmWriter {
                     }
                 } else if(int* offset = name in stacklocals){
                     // Stack variable
-                    size_t var_size = operand_type ? operand_type.size_of() : 8;
-                    bool is_unsigned = operand_type ? operand_type.is_unsigned : true;
-                    str read_instr = read_instr_for_size(var_size, is_unsigned);
+                    size_t var_size = operand_type.size_of();
+                    bool is_signed = operand_type.is_signed;
+                    str read_instr = read_instr_for_size(var_size, is_signed);
                     str write_instr = write_instr_for_size(var_size);
                     int addr_reg = regallocator.allocate();
                     int val_reg = target != TARGET_IS_NOTHING ? target : regallocator.allocate();
@@ -3695,9 +3807,9 @@ struct CDasmWriter {
                 int err = gen_subscript_address(sub, addr_reg);
                 if(err) return err;
 
-                size_t elem_size = operand_type ? operand_type.size_of() : 8;
-                bool is_unsigned = operand_type ? operand_type.is_unsigned : true;
-                str read_instr = read_instr_for_size(elem_size, is_unsigned);
+                size_t elem_size = operand_type.size_of();
+                bool is_signed = operand_type.is_signed;
+                str read_instr = read_instr_for_size(elem_size, is_signed);
                 str write_instr = write_instr_for_size(elem_size);
                 int val_reg = target != TARGET_IS_NOTHING ? target : regallocator.allocate();
 
@@ -3723,9 +3835,9 @@ struct CDasmWriter {
                     int err = gen_expression(deref.operand, addr_reg);
                     if(err) return err;
 
-                    size_t elem_size = operand_type ? operand_type.size_of() : 8;
-                    bool is_unsigned = operand_type ? operand_type.is_unsigned : true;
-                    str read_instr = read_instr_for_size(elem_size, is_unsigned);
+                    size_t elem_size = operand_type.size_of();
+                    bool is_signed = operand_type.is_signed;
+                    str read_instr = read_instr_for_size(elem_size, is_signed);
                     str write_instr = write_instr_for_size(elem_size);
                     int val_reg = target != TARGET_IS_NOTHING ? target : regallocator.allocate();
 
@@ -3791,9 +3903,9 @@ struct CDasmWriter {
                     sb.writef("    add r% r% %\n", addr_reg, addr_reg, field.offset);
                 }
 
-                size_t elem_size = field.type ? field.type.size_of() : 8;
-                bool is_unsigned = field.type ? field.type.is_unsigned : true;
-                str read_instr = read_instr_for_size(elem_size, is_unsigned);
+                size_t elem_size = field.type.size_of();
+                bool is_signed = field.type.is_signed;
+                str read_instr = read_instr_for_size(elem_size, is_signed);
                 str write_instr = write_instr_for_size(elem_size);
                 int val_reg = target != TARGET_IS_NOTHING ? target : regallocator.allocate();
 
@@ -4546,10 +4658,9 @@ struct CDasmWriter {
                 } else {
                     sb.writef("    move r% var %\n", addr_reg, name);
                 }
-                size_t var_size = (*gtype) ? (*gtype).size_of() : 8;
-                bool is_unsigned = (*gtype) ? (*gtype).is_unsigned : true;
-
-                bool is_float_op = (*gtype) && (*gtype).is_float();
+                size_t var_size = (*gtype).size_of();
+                bool is_signed = (*gtype).is_signed;
+                bool is_float_op = (*gtype).is_float();
 
                 if(expr.op == CTokenType.EQUAL){
                     // Simple assignment
@@ -4558,7 +4669,7 @@ struct CDasmWriter {
                 } else {
                     // Compound assignment - read current value first
                     int cur_reg = regallocator.allocate();
-                    sb.writef("    % r% r%\n", read_instr_for_size(var_size, is_unsigned), cur_reg, addr_reg);
+                    sb.writef("    % r% r%\n", read_instr_for_size(var_size, is_signed), cur_reg, addr_reg);
                     // Convert float32 to double after reading
                     if((*gtype) && (*gtype).is_float32()){
                         sb.writef("    ftod r% r%\n", cur_reg, cur_reg);
@@ -4633,6 +4744,8 @@ struct CDasmWriter {
                 regallocator.reset_to(before);
                 return 0;
             }
+            error(expr.expr.token, "Unknown variable");
+            return -1;
         }
 
         // Pointer dereference assignment: *ptr = value
@@ -4774,8 +4887,8 @@ struct CDasmWriter {
                 bool is_float32 = field.type.is_float32();
 
                 // Read current value (use unsigned read for floats since we don't want sign extension)
-                bool use_unsigned = field.type.is_unsigned || is_float_op;
-                sb.writef("    % r% r%\n", read_instr_for_size(field_size, use_unsigned), cur_reg, addr_reg);
+                bool use_signed = field.type.is_signed;
+                sb.writef("    % r% r%\n", read_instr_for_size(field_size, use_signed), cur_reg, addr_reg);
                 // Convert float32 to double for operation
                 if(is_float32){
                     sb.writef("    ftod r% r%\n", cur_reg, cur_reg);
@@ -4872,7 +4985,7 @@ struct CDasmWriter {
         CType* arr_type = expr.array.type;
         size_t elem_size = arr_type.element_size();
         CType* elem_type = arr_type.element_type();
-        bool is_unsigned = elem_type.is_unsigned;
+        bool is_signed = elem_type.is_signed;
         if(elem_size > 1){
             sb.writef("    mul r% r% %\n", idx_reg, idx_reg, elem_size);
         }
@@ -4883,7 +4996,7 @@ struct CDasmWriter {
             if(elem_type !is null && elem_type.is_array()){
                 sb.writef("    move r% r%\n", target, arr_reg);
             } else {
-                sb.writef("    % r% r%\n", read_instr_for_size(elem_size, is_unsigned), target, arr_reg);
+                sb.writef("    % r% r%\n", read_instr_for_size(elem_size, is_signed), target, arr_reg);
             }
         }
 
@@ -4977,13 +5090,13 @@ struct CDasmWriter {
             } else {
                 // Read scalar field value
                 size_t field_size = field.type.size_of();
-                bool is_unsigned = field.type.is_unsigned;
+                bool is_signed = field.type.is_signed;
                 // For float32 fields, use unsigned read (no sign extend) and convert to double
                 if(field.type.is_float32()){
                     sb.writef("    read4 r% r%\n", target, obj_reg);
                     sb.writef("    ftod r% r%\n", target, target);
                 } else {
-                    sb.writef("    % r% r%\n", read_instr_for_size(field_size, is_unsigned), target, obj_reg);
+                    sb.writef("    % r% r%\n", read_instr_for_size(field_size, is_signed), target, obj_reg);
                 }
             }
         }

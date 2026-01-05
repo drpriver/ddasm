@@ -39,9 +39,16 @@ static-tests: ddasm c2dasm cpp
 	Tests/run_tests.py
 
 # generated dynamically
-.PHONY: abi-tests
-abi-tests: ddasm c2dasm
+.PHONY: struct-abi-tests
+struct-abi-tests: ddasm c2dasm
 	Tests/test_abi.py
+.PHONY: func-abi-tests
+func-abi-tests: ddasm
+	Tests/abi_test/run_abi_test.py
+
+.PHONY: abi-tests
+abi-tests: func-abi-tests struct-abi-tests
+
 
 .PHONY: tests
 tests: static-tests abi-tests

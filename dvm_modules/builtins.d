@@ -9,7 +9,7 @@ __gshared bool devnull = false;
 
 Function*
 expose_varargs(void* fun, uint n_fixed) {
-    Function* f = cast(Function*)MALLOCATOR.alloc(Function.sizeof).ptr;
+    Function* f = cast(Function*)MALLOCATOR.zalloc(Function.sizeof).ptr;
     f.type = FunctionType.NATIVE_VARARGS;
     f.native_function_ = cast(void function())fun;
     f.n_args = cast(ubyte)n_fixed;
@@ -21,7 +21,7 @@ expose_varargs(void* fun, uint n_fixed) {
 
 Function*
 expose_function(F)(F fun){
-    Function* f = cast(Function*)MALLOCATOR.alloc(Function.sizeof).ptr;
+    Function* f = cast(Function*)MALLOCATOR.zalloc(Function.sizeof).ptr;
     f.type = FunctionType.NATIVE;
     f.arg_types = 0;   // All integer args by default
     f.ret_types = 0;   // Integer return by default

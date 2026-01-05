@@ -1,12 +1,13 @@
-// SKIP: sin() not available in libc.so.6 (needs libm)
 #ifdef __DDASM__
 void abort(void){__dasm{dump;abort;}}
 #else
 void abort(void);
 #endif
 
+#pragma library("libm.so.6")
 double sin(double x);
 float sinf(float x);
+#pragma library("libc")
 double atof(const char *s);
 float strtof(const char *s, char **end);
 

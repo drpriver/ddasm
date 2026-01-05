@@ -71,6 +71,11 @@ struct Table(K, V){
         }
     }
 
+    void clear(){
+        count = 0;
+        _idxes[] = uint.max;
+    }
+
     void
     set_item(K k, V v){
         *set(k) = v;

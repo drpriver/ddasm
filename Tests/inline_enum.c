@@ -1,4 +1,3 @@
-// SKIP: Local enums are broken apparently
 // Test inline enum definitions (enum defined inside function body)
 
 int test_named_enum() {

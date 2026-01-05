@@ -1,4 +1,3 @@
-// SKIP: bug in pointer prefix increment (++p doesn't advance correctly)
 // Test all unary operators
 #pragma library("libc")
 int printf(const char*, ...);

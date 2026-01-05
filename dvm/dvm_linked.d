@@ -60,13 +60,20 @@ struct Function {
         // Supports up to 16 args with type info
         uint arg_types;
     }
+    // For NATIVE functions: sizes of struct args that need stack copying
+    // null if no struct args, otherwise array of n_args sizes (0 = not a struct)
+    ushort* struct_arg_sizes_;
 
     uintptr_t[] instructions(){
         return instructions_[0..length];
     }
-}
 
-static assert(Function.sizeof == 16);
+    // Get struct arg sizes slice (may be null)
+    ushort[] struct_arg_sizes(){
+        if(struct_arg_sizes_ is null) return null;
+        return struct_arg_sizes_[0..n_args];
+    }
+}
 
 struct FunctionInfo {
     str name;

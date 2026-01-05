@@ -15,6 +15,45 @@ import dlib.str_util: startswith;
 import cfront.c_pp_to_c : CToken, CTokenType;
 import cfront.c_ast;
 
+// =============================================================================
+// Scope Stack for proper lexical scoping (ISO C block scope)
+// =============================================================================
+struct Scope {
+    Table!(str, CType*) variables;
+    Scope* parent;
+}
+
+// =============================================================================
+// Declaration Specifiers (ISO/IEC 9899 Section 6.7.1)
+// =============================================================================
+// Accumulates all specifiers from parsing declaration-specifiers:
+//   declaration-specifiers:
+//       declaration-specifier attribute-specifier-sequence_opt
+//       declaration-specifier declaration-specifiers
+//   declaration-specifier:
+//       storage-class-specifier | type-specifier-qualifier | function-specifier
+struct DeclSpecifiers {
+    // Storage class (at most one allowed)
+    enum StorageClass : ubyte { NONE, TYPEDEF, EXTERN, STATIC, AUTO, REGISTER, THREAD_LOCAL }
+    StorageClass storage = StorageClass.NONE;
+
+    // Function specifiers (can combine)
+    bool is_inline;
+    bool is_noreturn;
+
+    // Type qualifiers (can combine, may appear before or after type-specifier)
+    bool is_const;
+    bool is_volatile;
+    bool is_restrict;
+    bool is_atomic;
+
+    // The actual base type (int, struct X, typedef-name, etc.)
+    CType* base_type;
+
+    // Source location for error reporting
+    CToken first_token;
+}
+
 struct CParser {
     Allocator allocator;
     CToken[] tokens;
@@ -31,7 +70,8 @@ struct CParser {
     Table!(str, CType*) global_var_types; // Global variable types (for sizeof in const exprs)
 
     // Type tracking for implicit casts
-    Table!(str, CType*) local_var_types;  // Local variable types (cleared per function)
+    Table!(str, CType*) local_var_types;  // DEPRECATED: use current_scope instead
+    Scope* current_scope;  // Current lexical scope (linked list to parent scopes)
     Table!(str, CType*) func_types;        // Function name -> function type (for setting expr types)
     Table!(str, size_t) func_info;         // Function name -> index in functions array
     // Track function names to indices for merging forward declarations with definitions
@@ -43,6 +83,7 @@ struct CParser {
     Barray!CStructDef structs;
     Barray!CUnionDef unions;
     Barray!CEnumDef enums;
+
 
 
     void errorf(A...)(CToken tok, A args){
@@ -83,6 +124,219 @@ struct CParser {
     }
 
     // =========================================================================
+    // Scope Management (ISO C block scope)
+    // =========================================================================
+
+    // Push a new scope (on block entry)
+    void push_scope(){
+        void[] data = allocator.zalloc(Scope.sizeof);
+        auto new_scope = cast(Scope*)data.ptr;
+        new_scope.variables.data.allocator = allocator;
+        new_scope.parent = current_scope;
+        current_scope = new_scope;
+    }
+
+    // Pop scope (on block exit)
+    void pop_scope(){
+        if(current_scope !is null){
+            current_scope = current_scope.parent;
+        }
+    }
+
+    // Look up variable in scope chain
+    CType* lookup_variable(str name){
+        // Walk the scope chain from innermost to outermost
+        for(auto scope_ = current_scope; scope_ !is null; scope_ = scope_.parent){
+            if(auto t = name in scope_.variables)
+                return *t;
+        }
+        // Fall back to globals
+        if(auto t = name in global_var_types)
+            return *t;
+        return null;
+    }
+
+    // Check if variable is declared in current scope (for redeclaration errors)
+    bool is_declared_in_current_scope(str name){
+        if(current_scope is null) return false;
+        return (name in current_scope.variables) !is null;
+    }
+
+    // Declare a variable in the current scope
+    bool declare_variable(str name, CType* type, CToken tok){
+        if(current_scope is null){
+            // At global scope, use global_var_types
+            global_var_types[name] = type;
+            return true;
+        }
+        // Check for redeclaration in same scope
+        if(name in current_scope.variables){
+            errorf(tok, "redeclaration of '", name, "' in same scope");
+            return false;
+        }
+        current_scope.variables[name] = type;
+        // Also update legacy local_var_types for compatibility during migration
+        local_var_types[name] = type;
+        return true;
+    }
+
+    // =========================================================================
+    // Declaration Specifier Parsing (ISO C Section 6.7)
+    // =========================================================================
+
+    // (6.7.2) storage-class-specifier:
+    //     typedef | extern | static | _Thread_local | auto | register
+    bool parse_storage_class_specifier(DeclSpecifiers* specs){
+        alias SC = DeclSpecifiers.StorageClass;
+        if(match(CTokenType.TYPEDEF))  { specs.storage = SC.TYPEDEF; return true; }
+        if(match(CTokenType.EXTERN))   { specs.storage = SC.EXTERN; return true; }
+        if(match(CTokenType.STATIC))   { specs.storage = SC.STATIC; return true; }
+        if(match(CTokenType.AUTO))     { specs.storage = SC.AUTO; return true; }
+        if(match(CTokenType.REGISTER)) { specs.storage = SC.REGISTER; return true; }
+        if(match_id("_Thread_local"))  { specs.storage = SC.THREAD_LOCAL; return true; }
+        return false;
+    }
+
+    // (6.7.5) function-specifier:
+    //     inline | _Noreturn
+    bool parse_function_specifier(DeclSpecifiers* specs){
+        if(match(CTokenType.INLINE)) { specs.is_inline = true; return true; }
+        if(match_id("_Noreturn"))    { specs.is_noreturn = true; return true; }
+        return false;
+    }
+
+    // (6.7.4.1) type-qualifier:
+    //     const | restrict | volatile | _Atomic
+    bool parse_type_qualifier(DeclSpecifiers* specs){
+        if(match(CTokenType.CONST))    { specs.is_const = true; return true; }
+        if(match(CTokenType.VOLATILE)) { specs.is_volatile = true; return true; }
+        if(match(CTokenType.RESTRICT)) { specs.is_restrict = true; return true; }
+        if(match_id("_Atomic"))        { specs.is_atomic = true; return true; }
+        return false;
+    }
+
+    // Check if current token could start a type specifier
+    bool is_type_specifier_token(){
+        return is_type_specifier(peek());
+    }
+
+    // (6.7.3.1) type-specifier (simplified - builds base_type)
+    // Returns true if a type specifier was consumed
+    bool parse_type_specifier(DeclSpecifiers* specs){
+        if(specs.base_type !is null) return false;  // Only one base type
+
+        // Primitive types
+        if(match(CTokenType.VOID))     { specs.base_type = &TYPE_VOID; return true; }
+        if(match(CTokenType.CHAR))     { specs.base_type = &TYPE_CHAR; return true; }
+        if(match(CTokenType.SHORT))    { specs.base_type = &TYPE_INT; return true; }  // short maps to int for now
+        if(match(CTokenType.INT))      { specs.base_type = &TYPE_INT; return true; }
+        if(match(CTokenType.LONG)){
+            if(match(CTokenType.LONG)) { specs.base_type = &TYPE_LLONG; return true; }
+            if(match(CTokenType.DOUBLE)){ specs.base_type = &TYPE_LONG_DOUBLE; return true; }
+            specs.base_type = &TYPE_LONG;
+            return true;
+        }
+        if(match(CTokenType.FLOAT))    { specs.base_type = &TYPE_FLOAT; return true; }
+        if(match(CTokenType.DOUBLE))   { specs.base_type = &TYPE_DOUBLE; return true; }
+        if(match(CTokenType.SIGNED))   { specs.base_type = &TYPE_INT; return true; }  // signed defaults to int
+        if(match(CTokenType.UNSIGNED)){
+            if(match(CTokenType.CHAR)) { specs.base_type = &TYPE_UCHAR; return true; }
+            if(match(CTokenType.SHORT)){ specs.base_type = &TYPE_UINT; return true; }  // unsigned short maps to uint
+            if(match(CTokenType.LONG)){
+                if(match(CTokenType.LONG)){ specs.base_type = &TYPE_ULLONG; return true; }
+                specs.base_type = &TYPE_ULONG;
+                return true;
+            }
+            if(match(CTokenType.INT))  { specs.base_type = &TYPE_UINT; return true; }
+            specs.base_type = &TYPE_UINT;  // unsigned defaults to unsigned int
+            return true;
+        }
+        if(match(CTokenType.BOOL))     { specs.base_type = &TYPE_INT; return true; }  // _Bool as int
+
+        // Struct/union reference (simple case: just "struct Name" or "union Name")
+        if(match(CTokenType.STRUCT)){
+            if(check(CTokenType.IDENTIFIER)){
+                str name = advance().lexeme;
+                if(auto t = name in struct_types){
+                    specs.base_type = *t;
+                    return true;
+                }
+                // Unknown struct - create incomplete type reference
+                // (caller will handle definition or error)
+            }
+            return false;  // Incomplete struct specifier
+        }
+        if(match(CTokenType.UNION)){
+            if(check(CTokenType.IDENTIFIER)){
+                str name = advance().lexeme;
+                if(auto t = name in union_types){
+                    specs.base_type = *t;
+                    return true;
+                }
+            }
+            return false;  // Incomplete union specifier
+        }
+        if(match(CTokenType.ENUM)){
+            if(check(CTokenType.IDENTIFIER)){
+                str name = advance().lexeme;
+                if(auto t = name in enum_types){
+                    specs.base_type = *t;
+                    return true;
+                }
+                // Enum not found - treat as int (common pattern)
+                specs.base_type = &TYPE_INT;
+                return true;
+            }
+            return false;  // Incomplete enum specifier
+        }
+
+        // Typedef names
+        if(check(CTokenType.IDENTIFIER)){
+            if(auto t = peek().lexeme in typedef_types){
+                advance();
+                specs.base_type = *t;
+                return true;
+            }
+            // Special type keywords
+            str lex = peek().lexeme;
+            if(lex == "_Bool"){ advance(); specs.base_type = &TYPE_INT; return true; }
+            if(lex == "__int128"){ advance(); specs.base_type = &TYPE_INT128; return true; }
+        }
+        return false;
+    }
+
+    // Parse declaration-specifiers (unified entry point)
+    // This is the main function to parse the specifier sequence at the start of declarations
+    DeclSpecifiers parse_declaration_specifiers(){
+        DeclSpecifiers specs;
+        specs.first_token = peek();
+
+        while(true){
+            // Skip attributes (GCC __attribute__)
+            skip_gcc_attributes();
+
+            // Try each specifier type
+            if(parse_storage_class_specifier(&specs)) continue;
+            if(parse_function_specifier(&specs)) continue;
+            if(parse_type_qualifier(&specs)) continue;
+            if(parse_type_specifier(&specs)) continue;
+
+            break;
+        }
+
+        return specs;
+    }
+
+    // Skip GCC __attribute__((...)) sequences
+    void skip_gcc_attributes(){
+        while(match_id("__attribute__")){
+            if(check(CTokenType.LEFT_PAREN)){
+                skip_balanced_parens();
+            }
+        }
+    }
+
+    // =========================================================================
     // Type Inference and Implicit Casts
     // =========================================================================
 
@@ -114,12 +368,9 @@ struct CParser {
                 return &TYPE_INT;  // Integer literals are int
             case IDENTIFIER:
                 auto id = e.as_identifier;
-                // Check local variables first
-                if(auto t = id.name.lexeme in local_var_types)
-                    return *t;
-                // Then check globals
-                if(auto t = id.name.lexeme in global_var_types)
-                    return *t;
+                // Use scope chain lookup (walks from current scope up to globals)
+                if(auto t = lookup_variable(id.name.lexeme))
+                    return t;
                 // Could be an enum constant - return int
                 if(id.name.lexeme in enum_constants)
                     return &TYPE_INT;
@@ -210,7 +461,7 @@ struct CParser {
         // FIXME: pointer types??
         if(from is null || to is null) return false;
         if(from is to) return false;
-        if(from.kind == to.kind && from.is_unsigned == to.is_unsigned) return false;
+        if(from.kind == to.kind && from.is_signed == to.is_signed) return false;
 
         // Any arithmetic type can be converted to any other arithmetic type
         if(from.is_arithmetic() && to.is_arithmetic()) return true;
@@ -365,7 +616,7 @@ struct CParser {
 
                     // Create incomplete struct type if not already defined
                     if((struct_name.lexeme in struct_types) is null){
-                        auto data = allocator.alloc(CType.sizeof);
+                        void[] data = allocator.zalloc(CType.sizeof);
                         CType* incomplete = cast(CType*)data.ptr;
                         incomplete.kind = CTypeKind.STRUCT;
                         incomplete.struct_name = struct_name.lexeme;
@@ -412,7 +663,7 @@ struct CParser {
 
                     // Create incomplete union type if not already defined
                     if((union_name.lexeme in union_types) is null){
-                        auto data = allocator.alloc(CType.sizeof);
+                        void[] data = allocator.zalloc(CType.sizeof);
                         CType* incomplete = cast(CType*)data.ptr;
                         incomplete.kind = CTypeKind.UNION;
                         incomplete.struct_name = union_name.lexeme;
@@ -548,21 +799,10 @@ struct CParser {
                     // Build the final type
                     CType* final_type = apply_declarator_to_type(base_type, decl);
 
-                    // Get the name from the declarator (may be in nested declarator)
-                    // Also find the declarator that contains the name to check if it's a function
-                    CToken name = decl.name;
-                    CDeclarator* name_decl = decl;  // The declarator containing the name
-                    if(name.lexeme.length == 0 && decl.nested !is null){
-                        // Name is in a nested declarator - find it
-                        CDeclarator* inner = decl.nested;
-                        while(inner !is null && inner.name.lexeme.length == 0){
-                            inner = inner.nested;
-                        }
-                        if(inner !is null){
-                            name = inner.name;
-                            name_decl = inner;
-                        }
-                    }
+                    // Get the name and containing declarator (for function detection)
+                    CToken name = get_declarator_name(decl);
+                    CDeclarator* name_decl = find_name_declarator(decl);
+                    if(name_decl is null) name_decl = decl;
 
                     // If the declarator containing the name is a function declarator,
                     // then this is a function declaration, not a variable.
@@ -592,25 +832,29 @@ struct CParser {
                             if(idxes.length > 0) idxes[] = uint.max;
                             current_return_type = func.return_type;
 
-                            // Add function parameters to local_var_types
+                            // Push function body scope and add parameters
+                            push_scope();
                             foreach(ref param; func.params){
                                 if(param.name.lexeme.length > 0){
-                                    local_var_types[param.name.lexeme] = param.type;
+                                    current_scope.variables[param.name.lexeme] = param.type;
+                                    local_var_types[param.name.lexeme] = param.type;  // Legacy compat
                                 }
                             }
 
                             consume(CTokenType.LEFT_BRACE, "Expected '{' for function body");
-                            if(ERROR_OCCURRED) return 1;
+                            if(ERROR_OCCURRED){ pop_scope(); return 1; }
 
                             auto body_ = make_barray!(CStmt*)(allocator);
                             while(!check(CTokenType.RIGHT_BRACE) && !at_end){
                                 CStmt* stmt = parse_statement();
-                                if(stmt is null) return 1;
+                                if(stmt is null){ pop_scope(); return 1; }
                                 body_ ~= stmt;
                             }
 
                             consume(CTokenType.RIGHT_BRACE, "Expected '}' after function body");
-                            if(ERROR_OCCURRED) return 1;
+                            if(ERROR_OCCURRED){ pop_scope(); return 1; }
+
+                            pop_scope();  // End function body scope
 
                             // Clear type context
                             local_var_types.count = 0;
@@ -1601,7 +1845,7 @@ struct CParser {
                     struct_type = *found;
                 } else {
                     // Create incomplete struct type for forward reference
-                    auto data = allocator.alloc(CType.sizeof);
+                    void[] data = allocator.zalloc(CType.sizeof);
                     CType* incomplete = cast(CType*)data.ptr;
                     incomplete.kind = CTypeKind.STRUCT;
                     incomplete.struct_name = struct_name.lexeme;
@@ -1611,104 +1855,23 @@ struct CParser {
                 }
             }
 
-            // Handle pointer types (e.g., typedef struct X *ptr_t)
-            while(match(CTokenType.STAR)){
-                struct_type = make_pointer_type(allocator, struct_type);
-                // Skip pointer qualifiers
-                while(match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)){}
-            }
+            // Use unified declarator parsing for pointers, arrays, function pointers
             parse_gnu_attributes(attrs);
+            CDeclarator* decl = parse_declarator(false);
+            if(decl is null) return 1;
 
-            // Check for function pointer typedef: typedef struct X *(*name)(...)
-            if(check(CTokenType.LEFT_PAREN)){
-                advance();  // consume '('
-
-                // Skip any calling convention identifiers until we hit '*'
-                while(check(CTokenType.IDENTIFIER)){
-                    advance();
-                }
-
-                if(!match(CTokenType.STAR)){
-                    error("Expected '*' in function pointer typedef");
-                    return 1;
-                }
-
-                CToken typedef_name = consume(CTokenType.IDENTIFIER, "Expected typedef name");
-                if(ERROR_OCCURRED) return 1;
-
-                consume(CTokenType.RIGHT_PAREN, "Expected ')' after function pointer name");
-                if(ERROR_OCCURRED) return 1;
-
-                // Now parse the parameter list using unified parameter parsing
-                consume(CTokenType.LEFT_PAREN, "Expected '(' for function parameters");
-                if(ERROR_OCCURRED) return 1;
-
-                auto param_result = parse_parameter_type_list();
-                if(param_result.err) return 1;
-
-                // Extract just the types from params
-                auto param_types = make_barray!(CType*)(allocator);
-                foreach(ref p; param_result.params[]){
-                    param_types ~= p.type;
-                }
-
-                consume(CTokenType.RIGHT_PAREN, "Expected ')' after parameters");
-                if(ERROR_OCCURRED) return 1;
-
-                consume(CTokenType.SEMICOLON, "Expected ';' after typedef");
-                if(ERROR_OCCURRED) return 1;
-
-                CType* func_type = make_function_type(allocator, struct_type, param_types[], param_result.is_varargs);
-                CType* func_ptr_type = make_pointer_type(allocator, func_type);
-
-                typedef_types[typedef_name.lexeme] = func_ptr_type;
-                return 0;
+            CType* final_type = apply_declarator_to_type(struct_type, decl);
+            CToken typedef_name = get_declarator_name(decl);
+            if(typedef_name.lexeme.length == 0){
+                error("Expected typedef name");
+                return 1;
             }
 
-            // Skip attribute macros (like SDL_AUDIOCVT_PACKED, __attribute__((packed))) before typedef name
             parse_gnu_attributes(attrs);
-
-            // Now get the typedef name
-            CToken typedef_name = consume(CTokenType.IDENTIFIER, "Expected typedef name");
-            if(ERROR_OCCURRED) return 1;
-            parse_gnu_attributes(attrs);
-
-            // Check for array dimensions (e.g., typedef struct X name[1])
-            if(check(CTokenType.LEFT_BRACKET)){
-                advance();  // consume '['
-                // Parse array size expression (simplified: expect a number)
-                if(check(CTokenType.NUMBER)){
-                    CToken size_tok = advance();
-                    size_t array_size = 0;
-                    // Parse the number
-                    foreach(c; size_tok.lexeme){
-                        if(c >= '0' && c <= '9'){
-                            array_size = array_size * 10 + (c - '0');
-                        } else {
-                            break;
-                        }
-                    }
-                    consume(CTokenType.RIGHT_BRACKET, "Expected ']'");
-                    if(ERROR_OCCURRED) return 1;
-
-                    // Create array type
-                    struct_type = make_array_type(allocator, struct_type, array_size);
-                } else {
-                    // Skip to ]
-                    while(!check(CTokenType.RIGHT_BRACKET) && !at_end){
-                        advance();
-                    }
-                    consume(CTokenType.RIGHT_BRACKET, "Expected ']'");
-                    if(ERROR_OCCURRED) return 1;
-                    struct_type = make_array_type(allocator, struct_type, 1);
-                }
-            }
-            parse_gnu_attributes(attrs);
-
             consume(CTokenType.SEMICOLON, "Expected ';' after typedef");
             if(ERROR_OCCURRED) return 1;
 
-            typedef_types[typedef_name.lexeme] = struct_type;
+            typedef_types[typedef_name.lexeme] = final_type;
             return 0;
 
         } else if(check(CTokenType.UNION)){
@@ -1764,7 +1927,7 @@ struct CParser {
                     union_type = *found;
                 } else {
                     // Create incomplete union type for forward reference
-                    auto data = allocator.alloc(CType.sizeof);
+                    void[] data = allocator.zalloc(CType.sizeof);
                     CType* incomplete = cast(CType*)data.ptr;
                     incomplete.kind = CTypeKind.UNION;
                     incomplete.struct_name = union_name.lexeme;
@@ -1774,26 +1937,22 @@ struct CParser {
                 }
             }
 
-            // Handle pointer types (e.g., typedef union X *ptr_t)
-            while(match(CTokenType.STAR)){
-                union_type = make_pointer_type(allocator, union_type);
-                // Skip pointer qualifiers
-                while(match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)){}
+            // Use unified declarator parsing for pointers, arrays, function pointers
+            CDeclarator* decl = parse_declarator(false);
+            if(decl is null) return 1;
+
+            CType* final_type = apply_declarator_to_type(union_type, decl);
+            CToken typedef_name = get_declarator_name(decl);
+            if(typedef_name.lexeme.length == 0){
+                error("Expected typedef name");
+                return 1;
             }
 
-            CToken typedef_name = consume(CTokenType.IDENTIFIER, "Expected typedef name");
-            if(ERROR_OCCURRED) return 1;
-
-            // Skip __attribute__((xxx)) after typedef name
-            if(check(CTokenType.IDENTIFIER) && peek().lexeme == "__attribute__"){
-                advance();
-                skip_balanced_parens();
-            }
-
+            parse_gnu_attributes(attrs);
             consume(CTokenType.SEMICOLON, "Expected ';' after typedef");
             if(ERROR_OCCURRED) return 1;
 
-            typedef_types[typedef_name.lexeme] = union_type;
+            typedef_types[typedef_name.lexeme] = final_type;
             return 0;
 
         } else if(check(CTokenType.ENUM)){
@@ -1877,100 +2036,59 @@ struct CParser {
                 }
             }
 
-            CToken typedef_name = consume(CTokenType.IDENTIFIER, "Expected typedef name");
-            if(ERROR_OCCURRED) return 1;
+            // Use unified declarator parsing for pointers, arrays, function pointers
+            CDeclarator* decl = parse_declarator(false);
+            if(decl is null) return 1;
+
+            CType* final_type = apply_declarator_to_type(enum_type, decl);
+            CToken typedef_name = get_declarator_name(decl);
+            if(typedef_name.lexeme.length == 0){
+                error("Expected typedef name");
+                return 1;
+            }
 
             consume(CTokenType.SEMICOLON, "Expected ';' after typedef");
             if(ERROR_OCCURRED) return 1;
 
-            typedef_types[typedef_name.lexeme] = enum_type;
+            typedef_types[typedef_name.lexeme] = final_type;
             return 0;
 
         } else {
-            // Could be simple typedef or function pointer typedef
-            // Simple: typedef <type> <name>;
-            // Function pointer: typedef <ret_type> (* <name>)(<params>);
-            // Function pointer with calling conv: typedef <ret_type> (SDLCALL * <name>)(<params>);
+            // Regular typedef using unified approach:
+            // typedef <base-type> <declarator>;
+            // Handles: typedef int foo; typedef int* bar; typedef int (*fn)(int); typedef int arr[10];
 
             parse_gnu_attributes(attrs);
-            CType* base_type = parse_type();
+            CType* base_type = parse_base_type();
             if(base_type is null) return 1;
             parse_gnu_attributes(attrs);
 
-            // Check for function pointer syntax: starts with '('
-            if(check(CTokenType.LEFT_PAREN)){
-                advance();  // consume '('
+            // Parse declarator (handles pointers, function pointers, arrays)
+            CDeclarator* decl = parse_declarator(false);  // Name is required
+            if(decl is null) return 1;
 
-                // Skip any calling convention identifiers until we hit '*'
-                while(check(CTokenType.IDENTIFIER)){
-                    advance();  // skip calling convention like SDLCALL
-                }
+            // Build the final type
+            CType* final_type = apply_declarator_to_type(base_type, decl);
 
-                if(!match(CTokenType.STAR)){
-                    error("Expected '*' in function pointer typedef");
-                    return 1;
-                }
-
-                CToken typedef_name = consume(CTokenType.IDENTIFIER, "Expected typedef name");
-                if(ERROR_OCCURRED) return 1;
-
-                consume(CTokenType.RIGHT_PAREN, "Expected ')' after function pointer name");
-                if(ERROR_OCCURRED) return 1;
-
-                // Now parse the parameter list using unified parameter parsing
-                consume(CTokenType.LEFT_PAREN, "Expected '(' for function parameters");
-                if(ERROR_OCCURRED) return 1;
-
-                auto param_result = parse_parameter_type_list();
-                if(param_result.err) return 1;
-
-                // Extract just the types from params
-                auto param_types = make_barray!(CType*)(allocator);
-                foreach(ref p; param_result.params[]){
-                    param_types ~= p.type;
-                }
-
-                consume(CTokenType.RIGHT_PAREN, "Expected ')' after parameters");
-                if(ERROR_OCCURRED) return 1;
-
-                consume(CTokenType.SEMICOLON, "Expected ';' after typedef");
-                if(ERROR_OCCURRED) return 1;
-
-                // Create function type then wrap in pointer
-                CType* func_type = make_function_type(allocator, base_type, param_types[], param_result.is_varargs);
-                CType* func_ptr_type = make_pointer_type(allocator, func_type);
-
-                typedef_types[typedef_name.lexeme] = func_ptr_type;
-                return 0;
+            // Get the typedef name
+            CToken typedef_name = get_declarator_name(decl);
+            if(typedef_name.lexeme.length == 0){
+                error("Expected typedef name");
+                return 1;
             }
 
-            CToken typedef_name = consume(CTokenType.IDENTIFIER, "Expected typedef name");
-            if(ERROR_OCCURRED) return 1;
-
-            // Handle array typedefs: typedef int array_t[10];
-            if(match(CTokenType.LEFT_BRACKET)){
-                auto size_result = parse_enum_const_expr();
-                if(size_result.err) return 1;
-                if(size_result.value <= 0){
-                    error("Array size must be positive");
-                    return 1;
-                }
-                consume(CTokenType.RIGHT_BRACKET, "Expected ']'");
-                if(ERROR_OCCURRED) return 1;
-                base_type = make_array_type(allocator, base_type, cast(size_t) size_result.value);
-            }
+            // Handle vector_size attribute
             parse_gnu_attributes(attrs);
             if(attrs.vector_size.type == CTokenType.NUMBER){
                 import dlib.parse_numbers: parse_uint64;
                 size_t sz = parse_uint64(attrs.vector_size.lexeme).value;
-                if(0) errorf(attrs.vector_size, "Making a vector, was ", str_for(base_type.kind), " with vector size: ", sz);
-                base_type = make_vector_type(allocator, base_type, sz);
+                final_type = make_vector_type(allocator, final_type, sz);
             }
 
             consume(CTokenType.SEMICOLON, "Expected ';' after typedef");
             if(ERROR_OCCURRED) return 1;
 
-            typedef_types[typedef_name.lexeme] = base_type;
+            typedef_types[typedef_name.lexeme] = final_type;
             return 0;
         }
     }
@@ -2046,22 +2164,26 @@ struct CParser {
         if(idxes.length > 0) idxes[] = uint.max;
         current_return_type = ret_type;
 
-        // Add function parameters to local_var_types
+        // Push function body scope and add parameters
+        push_scope();
         foreach(ref param; func.params){
             if(param.name.lexeme.length > 0){
-                local_var_types[param.name.lexeme] = param.type;
+                current_scope.variables[param.name.lexeme] = param.type;
+                local_var_types[param.name.lexeme] = param.type;  // Legacy compat
             }
         }
 
         auto body = make_barray!(CStmt*)(allocator);
         while(!check(CTokenType.RIGHT_BRACE) && !at_end){
             CStmt* stmt = parse_statement();
-            if(stmt is null) return 1;
+            if(stmt is null){ pop_scope(); return 1; }
             body ~= stmt;
         }
 
         consume(CTokenType.RIGHT_BRACE, "Expected '}' after function body");
-        if(ERROR_OCCURRED) return 1;
+        if(ERROR_OCCURRED){ pop_scope(); return 1; }
+
+        pop_scope();  // End function body scope
 
         // Clear type context after function
         local_var_types.count = 0;
@@ -2180,23 +2302,7 @@ struct CParser {
     CType* parse_type(){
         CType* base = parse_base_type();
         if(base is null) return null;
-
-        // Handle postfix qualifiers (e.g., "int const *" instead of "const int *")
-        while(match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)){
-            // Just skip - we don't track these
-        }
-
-        // Handle pointer types
-        while(check(CTokenType.STAR)){
-            advance();
-            base = make_pointer_type(allocator, base);
-            // Skip pointer qualifiers (const, volatile, restrict)
-            while(match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)){
-                // Just skip - we don't track pointer constness
-            }
-        }
-
-        return base;
+        return parse_pointer_modifiers(base);
     }
 
     // Parse a type-name for casts, sizeof, compound literals
@@ -2216,54 +2322,19 @@ struct CParser {
     }
 
     // Parse an abstract declarator (no identifier allowed)
+    // This is just a convenience wrapper around parse_declarator with allow_abstract=true
     CDeclarator* parse_abstract_declarator(){
-        auto data = allocator.alloc(CDeclarator.sizeof);
-        CDeclarator* decl = cast(CDeclarator*)data.ptr;
-        *decl = CDeclarator.init;
-
-        // Handle postfix qualifiers (e.g., "char const *" instead of "const char *")
+        // Handle postfix qualifiers before pointer (e.g., "char const *")
         while(match(CTokenType.CONST) || match(CTokenType.VOLATILE) ||
                match(CTokenType.RESTRICT) || match(CTokenType.ATOMIC)){}
 
-        // Parse pointer prefix
-        while(check(CTokenType.STAR)){
-            advance();
-            decl.pointer_depth++;
-            while(match(CTokenType.CONST) || match(CTokenType.VOLATILE) ||
-                   match(CTokenType.RESTRICT) || match(CTokenType.ATOMIC)){}
+        // Check if there's actually a declarator to parse
+        if(!check(CTokenType.STAR) && !check(CTokenType.LEFT_PAREN) &&
+           !check(CTokenType.LEFT_BRACKET)){
+            return null;  // No abstract declarator present
         }
 
-        // Handle parenthesized abstract declarator: (*)[10] or (*)(int)
-        if(check(CTokenType.LEFT_PAREN)){
-            CToken next = peek_at(1);
-            // Only parse as nested declarator if it starts with * or (
-            if(next.type == CTokenType.STAR || next.type == CTokenType.LEFT_PAREN){
-                advance();  // consume '('
-                decl.nested = parse_abstract_declarator();
-                if(decl.nested is null) return null;
-                consume(CTokenType.RIGHT_PAREN, "Expected ')' after abstract declarator");
-                if(ERROR_OCCURRED) return null;
-            }
-        }
-
-        // Handle array suffix: [size]
-        auto dims = make_barray!size_t(allocator);
-        while(check(CTokenType.LEFT_BRACKET)){
-            advance();  // consume '['
-            size_t dim = 0;
-            if(!check(CTokenType.RIGHT_BRACKET)){
-                auto size_result = parse_enum_const_expr();
-                if(!size_result.err && size_result.value > 0){
-                    dim = cast(size_t)size_result.value;
-                }
-            }
-            dims ~= dim;
-            consume(CTokenType.RIGHT_BRACKET, "Expected ']'");
-            if(ERROR_OCCURRED) return null;
-        }
-        decl.array_dims = dims[];
-
-        return decl;
+        return parse_declarator(true);  // allow_abstract=true
     }
 
     // Get base type by unwrapping pointers (for comma-separated declarations)
@@ -2295,7 +2366,7 @@ struct CParser {
     // (6.7.7.1) declarator:
     //     pointer_opt direct-declarator
     CDeclarator* parse_declarator(bool allow_abstract = false){
-        auto data = allocator.alloc(CDeclarator.sizeof);
+        void[] data = allocator.zalloc(CDeclarator.sizeof);
         CDeclarator* decl = cast(CDeclarator*)data.ptr;
         *decl = CDeclarator.init;
 
@@ -2450,6 +2521,37 @@ struct CParser {
             default:
                 return false;
         }
+    }
+
+    // Helper: Extract the name and its containing declarator from a declarator tree.
+    // For simple declarators like `int x`, the name is directly in decl.name.
+    // For complex declarators like `int (*f)(int)`, the name is in a nested declarator.
+    // Returns: (name_token, declarator_containing_name)
+    static CToken get_declarator_name(CDeclarator* decl){
+        if(decl is null) return CToken.init;
+        CToken name = decl.name;
+        if(name.lexeme.length > 0) return name;
+        // Search nested declarators
+        CDeclarator* inner = decl.nested;
+        while(inner !is null){
+            if(inner.name.lexeme.length > 0) return inner.name;
+            inner = inner.nested;
+        }
+        return CToken.init;
+    }
+
+    // Helper: Find the declarator that contains the name in a declarator tree.
+    // For complex declarators like `int (*f)(int)`, this returns the declarator
+    // where is_function=true if f is declared as a function.
+    static CDeclarator* find_name_declarator(CDeclarator* decl){
+        if(decl is null) return null;
+        if(decl.name.lexeme.length > 0) return decl;
+        CDeclarator* inner = decl.nested;
+        while(inner !is null){
+            if(inner.name.lexeme.length > 0) return inner;
+            inner = inner.nested;
+        }
+        return null;
     }
 
     // Helper: Build the return type for a complex function declaration.
@@ -3038,139 +3140,49 @@ struct CParser {
     // Parses a single parameter and adds it to the params array.
     // Returns 0 on success, 1 on error.
     int parse_parameter_declaration(Barray!CParam* params){
-        // Check for(void) - means no parameters
+        // Check for (void) - means no parameters
         if(check(CTokenType.VOID)){
             CToken void_tok = advance();
-            if(check(CTokenType.RIGHT_PAREN) || check(CTokenType.COMMA)){
-                // Just "void" alone - means no parameters if at end, or error if followed by comma
-                if(check(CTokenType.COMMA)){
-                    error("'void' parameter must be the only parameter");
-                    return 1;
-                }
-                // "void" at end means no parameters - don't add anything
+            if(check(CTokenType.RIGHT_PAREN)){
+                // Just "void" alone at end means no parameters
                 return 0;
             }
-            // void* or void type - handle as regular parameter starting with void
-            CParam param;
-            param.type = &TYPE_VOID;
-
-            // Handle postfix qualifiers (void const *)
-            while(match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)){}
-
-            // Handle pointers
-            while(match(CTokenType.STAR)){
-                param.type = make_pointer_type(allocator, param.type);
-                while(match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)){}
-            }
-
-            // Check for function pointer parameter: void (*name)(params)
-            if(check(CTokenType.LEFT_PAREN)){
-                advance();  // consume '('
-                if(match(CTokenType.STAR)){
-                    if(check(CTokenType.IDENTIFIER)){
-                        param.name = advance();
-                    }
-                    consume(CTokenType.RIGHT_PAREN, "Expected ')' after function pointer");
-                    if(ERROR_OCCURRED) return 1;
-                    // (6.7.7.1) function-declarator: direct-declarator ( parameter-type-list_opt )
-                    // Parse the parameter-type-list to build proper function pointer type
-                    if(check(CTokenType.LEFT_PAREN)){
-                        consume(CTokenType.LEFT_PAREN, "Expected '(' for function parameters");
-                        if(ERROR_OCCURRED) return 1;
-                        auto func_param_result = parse_parameter_type_list();
-                        if(func_param_result.err) return 1;
-                        // Extract types from parameters
-                        auto func_param_types = make_barray!(CType*)(allocator);
-                        foreach(ref p; func_param_result.params[]){
-                            func_param_types ~= p.type;
-                        }
-                        consume(CTokenType.RIGHT_PAREN, "Expected ')' after function parameters");
-                        if(ERROR_OCCURRED) return 1;
-                        // param.type is the return type (void with any pointer modifiers)
-                        CType* func_type = make_function_type(allocator, param.type, func_param_types[], func_param_result.is_varargs);
-                        param.type = make_pointer_type(allocator, func_type);
-                    } else {
-                        // No parameter list - function pointer with no params
-                        param.type = make_pointer_type(allocator, make_function_type(allocator, param.type, null, false));
-                    }
-                    *params ~= param;
-                    return 0;
-                } else {
-                    error("Unexpected '(' in void parameter");
-                    return 1;
-                }
-            }
-
-            // Parameter name is optional
-            if(check(CTokenType.IDENTIFIER)){
-                param.name = advance();
-            }
-            *params ~= param;
-            return 0;
-        }
-
-        // Regular parameter
-        CParam param;
-        param.type = parse_type();
-        if(param.type is null) return 1;
-
-        // Check for function pointer parameter: type (*name)(params) or type (*)(params)
-        if(check(CTokenType.LEFT_PAREN)){
-            advance();  // consume '('
-            if(match(CTokenType.STAR)){
-                // Function pointer parameter - name is optional
-                if(check(CTokenType.IDENTIFIER)){
-                    param.name = advance();
-                }
-                consume(CTokenType.RIGHT_PAREN, "Expected ')' after function pointer");
-                if(ERROR_OCCURRED) return 1;
-                // (6.7.7.1) function-declarator: direct-declarator ( parameter-type-list_opt )
-                // Parse the parameter-type-list to build proper function pointer type
-                if(check(CTokenType.LEFT_PAREN)){
-                    consume(CTokenType.LEFT_PAREN, "Expected '(' for function parameters");
-                    if(ERROR_OCCURRED) return 1;
-                    auto func_param_result = parse_parameter_type_list();
-                    if(func_param_result.err) return 1;
-                    // Extract types from parameters
-                    auto func_param_types = make_barray!(CType*)(allocator);
-                    foreach(ref p; func_param_result.params[]){
-                        func_param_types ~= p.type;
-                    }
-                    consume(CTokenType.RIGHT_PAREN, "Expected ')' after function parameters");
-                    if(ERROR_OCCURRED) return 1;
-                    // param.type is the return type from declaration-specifiers
-                    CType* func_type = make_function_type(allocator, param.type, func_param_types[], func_param_result.is_varargs);
-                    param.type = make_pointer_type(allocator, func_type);
-                } else {
-                    // No parameter list - function pointer with no params
-                    param.type = make_pointer_type(allocator, make_function_type(allocator, param.type, null, false));
-                }
-                *params ~= param;
-                return 0;
-            } else {
-                error("Unexpected '(' in parameter");
+            if(check(CTokenType.COMMA)){
+                error("'void' parameter must be the only parameter");
                 return 1;
             }
+            // void* or void(...) - put back and parse normally
+            current--;  // un-consume VOID
         }
 
-        // Skip const/volatile qualifiers between type and name
-        while(match(CTokenType.CONST) || match(CTokenType.VOLATILE) || match(CTokenType.RESTRICT)){}
+        // Parse declaration-specifiers (base type)
+        CType* base_type = parse_base_type();
+        if(base_type is null) return 1;
 
-        // Parameter name is optional in declarations
-        if(check(CTokenType.IDENTIFIER)){
-            param.name = advance();
+        // Skip postfix qualifiers (e.g., "int const *" -> qualifiers between type and declarator)
+        while(match(CTokenType.CONST) || match(CTokenType.VOLATILE) ||
+               match(CTokenType.RESTRICT) || match(CTokenType.ATOMIC)){}
+
+        // Parse declarator (name is optional in parameters - allow_abstract=true)
+        // Check if there's a declarator to parse: *, (, [, or identifier
+        CDeclarator* decl = null;
+        if(check(CTokenType.STAR) || check(CTokenType.LEFT_PAREN) ||
+           check(CTokenType.LEFT_BRACKET) || check(CTokenType.IDENTIFIER)){
+            decl = parse_declarator(true);  // allow_abstract=true
         }
 
-        // Handle array parameters: type name[size] -> converted to pointer
-        if(check(CTokenType.LEFT_BRACKET)){
-            while(check(CTokenType.LEFT_BRACKET)){
-                advance();  // consume '['
-                while(!check(CTokenType.RIGHT_BRACKET) && !at_end){
-                    advance();
-                }
-                if(check(CTokenType.RIGHT_BRACKET)) advance();
+        CParam param;
+        if(decl !is null){
+            param.type = apply_declarator_to_type(base_type, decl);
+            param.name = get_declarator_name(decl);
+
+            // Array parameters decay to pointers (C99 6.7.6.3p7)
+            if(param.type !is null && param.type.kind == CTypeKind.ARRAY){
+                param.type = make_pointer_type(allocator, param.type.pointed_to);
             }
-            param.type = make_pointer_type(allocator, param.type);
+        } else {
+            // No declarator - just the base type
+            param.type = base_type;
         }
 
         *params ~= param;
@@ -3276,10 +3288,10 @@ struct CParser {
             while(match(CTokenType.SIGNED)) is_unsigned = false;
             match(CTokenType.INT);  // optional trailing int
             // Allocate new type for short
-            auto data = allocator.alloc(CType.sizeof);
+            void[] data = allocator.zalloc(CType.sizeof);
             result = cast(CType*)data.ptr;
             result.kind = CTypeKind.SHORT;
-            result.is_unsigned = is_unsigned;
+            result.is_signed = !is_unsigned;
         } else if(match(CTokenType.INT)){
             // Handle trailing modifiers (e.g., 'int unsigned')
             while(match(CTokenType.UNSIGNED)) is_unsigned = true;
@@ -3448,7 +3460,7 @@ struct CParser {
                     result = *found;
                 } else {
                     // Create incomplete struct type for forward reference
-                    auto data = allocator.alloc(CType.sizeof);
+                    void[] data = allocator.zalloc(CType.sizeof);
                     CType* incomplete = cast(CType*)data.ptr;
                     incomplete.kind = CTypeKind.STRUCT;
                     incomplete.struct_name = struct_name.lexeme;
@@ -3556,7 +3568,7 @@ struct CParser {
                     result = *found;
                 } else {
                     // Create incomplete union type for forward reference
-                    auto data = allocator.alloc(CType.sizeof);
+                    void[] data = allocator.zalloc(CType.sizeof);
                     CType* incomplete = cast(CType*)data.ptr;
                     incomplete.kind = CTypeKind.UNION;
                     incomplete.struct_name = union_name.lexeme;
@@ -3730,9 +3742,13 @@ struct CParser {
                 tok.type == DECIMAL128){
                 return true;
             }
-            // Check for typedef names
+            // Check for typedef names and special identifier keywords
             if(tok.type == IDENTIFIER){
-                return (tok.lexeme in typedef_types) !is null;
+                if(tok.lexeme in typedef_types) return true;
+                // Special type keywords that may not have token types
+                str lex = tok.lexeme;
+                if(lex == "_Complex" || lex == "_Bool" || lex == "__int128") return true;
+                return false;
             }
             return false;
         }
@@ -3885,6 +3901,9 @@ struct CParser {
     CStmt* parse_block(){
         CToken brace = previous();
         auto statements = make_barray!(CStmt*)(allocator);
+
+        push_scope();  // Create new scope for block
+        scope(exit) pop_scope();  // Restore on exit (even on error)
 
         while(!check(CTokenType.RIGHT_BRACE) && !at_end){
             CStmt* stmt = parse_statement();
@@ -4121,25 +4140,17 @@ struct CParser {
 
             // Build the final type
             CType* var_type = apply_declarator_to_type(base_type, decl);
-
-            // Get the name from the declarator (may be in nested declarator)
-            CToken name = decl.name;
-            if(name.lexeme.length == 0 && decl.nested !is null){
-                CDeclarator* inner = decl.nested;
-                while(inner !is null && inner.name.lexeme.length == 0){
-                    inner = inner.nested;
-                }
-                if(inner !is null){
-                    name = inner.name;
-                }
-            }
+            CToken name = get_declarator_name(decl);
 
             if(name.lexeme.length == 0){
                 error("Expected variable name");
                 return null;
             }
-            // Register local variable type for type checking
-            local_var_types[name.lexeme] = var_type;
+            // Register local variable in current scope (with redeclaration check)
+            if(!declare_variable(name.lexeme, var_type, name)){
+                // Redeclaration error already reported by declare_variable
+                ERROR_OCCURRED = true;
+            }
 
             CExpr* initializer = null;
             if(match(CTokenType.EQUAL)){
@@ -4491,7 +4502,8 @@ struct CParser {
             if(right is null) return null;
             usual_arithmetic_conversions(expr, right, op);
             // TODO: implicit casts
-            expr = CBinary.make(allocator, expr, op.type, right, op, expr.type);
+            // Comparison operators always return int
+            expr = CBinary.make(allocator, expr, op.type, right, op, &TYPE_INT);
         }
 
         return expr;
@@ -4514,7 +4526,8 @@ struct CParser {
             if(right is null) return null;
             // TODO: this can fail, emit error and return null
             usual_arithmetic_conversions(expr, right, op);
-            expr = CBinary.make(allocator, expr, op.type, right, op, expr.type);
+            // Relational operators always return int
+            expr = CBinary.make(allocator, expr, op.type, right, op, &TYPE_INT);
         }
 
         return expr;
@@ -4899,7 +4912,7 @@ struct CParser {
                             case CHAR:
                             case SHORT:
                             case INT:
-                                arg = implicit_cast(arg, arg.type.is_unsigned?&TYPE_UINT:&TYPE_INT, tok);
+                                arg = implicit_cast(arg, arg.type.is_signed?&TYPE_INT:&TYPE_UINT, tok);
                                 if(!arg) return null;
                                 break;
                             case LONG:
@@ -5193,12 +5206,10 @@ struct CParser {
                 return CEmbed.make(allocator, path, offset, length, embed_tok);
             }
             CToken id_tok = advance();
-            CType* type = null; 
-            // Set type from symbol tables
-            if(auto t = id_tok.lexeme in local_var_types)
-                type = *t;
-            else if(auto t = id_tok.lexeme in global_var_types)
-                type = *t;
+            CType* type = null;
+            // Set type from symbol tables (using scope chain lookup)
+            if(auto t = lookup_variable(id_tok.lexeme))
+                type = t;
             else if(auto t = id_tok.lexeme in func_types)
                 type = *t;
             else if(long* e = id_tok.lexeme in enum_constants){
@@ -5460,27 +5471,27 @@ struct CParser {
             case UNSET: fprintf(stderr, "UNSET"); break;
             case VOID: fprintf(stderr, "void"); break;
             case CHAR:
-                if(t.is_unsigned) fprintf(stderr, "unsigned ");
+                if(!t.is_signed) fprintf(stderr, "unsigned ");
                 fprintf(stderr, "char");
                 break;
             case SHORT:
-                if(t.is_unsigned) fprintf(stderr, "unsigned ");
+                if(!t.is_signed) fprintf(stderr, "unsigned ");
                 fprintf(stderr, "short");
                 break;
             case INT:
-                if(t.is_unsigned) fprintf(stderr, "unsigned ");
+                if(!t.is_signed) fprintf(stderr, "unsigned ");
                 fprintf(stderr, "int");
                 break;
             case LONG:
-                if(t.is_unsigned) fprintf(stderr, "unsigned ");
+                if(!t.is_signed) fprintf(stderr, "unsigned ");
                 fprintf(stderr, "long");
                 break;
             case LONG_LONG:
-                if(t.is_unsigned) fprintf(stderr, "unsigned ");
+                if(!t.is_signed) fprintf(stderr, "unsigned ");
                 fprintf(stderr, "long long");
                 break;
             case INT128:
-                if(t.is_unsigned) fprintf(stderr, "unsigned ");
+                if(!t.is_signed) fprintf(stderr, "unsigned ");
                 fprintf(stderr, "__int128");
                 break;
             case FLOAT: fprintf(stderr, "float"); break;

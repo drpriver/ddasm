@@ -508,27 +508,27 @@ void print_type(CType* t) {
         case UNSET: fprintf(stderr, "UNSET"); break;
         case VOID: fprintf(stderr, "void"); break;
         case CHAR:
-            if (t.is_unsigned) fprintf(stderr, "unsigned ");
+            if(!t.is_signed) fprintf(stderr, "unsigned ");
             fprintf(stderr, "char");
             break;
         case SHORT:
-            if (t.is_unsigned) fprintf(stderr, "unsigned ");
+            if(!t.is_signed) fprintf(stderr, "unsigned ");
             fprintf(stderr, "short");
             break;
         case INT:
-            if (t.is_unsigned) fprintf(stderr, "unsigned ");
+            if(!t.is_signed) fprintf(stderr, "unsigned ");
             fprintf(stderr, "int");
             break;
         case LONG_LONG:
-            if (t.is_unsigned) fprintf(stderr, "unsigned ");
+            if(!t.is_signed) fprintf(stderr, "unsigned ");
             fprintf(stderr, "long long");
             break;
         case LONG:
-            if (t.is_unsigned) fprintf(stderr, "unsigned ");
+            if(!t.is_signed) fprintf(stderr, "unsigned ");
             fprintf(stderr, "long");
             break;
         case INT128:
-            if (t.is_unsigned) fprintf(stderr, "unsigned ");
+            if(!t.is_signed) fprintf(stderr, "unsigned ");
             fprintf(stderr, "__int128");
             break;
         case FLOAT: fprintf(stderr, "float"); break;

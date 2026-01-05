@@ -148,8 +148,8 @@ struct Machine {
         uintptr_t result;
         uintptr_t result2;
 
-        // Use float-aware trampoline if any args or returns are floats
-        if (func.arg_types != 0 || func.ret_types != 0) {
+        // Use float-aware trampoline if any args or returns are floats, or if we have struct args
+        if (func.arg_types != 0 || func.ret_types != 0 || func.struct_arg_sizes_ !is null) {
             import dvm.native_trampoline_float: call_native_float;
             // Check if there are 2 return values (for struct returns in XMM0+XMM1)
             uintptr_t* ret2_ptr = (func.n_ret > 1) ? &result2 : null;
@@ -159,7 +159,8 @@ struct Machine {
                 n_args,
                 func.arg_types,
                 func.ret_types,
-                ret2_ptr
+                ret2_ptr,
+                func.struct_arg_sizes_
             );
         } else {
             import dvm.native_trampoline: call_native_trampoline;
@@ -308,11 +309,9 @@ struct Machine {
             }
             return result;
         }
-
-        static if(uintptr_t.sizeof == 4)
-            alias float_t = float;
-        else
-            alias float_t = double;
+        static assert(uintptr_t.sizeof == 8);
+        alias float_t = float;
+        alias double_t = double;
 
         Instruction
         next_instruction(){
@@ -339,6 +338,12 @@ struct Machine {
             registers[RIP]+= uintptr_t.sizeof;
             return result;
         }
+        double_t
+        get_double(){
+            double_t result = *cast(double_t*)registers[RIP];
+            registers[RIP]+= uintptr_t.sizeof;
+            return result;
+        }
 
         uintptr_t*
         get_reg(){
@@ -351,6 +356,10 @@ struct Machine {
         float_t
         float_read_reg(){
             return *cast(float_t*)get_reg();
+        }
+        double_t
+        double_read_reg(){
+            return *cast(double_t*)get_reg();
         }
         int
         check_cmp(uintptr_t cmp){
@@ -473,7 +482,7 @@ struct Machine {
         for(;;){
             Instruction inst = *cast(Instruction*)registers[RIP];
             registers[RIP] += uintptr_t.sizeof;
-            switch(inst){
+            /*final*/ switch(inst){
                 case HALT:
                     if(int b = begin(HALT)) return b;
                     halted = true;
@@ -571,34 +580,40 @@ struct Machine {
                 }break;
                 case ITOD:{
                     if(int b = begin(ITOD)) return b;
-                    float_t* dst = cast(float_t*)get_reg;
-                    intptr_t* rhs = cast(intptr_t*)get_reg;  // Use signed for correct negative handling
-                    *dst = cast(typeof(*dst))*rhs;
+                    double_t* dst = cast(double_t*)get_reg;
+                    intptr_t* rhs = cast(intptr_t*)get_reg;
+                    *dst = cast(double_t)*rhs;
+                }break;
+                case ITOF:{
+                    if(int b = begin(ITOF)) return b;
+                    uintptr_t* dst = get_reg;
+                    intptr_t* rhs = cast(intptr_t*)get_reg;
+                    float_t f = cast(float_t)*rhs;
+                    *dst = cast(uintptr_t)*cast(uint*)&f;
                 }break;
                 case DTOI:{
                     if(int b = begin(DTOI)) return b;
-                    uintptr_t* dst = get_reg;
-                    float_t* rhs = cast(float_t*)get_reg;
-                    *dst = cast(typeof(*dst))*rhs;
+                    intptr_t* dst = cast(intptr_t*)get_reg;
+                    double_t* rhs = cast(double_t*)get_reg;
+                    *dst = cast(intptr_t)*rhs;
                 }break;
                 case DTOF:{
-                    // Double to float: truncate 64-bit double to 32-bit float
-                    // Result stored in lower 32 bits of register
                     if(int b = begin(DTOF)) return b;
-                    uintptr_t* dst = get_reg;
-                    float_t* rhs = cast(float_t*)get_reg;
-                    float f = cast(float)*rhs;  // Truncate double to float
-                    *dst = *cast(uint*)&f;      // Store as 32-bit value
+                    float_t* dst = cast(float_t*)get_reg;
+                    double_t* rhs = cast(double_t*)get_reg;
+                    *dst = cast(float_t)*rhs;
                 }break;
                 case FTOD:{
-                    // Float to double: expand 32-bit float to 64-bit double
-                    // Input is 32-bit float in lower bits of register
                     if(int b = begin(FTOD)) return b;
-                    float_t* dst = cast(float_t*)get_reg;
-                    uintptr_t* rhs = get_reg;
-                    uint f_bits = cast(uint)*rhs;
-                    float f = *cast(float*)&f_bits;
-                    *dst = cast(double)f;       // Expand float to double
+                    double_t* dst = cast(double_t*)get_reg;
+                    float_t* rhs = cast(float_t*)get_reg;
+                    *dst = cast(double_t)*rhs;
+                }break;
+                case FTOI:{
+                    if(int b = begin(FTOI)) return b;
+                    intptr_t* dst = cast(intptr_t*)get_reg;
+                    float_t* rhs = cast(float_t*)get_reg;
+                    *dst = cast(intptr_t)*rhs;
                 }break;
                 case NOT:{
                     if(int b = begin(NOT)) return b;
@@ -620,65 +635,65 @@ struct Machine {
                 }break;
                 case DADD_I:{
                     if(int b = begin(DADD_I)) return b;
-                    float_t* dst = cast(float_t*)get_reg;
-                    float_t* lhs = cast(float_t*)get_reg;
-                    float_t rhs = get_float;
+                    double_t* dst = cast(double_t*)get_reg;
+                    double_t* lhs = cast(double_t*)get_reg;
+                    double_t rhs = get_double;
                     *dst = *lhs + rhs;
                 }break;
                 case DADD_R:{
                     if(int b = begin(DADD_R)) return b;
-                    float_t* dst = cast(float_t*)get_reg;
-                    float_t* lhs = cast(float_t*)get_reg;
-                    float_t* rhs = cast(float_t*)get_reg;
+                    double_t* dst = cast(double_t*)get_reg;
+                    double_t* lhs = cast(double_t*)get_reg;
+                    double_t* rhs = cast(double_t*)get_reg;
                     *dst = *lhs + *rhs;
                 }break;
                 case DSUB_I:{
                     if(int b = begin(DSUB_I)) return b;
-                    float_t* dst = cast(float_t*)get_reg;
-                    float_t* lhs = cast(float_t*)get_reg;
-                    float_t rhs = get_float;
+                    double_t* dst = cast(double_t*)get_reg;
+                    double_t* lhs = cast(double_t*)get_reg;
+                    double_t rhs = get_double;
                     *dst = *lhs - rhs;
                 }break;
                 case DSUB_R:{
                     if(int b = begin(DSUB_R)) return b;
-                    float_t* dst = cast(float_t*)get_reg;
-                    float_t* lhs = cast(float_t*)get_reg;
-                    float_t* rhs = cast(float_t*)get_reg;
+                    double_t* dst = cast(double_t*)get_reg;
+                    double_t* lhs = cast(double_t*)get_reg;
+                    double_t* rhs = cast(double_t*)get_reg;
                     *dst = *lhs - *rhs;
                 }break;
                 case DMUL_I:{
                     if(int b = begin(DMUL_I)) return b;
-                    float_t* dst = cast(float_t*)get_reg;
-                    float_t* lhs = cast(float_t*)get_reg;
-                    float_t rhs = get_float;
+                    double_t* dst = cast(double_t*)get_reg;
+                    double_t* lhs = cast(double_t*)get_reg;
+                    double_t rhs = get_double;
                     *dst = *lhs * rhs;
                 }break;
                 case DMUL_R:{
                     if(int b = begin(DMUL_R)) return b;
-                    float_t* dst = cast(float_t*)get_reg;
-                    float_t* lhs = cast(float_t*)get_reg;
-                    float_t* rhs = cast(float_t*)get_reg;
+                    double_t* dst = cast(double_t*)get_reg;
+                    double_t* lhs = cast(double_t*)get_reg;
+                    double_t* rhs = cast(double_t*)get_reg;
                     *dst = *lhs * *rhs;
                 }break;
                 case DDIV_I:{
                     if(int b = begin(DDIV_I)) return b;
-                    float_t* dst = cast(float_t*)get_reg;
-                    float_t* lhs = cast(float_t*)get_reg;
-                    float_t rhs = get_float;
+                    double_t* dst = cast(double_t*)get_reg;
+                    double_t* lhs = cast(double_t*)get_reg;
+                    double_t rhs = get_double;
                     *dst = *lhs / rhs;
                 }break;
                 case DDIV_R:{
                     if(int b = begin(DDIV_R)) return b;
-                    float_t* dst = cast(float_t*)get_reg;
-                    float_t* lhs = cast(float_t*)get_reg;
-                    float_t* rhs = cast(float_t*)get_reg;
+                    double_t* dst = cast(double_t*)get_reg;
+                    double_t* lhs = cast(double_t*)get_reg;
+                    double_t* rhs = cast(double_t*)get_reg;
                     *dst = *lhs / *rhs;
                 }break;
                 case DCMP_I:{
                     if(int b = begin(DCMP_I)) return b;
                     registers[RFLAGS] = 0;
-                    float_t lhs = float_read_reg;
-                    float_t rhs = get_float;
+                    double_t lhs = double_read_reg;
+                    double_t rhs = get_double;
                     if(lhs == rhs){
                         registers[RFLAGS] = CmpFlags.ZERO;
                     }
@@ -689,8 +704,8 @@ struct Machine {
                 case DCMP_R:{
                     if(int b = begin(DCMP_R)) return b;
                     registers[RFLAGS] = 0;
-                    float_t lhs = float_read_reg;
-                    float_t rhs = float_read_reg;
+                    double_t lhs = double_read_reg;
+                    double_t rhs = double_read_reg;
                     if(lhs == rhs){
                         registers[RFLAGS] = CmpFlags.ZERO;
                     }
@@ -700,6 +715,92 @@ struct Machine {
                 }break;
                 case DNEG:{
                     if(int b = begin(DNEG)) return b;
+                    double_t* dst = cast(double_t*)get_reg;
+                    double_t* rhs = cast(double_t*)get_reg;
+                    *dst = -*rhs;
+                }break;
+                case FADD_I:{
+                    if(int b = begin(FADD_I)) return b;
+                    float_t* dst = cast(float_t*)get_reg;
+                    float_t* lhs = cast(float_t*)get_reg;
+                    float_t rhs = get_float;
+                    *dst = *lhs + rhs;
+                }break;
+                case FADD_R:{
+                    if(int b = begin(FADD_R)) return b;
+                    float_t* dst = cast(float_t*)get_reg;
+                    float_t* lhs = cast(float_t*)get_reg;
+                    float_t* rhs = cast(float_t*)get_reg;
+                    *dst = *lhs + *rhs;
+                }break;
+                case FSUB_I:{
+                    if(int b = begin(FSUB_I)) return b;
+                    float_t* dst = cast(float_t*)get_reg;
+                    float_t* lhs = cast(float_t*)get_reg;
+                    float_t rhs = get_float;
+                    *dst = *lhs - rhs;
+                }break;
+                case FSUB_R:{
+                    if(int b = begin(FSUB_R)) return b;
+                    float_t* dst = cast(float_t*)get_reg;
+                    float_t* lhs = cast(float_t*)get_reg;
+                    float_t* rhs = cast(float_t*)get_reg;
+                    *dst = *lhs - *rhs;
+                }break;
+                case FMUL_I:{
+                    if(int b = begin(FMUL_I)) return b;
+                    float_t* dst = cast(float_t*)get_reg;
+                    float_t* lhs = cast(float_t*)get_reg;
+                    float_t rhs = get_float;
+                    *dst = *lhs * rhs;
+                }break;
+                case FMUL_R:{
+                    if(int b = begin(FMUL_R)) return b;
+                    float_t* dst = cast(float_t*)get_reg;
+                    float_t* lhs = cast(float_t*)get_reg;
+                    float_t* rhs = cast(float_t*)get_reg;
+                    *dst = *lhs * *rhs;
+                }break;
+                case FDIV_I:{
+                    if(int b = begin(FDIV_I)) return b;
+                    float_t* dst = cast(float_t*)get_reg;
+                    float_t* lhs = cast(float_t*)get_reg;
+                    float_t rhs = get_float;
+                    *dst = *lhs / rhs;
+                }break;
+                case FDIV_R:{
+                    if(int b = begin(FDIV_R)) return b;
+                    float_t* dst = cast(float_t*)get_reg;
+                    float_t* lhs = cast(float_t*)get_reg;
+                    float_t* rhs = cast(float_t*)get_reg;
+                    *dst = *lhs / *rhs;
+                }break;
+                case FCMP_I:{
+                    if(int b = begin(FCMP_I)) return b;
+                    registers[RFLAGS] = 0;
+                    float_t lhs = float_read_reg;
+                    float_t rhs = get_float;
+                    if(lhs == rhs){
+                        registers[RFLAGS] = CmpFlags.ZERO;
+                    }
+                    else if(lhs < rhs){
+                        registers[RFLAGS] = CmpFlags.CARRY;
+                    }
+                }break;
+                case FCMP_R:{
+                    if(int b = begin(FCMP_R)) return b;
+                    registers[RFLAGS] = 0;
+                    float_t lhs = float_read_reg;
+                    float_t rhs = float_read_reg;
+                    if(lhs == rhs){
+                        registers[RFLAGS] = CmpFlags.ZERO;
+                    }
+                    else if(lhs < rhs){
+                        registers[RFLAGS] = CmpFlags.CARRY;
+                    }
+                }break;
+                case FNEG:{
+                    if(int b = begin(FNEG)) return b;
                     float_t* dst = cast(float_t*)get_reg;
                     float_t* rhs = cast(float_t*)get_reg;
                     *dst = -*rhs;
