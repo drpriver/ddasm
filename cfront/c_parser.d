@@ -3889,6 +3889,43 @@ struct CParser {
         }
     }
 
+    // Result type for parse_type_or_expr - either a type or an expression (compound literal)
+    static struct TypeOrExpr {
+        CType* type;   // Set if it's (type) without compound literal
+        CExpr* expr;   // Set if it's a compound literal (type){...}
+    }
+
+    // Parse (type) or (type){...} for sizeof/_Alignof/_Countof operators.
+    // Returns: .type set if just a type, .expr set if compound literal, both null if not (type).
+    TypeOrExpr parse_type_or_expr(){
+        // Check for (type) pattern
+        if(!check(CTokenType.LEFT_PAREN)){
+            return TypeOrExpr(null, null);  // No parens, caller should parse expr
+        }
+
+        // Peek ahead to see if it's a type
+        if(!is_type_specifier(peek_at(1))){
+            return TypeOrExpr(null, null);  // Not a type, caller should parse expr
+        }
+
+        // It's (type) - parse it
+        CToken paren_tok = advance();  // consume '('
+        CType* type = parse_type_name();
+        if(type is null) return TypeOrExpr(null, null);
+        consume(CTokenType.RIGHT_PAREN, "Expected ')' after type");
+        if(ERROR_OCCURRED) return TypeOrExpr(null, null);
+
+        // Check for compound literal: (type){...}
+        if(check(CTokenType.LEFT_BRACE)){
+            CExpr* init_expr = parse_initializer();
+            if(init_expr is null) return TypeOrExpr(null, null);
+            CExpr* compound = CCompoundLiteral.make(allocator, type, init_expr, paren_tok);
+            return TypeOrExpr(null, compound);
+        }
+
+        return TypeOrExpr(type, null);
+    }
+
     // (6.8.7.1) return statement:
     //     return expression_opt ;
     CStmt* parse_return(){
@@ -4824,122 +4861,50 @@ struct CParser {
         // sizeof operator: sizeof(type) or sizeof expr
         if(match(CTokenType.SIZEOF)){
             CToken op = previous();
-
-            // Check for sizeof(type) - requires parens
-            if(check(CTokenType.LEFT_PAREN)){
-                // Peek ahead to see if it's a type
-                if(peek_at(1).type == CTokenType.VOID ||
-                    peek_at(1).type == CTokenType.CHAR ||
-                    peek_at(1).type == CTokenType.SHORT ||
-                    peek_at(1).type == CTokenType.INT ||
-                    peek_at(1).type == CTokenType.LONG ||
-                    peek_at(1).type == CTokenType.FLOAT ||
-                    peek_at(1).type == CTokenType.DOUBLE ||
-                    peek_at(1).type == CTokenType.UNSIGNED ||
-                    peek_at(1).type == CTokenType.SIGNED ||
-                    peek_at(1).type == CTokenType.STRUCT ||
-                    peek_at(1).type == CTokenType.UNION ||
-                    peek_at(1).type == CTokenType.ENUM ||
-                    (peek_at(1).type == CTokenType.IDENTIFIER &&
-                     (peek_at(1).lexeme in typedef_types) !is null)){
-                    // sizeof(type) - use parse_type_name for array types like sizeof(int[10])
-                    advance();  // consume '('
-                    CType* type = parse_type_name();
-                    if(type is null) return null;
-                    consume(CTokenType.RIGHT_PAREN, "Expected ')' after type");
-                    if(ERROR_OCCURRED) return null;
-                    size_t size = type.size_of();
-                    return CSizeof.make(allocator, type, size, op);
-                }
+            TypeOrExpr result = parse_type_or_expr();
+            if(ERROR_OCCURRED) return null;
+            if(result.type !is null){
+                return CSizeof.make(allocator, result.type, result.type.size_of(), op);
             }
-
-            // sizeof expr (unary operator on expression)
-            CExpr* expr = parse_unary();
-            if(expr is null) return null;
-            return CSizeof.make_expr(allocator, expr, op);
+            if(result.expr is null){
+                result.expr = parse_unary();
+                if(result.expr is null) return null;
+            }
+            return CSizeof.make_expr(allocator, result.expr, op);
         }
 
-        // _Alignof operator: _Alignof(type) or _Alignof(expr) (GNU extension)
+        // _Alignof operator: _Alignof(type) or _Alignof expr (GNU extension)
         if(match(CTokenType.ALIGNOF)){
             CToken op = previous();
-
-            // _Alignof always requires parens
-            consume(CTokenType.LEFT_PAREN, "Expected '(' after _Alignof");
+            TypeOrExpr result = parse_type_or_expr();
             if(ERROR_OCCURRED) return null;
-
-            // Check if it's _Alignof(type) or _Alignof(expr)
-            if(peek().type == CTokenType.VOID ||
-                peek().type == CTokenType.CHAR ||
-                peek().type == CTokenType.SHORT ||
-                peek().type == CTokenType.INT ||
-                peek().type == CTokenType.LONG ||
-                peek().type == CTokenType.FLOAT ||
-                peek().type == CTokenType.DOUBLE ||
-                peek().type == CTokenType.UNSIGNED ||
-                peek().type == CTokenType.SIGNED ||
-                peek().type == CTokenType.STRUCT ||
-                peek().type == CTokenType.UNION ||
-                peek().type == CTokenType.ENUM ||
-                (peek().type == CTokenType.IDENTIFIER &&
-                 (peek().lexeme in typedef_types) !is null)){
-                // _Alignof(type) - use parse_type_name for array types
-                CType* type = parse_type_name();
-                if(type is null) return null;
-                consume(CTokenType.RIGHT_PAREN, "Expected ')' after type");
-                if(ERROR_OCCURRED) return null;
-                size_t alignment = type.align_of();
-                return CAlignof.make(allocator, type, alignment, op);
-            } else {
-                // _Alignof(expr) - GNU extension
-                CExpr* expr = parse_expression();
-                if(expr is null) return null;
-                consume(CTokenType.RIGHT_PAREN, "Expected ')' after expression");
-                if(ERROR_OCCURRED) return null;
-                return CAlignof.make_expr(allocator, expr, op);
+            if(result.type !is null){
+                return CAlignof.make(allocator, result.type, result.type.align_of(), op);
             }
+            if(result.expr is null){
+                result.expr = parse_unary();
+                if(result.expr is null) return null;
+            }
+            return CAlignof.make_expr(allocator, result.expr, op);
         }
 
         // _Countof operator: _Countof(type) or _Countof expr
         if(match(CTokenType.COUNTOF)){
             CToken op = previous();
-
-            // Check for _Countof(type) - requires parens
-            if(check(CTokenType.LEFT_PAREN)){
-                // Peek ahead to see if it's a type
-                if(peek_at(1).type == CTokenType.VOID ||
-                    peek_at(1).type == CTokenType.CHAR ||
-                    peek_at(1).type == CTokenType.SHORT ||
-                    peek_at(1).type == CTokenType.INT ||
-                    peek_at(1).type == CTokenType.LONG ||
-                    peek_at(1).type == CTokenType.FLOAT ||
-                    peek_at(1).type == CTokenType.DOUBLE ||
-                    peek_at(1).type == CTokenType.UNSIGNED ||
-                    peek_at(1).type == CTokenType.SIGNED ||
-                    peek_at(1).type == CTokenType.STRUCT ||
-                    peek_at(1).type == CTokenType.UNION ||
-                    peek_at(1).type == CTokenType.ENUM ||
-                    (peek_at(1).type == CTokenType.IDENTIFIER &&
-                     (peek_at(1).lexeme in typedef_types) !is null)){
-                    // _Countof(type) - type must be an array type
-                    advance();  // consume '('
-                    CType* type = parse_type_name();
-                    if(type is null) return null;
-                    consume(CTokenType.RIGHT_PAREN, "Expected ')' after type");
-                    if(ERROR_OCCURRED) return null;
-
-                    if(!type.is_array()){
-                        error("_Countof requires an array type");
-                        return null;
-                    }
-                    return CCountof.make(allocator, type, type.array_size, op);
+            TypeOrExpr result = parse_type_or_expr();
+            if(ERROR_OCCURRED) return null;
+            if(result.type !is null){
+                if(!result.type.is_array()){
+                    error("_Countof requires an array type");
+                    return null;
                 }
+                return CCountof.make(allocator, result.type, result.type.array_size, op);
             }
-
-            // _Countof expr (unary operator on expression)
-            CExpr* expr = parse_unary();
-            if(expr is null) return null;
-            // Count will be computed during codegen based on expression's type
-            return CCountof.make_expr(allocator, expr, 0, op);
+            if(result.expr is null){
+                result.expr = parse_unary();
+                if(result.expr is null) return null;
+            }
+            return CCountof.make_expr(allocator, result.expr, 0, op);
         }
 
         return parse_postfix();
