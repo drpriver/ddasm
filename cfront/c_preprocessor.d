@@ -259,6 +259,9 @@ struct CPreprocessor {
 
             // TODO: the other ones
             define_object_macro("__INT_MAX__", "2147483648");
+            define_object_macro("__FLT_MIN__", "1.17549435e-38F");
+            define_object_macro("__DBL_MIN__", "2.2250738585072014e-308");
+            define_object_macro("__LDBL_MIN__", "2.2250738585072014e-308");
             define_object_macro("__LONG_LONG_MAX__", "9223372036854775808ll");
         }
 
@@ -269,6 +272,9 @@ struct CPreprocessor {
             define_object_macro("__APPLE_CC__", "1");  // For TargetConditionals.h
             define_object_macro("MAC_OS_X_VERSION_MIN_REQUIRED", "110000");  // macOS 11.0
             define_object_macro("MAC_OS_X_VERSION_MAX_ALLOWED", "150000");  // macOS 15.0
+            define_object_macro("__DARWIN_CTYPE_NO_INLINE", "1");
+            define_object_macro("_DONT_USE_CTYPE_INLINE_", "1");
+            define_object_macro("__FINITE_MATH_ONLY__", "1");
         } else version(linux){
             define_object_macro("__linux__", "1");
             define_object_macro("__linux", "1");

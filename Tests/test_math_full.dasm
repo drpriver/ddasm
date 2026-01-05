@@ -8,6 +8,7 @@ import io
 dlimport m
     path "libm.so.6"
     path "libm"
+    path "libSystem.B.dylib"
     # Double (1 arg)
     function sin 1 1 0x2 0x2
     function cos 1 1 0x2 0x2

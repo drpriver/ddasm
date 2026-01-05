@@ -49,9 +49,9 @@ version(X86_64) {
             uintptr_t* args,
             size_t n_args,
             ulong arg_types,
-            ubyte ret_types = 0,
-            uintptr_t* ret2 = null,  // Optional: store second XMM return register here
-            ushort* struct_arg_sizes = null  // Optional: sizes of struct args that need stack copy
+            ubyte ret_types,
+            uintptr_t* ret2,  // Optional: store second XMM return register here
+            ushort* struct_arg_sizes  // Optional: sizes of struct args that need stack copy
         ) {
             // Separate args into integer and float categories
             uintptr_t[6] int_args = 0;
@@ -418,7 +418,8 @@ else version(AArch64) {
         uintptr_t* args,
         size_t n_args,
         ulong arg_types,
-        ubyte ret_types = 0
+        ubyte ret_types,
+        uintptr_t* ret2, ushort* struct_arg_sizes,
     ) {
         // Separate args into integer and float categories
         uintptr_t[8] int_args = 0;

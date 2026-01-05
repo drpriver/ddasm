@@ -1,4 +1,5 @@
 // Test <wchar.h> - Wide character handling (header parsing only)
+#pragma library("libc")
 #include <wchar.h>
 
 int main(){

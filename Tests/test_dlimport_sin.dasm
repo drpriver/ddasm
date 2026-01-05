@@ -5,6 +5,7 @@ import io
 dlimport mathlib
     path "libm.so.6"
     path "libm"
+    path "libSystem.B.dylib"
     function sin 1 1 0x2 0x2
 end
 

@@ -1071,8 +1071,13 @@ struct CParser {
     //     struct-or-union identifier
     int parse_struct_def(CStructDef* sdef){
         advance();  // consume 'struct'
+        Attributes attrs;
+        parse_gnu_attributes(attrs);
+
         CToken name = consume(CTokenType.IDENTIFIER, "Expected struct name");
         if(ERROR_OCCURRED) return 1;
+
+        parse_gnu_attributes(attrs);
 
         consume(CTokenType.LEFT_BRACE, "Expected '{' after struct name");
         if(ERROR_OCCURRED) return 1;
@@ -1085,6 +1090,8 @@ struct CParser {
 
         consume(CTokenType.RIGHT_BRACE, "Expected '}' after struct fields");
         if(ERROR_OCCURRED) return 1;
+
+        parse_gnu_attributes(attrs);
 
         consume(CTokenType.SEMICOLON, "Expected ';' after struct definition");
         if(ERROR_OCCURRED) return 1;
@@ -3791,6 +3798,24 @@ struct CParser {
                 error("Expected type specifier");
                 return null;
             }
+        } else if(match(CTokenType.TYPEOF)){
+            if(!match(CTokenType.LEFT_PAREN)){
+                error("Expected () for typeof");
+                return null;
+            }
+            if(!is_type_specifier(peek())){
+                CExpr* expr = parse_expression();
+                if(expr is null) return null;
+                result = expr.type;
+            }
+            else {
+                result = parse_type_name();
+                if(result is null) return null;
+            }
+            if(!match(CTokenType.RIGHT_PAREN)){
+                error("Expected ) for typeof");
+                return null;
+            }
         } else {
             error("Expected type specifier");
             return null;
@@ -3880,7 +3905,7 @@ struct CParser {
                 tok.type == RESTRICT || tok.type == ATOMIC || tok.type == STRUCT ||
                 tok.type == UNION || tok.type == ENUM || tok.type == BOOL ||
                 tok.type == COMPLEX || tok.type == DECIMAL32 || tok.type == DECIMAL64 ||
-                tok.type == DECIMAL128){
+                tok.type == DECIMAL128 || tok.type == TYPEOF){
                 return true;
             }
             // Check for typedef names and special identifier keywords

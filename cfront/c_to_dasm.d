@@ -10,18 +10,24 @@ import dlib.aliases;
 // Platform-specific default C library name
 version(OSX){
     enum str DEFAULT_LIBC = "libSystem.B.dylib";
+    enum str DEFAULT_LIBM = "libSystem.B.dylib";
 } else version(linux){
     enum str DEFAULT_LIBC = "libc.so.6";
+    enum str DEFAULT_LIBM = "libm.so.6";
 } else {
     enum str DEFAULT_LIBC = "libc";
+    enum str DEFAULT_LIBM = "libc";
 }
 
 // Normalize library name - "libc" is a special alias for the platform's C library
 str normalize_lib(str lib){
-    if(lib.length == 0) return DEFAULT_LIBC;
+    if(lib == "c") return DEFAULT_LIBC;
+    if(lib == "m") return DEFAULT_LIBM;
+    if(lib == "libm") return DEFAULT_LIBM;
     if(lib == "libc") return DEFAULT_LIBC;
     // Also handle common libc variants
     if(lib == "libc.so.6") return DEFAULT_LIBC;
+    if(lib == "libm.so.6") return DEFAULT_LIBM;
     if(lib == "libSystem.B.dylib") return DEFAULT_LIBC;
     return lib;
 }

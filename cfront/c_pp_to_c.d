@@ -99,6 +99,7 @@ enum CTokenType : uint {
     FLOAT128 = 641,
     FLOAT32X = 642,
     FLOAT64X = 643,
+    TYPEOF = 644,
 
     // Control flow keywords
     IF = 700,
@@ -341,6 +342,7 @@ struct PPToCConverter {
             if(name == "signed") return CTokenType.SIGNED;
             if(name == "inline") return CTokenType.INLINE;
             if(name == "__dasm") return CTokenType.DASM;
+            if(name == "typeof") return CTokenType.TYPEOF;
         }
         if(name.length == 7){
             if(name == "typedef") return CTokenType.TYPEDEF;
@@ -379,6 +381,7 @@ struct PPToCConverter {
             if(name == "__int128_t") return CTokenType.INT128;
             if(name == "_Decimal32") return CTokenType.DECIMAL32;
             if(name == "_Decimal64") return CTokenType.DECIMAL64;
+            if(name == "__typeof__") return CTokenType.TYPEOF;
         }
         if(name.length == 11){
             if(name == "__uint128_t") return CTokenType.UINT128;
