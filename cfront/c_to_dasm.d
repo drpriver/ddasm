@@ -3059,9 +3059,16 @@ struct CDasmWriter {
     }
 
     int gen_identifier(CIdentifier* expr, int target){
+        import cfront.c_ast : IdentifierRefKind;
         if(target == TARGET_IS_NOTHING) return 0;
 
         str name = expr.name.lexeme;
+
+        // Handle enum constants first - we have the value directly from parsing
+        if(expr.ref_kind == IdentifierRefKind.ENUM_CONST){
+            sb.writef("    move r% %\n", target, expr.enum_value);
+            return 0;
+        }
 
         // Check if this is an array - arrays decay to pointers (address of first element)
         if(CType** vt = name in var_types){
@@ -3118,7 +3125,7 @@ struct CDasmWriter {
             return 0;
         }
 
-        // Check for enum constant
+        // Legacy fallback: Check for enum constant in table (for backward compat)
         if(long* val = name in enum_constants){
             sb.writef("    move r% %\n", target, *val);
             return 0;

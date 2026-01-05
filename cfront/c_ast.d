@@ -681,9 +681,22 @@ struct CVaArg {
     }
 }
 
+// What kind of thing an identifier resolved to
+enum IdentifierRefKind : ubyte {
+    UNKNOWN,       // Not yet resolved (shouldn't happen after parsing)
+    VARIABLE,      // Local or global variable
+    ENUM_CONST,    // Enum constant (has integer value)
+    FUNCTION,      // Function reference
+    BUILTIN,       // __builtin_* function
+}
+
 struct CIdentifier {
     CExpr expr;
     CToken name;
+    IdentifierRefKind ref_kind;
+
+    // Resolution data (depends on ref_kind)
+    long enum_value;  // For ENUM_CONST: the constant's integer value
 
     static CExpr* make(Allocator a, CToken t, CType* type){
         auto data = a.zalloc(typeof(this).sizeof);
@@ -692,6 +705,52 @@ struct CIdentifier {
         result.expr.token = t;
         result.expr.type = type;
         result.name = t;
+        result.ref_kind = IdentifierRefKind.UNKNOWN;
+        return &result.expr;
+    }
+
+    static CExpr* make_var(Allocator a, CToken t, CType* type){
+        auto data = a.zalloc(typeof(this).sizeof);
+        auto result = cast(typeof(this)*)data.ptr;
+        result.expr.kind = CExprKind.IDENTIFIER;
+        result.expr.token = t;
+        result.expr.type = type;
+        result.name = t;
+        result.ref_kind = IdentifierRefKind.VARIABLE;
+        return &result.expr;
+    }
+
+    static CExpr* make_enum_const(Allocator a, CToken t, long value){
+        auto data = a.zalloc(typeof(this).sizeof);
+        auto result = cast(typeof(this)*)data.ptr;
+        result.expr.kind = CExprKind.IDENTIFIER;
+        result.expr.token = t;
+        result.expr.type = &TYPE_INT;
+        result.name = t;
+        result.ref_kind = IdentifierRefKind.ENUM_CONST;
+        result.enum_value = value;
+        return &result.expr;
+    }
+
+    static CExpr* make_func(Allocator a, CToken t, CType* type){
+        auto data = a.zalloc(typeof(this).sizeof);
+        auto result = cast(typeof(this)*)data.ptr;
+        result.expr.kind = CExprKind.IDENTIFIER;
+        result.expr.token = t;
+        result.expr.type = type;
+        result.name = t;
+        result.ref_kind = IdentifierRefKind.FUNCTION;
+        return &result.expr;
+    }
+
+    static CExpr* make_builtin(Allocator a, CToken t, CType* type){
+        auto data = a.zalloc(typeof(this).sizeof);
+        auto result = cast(typeof(this)*)data.ptr;
+        result.expr.kind = CExprKind.IDENTIFIER;
+        result.expr.token = t;
+        result.expr.type = type;
+        result.name = t;
+        result.ref_kind = IdentifierRefKind.BUILTIN;
         return &result.expr;
     }
 }

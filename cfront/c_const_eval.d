@@ -138,10 +138,17 @@ ConstValue try_eval_constant(CExpr* expr, EnumTable* enum_constants = null) {
 // Evaluate identifier - only enum constants are compile-time constant
 ConstValue eval_identifier(CIdentifier* ident, EnumTable* enum_constants) {
     if (ident is null) return ConstValue.not_const();
-    if (enum_constants is null) return ConstValue.not_const();
 
-    if (long* val = ident.name.lexeme in *enum_constants) {
-        return ConstValue.from_int(*val);
+    // Use resolved ref_kind from parsing - enum constants have their value stored
+    if (ident.ref_kind == IdentifierRefKind.ENUM_CONST) {
+        return ConstValue.from_int(ident.enum_value);
+    }
+
+    // Legacy fallback: check enum_constants table (for backward compat)
+    if (enum_constants !is null) {
+        if (long* val = ident.name.lexeme in *enum_constants) {
+            return ConstValue.from_int(*val);
+        }
     }
 
     return ConstValue.not_const();

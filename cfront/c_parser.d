@@ -5206,24 +5206,23 @@ struct CParser {
                 return CEmbed.make(allocator, path, offset, length, embed_tok);
             }
             CToken id_tok = advance();
-            CType* type = null;
-            // Set type from symbol tables (using scope chain lookup)
-            if(auto t = lookup_variable(id_tok.lexeme))
-                type = t;
-            else if(auto t = id_tok.lexeme in func_types)
-                type = *t;
+            // Resolve identifier and create appropriate expression
+            if(auto t = lookup_variable(id_tok.lexeme)){
+                return CIdentifier.make_var(allocator, id_tok, t);
+            }
+            else if(auto t = id_tok.lexeme in func_types){
+                return CIdentifier.make_func(allocator, id_tok, *t);
+            }
             else if(long* e = id_tok.lexeme in enum_constants){
-                type = &TYPE_INT;
+                return CIdentifier.make_enum_const(allocator, id_tok, *e);
             }
             else if(id_tok.lexeme.startswith("__builtin_")){
-                type = &TYPE_UNIMPLEMENTED_BUILTIN;
+                return CIdentifier.make_builtin(allocator, id_tok, &TYPE_UNIMPLEMENTED_BUILTIN);
             }
             else {
                 error(id_tok, "Unknown identifier");
                 return null;
             }
-            CExpr* id_expr = CIdentifier.make(allocator, id_tok, type);
-            return id_expr;
         }
 
         if(match(CTokenType.LEFT_PAREN)){
