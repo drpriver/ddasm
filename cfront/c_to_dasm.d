@@ -1249,22 +1249,27 @@ struct CDasmWriter {
                 }
                 // No need to emit trailing zeros - linker zero-inits
             } else {
-                // Scalar variable
-                long val = 0;
-                if(CLiteral* lit = gvar.initializer.as_literal()){
-                    try_eval_const(&lit.expr, val);
+                // Scalar variable - use try_eval_constant which handles floats
+                ConstValue cv = try_eval_constant(gvar.initializer);
+                if(!cv.is_const()){
+                    error(gvar.name, "initializer element is not a compile-time constant");
+                    sb.write("0 ");
                 } else {
-                    try_eval_const(gvar.initializer, val);
+                    ulong bits = 0;
+                    if(vtype.is_float32()){
+                        // Float32: get as double, convert to float, extract bits
+                        float fval = cast(float)cv.as_double();
+                        bits = *cast(uint*)&fval;
+                    } else if(vtype.kind == CTypeKind.DOUBLE || vtype.kind == CTypeKind.LONG_DOUBLE){
+                        // Double: get as double, extract bits
+                        double dval = cv.as_double();
+                        bits = *cast(ulong*)&dval;
+                    } else {
+                        // Integer type
+                        bits = cv.as_ulong();
+                    }
+                    sb.writef("% ", H(bits));
                 }
-                // Convert to target type if needed
-                if(vtype.is_float32()){
-                    float fval = cast(float)val;
-                    val = *cast(int*)&fval;
-                } else if(vtype.kind == CTypeKind.DOUBLE || vtype.kind == CTypeKind.LONG_DOUBLE){
-                    double dval = cast(double)val;
-                    val = *cast(long*)&dval;
-                }
-                sb.writef("% ", H(cast(ulong)val));
             }
         } else {
             // No initializer - emit zeros
