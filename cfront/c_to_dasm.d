@@ -2244,9 +2244,10 @@ struct CDasmWriter {
                     }
                 }
             } else if(is_array){
-                // Arrays need multiple slots
-                size_t arr_size = stmt.var_type.array_size;
-                stack_offset += cast(int)arr_size;
+                // Arrays need slots based on total byte size, not element count
+                size_t arr_size = stmt.var_type.array_size;  // element count (for memzero etc.)
+                size_t num_slots = stmt.var_type.stack_slots();  // actual slots needed
+                stack_offset += cast(int)num_slots;
 
                 // Helper to recursively initialize nested arrays
                 int gen_nested_array_init(CInitList* init_list, CType* arr_type, int base_slot, size_t base_offset,

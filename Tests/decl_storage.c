@@ -12,11 +12,11 @@ static int static_func(int x) {
 }
 
 // Static local variables not supported
-// int test_static(void) {
-//     static int counter = 0;
-//     counter++;
-//     return counter;
-// }
+int test_static(void) {
+    static int counter = 0;
+    counter++;
+    return counter;
+}
 
 int test_static_global(void) {
     return static_global;
@@ -26,7 +26,10 @@ int use_static_func(int x) {
     return static_func(x) + static_global;
 }
 int main(){
-    if (test_static_global() != 100) return 1;
-    if (use_static_func(5) != 110) return 2;  // 5*2 + 100
+    if(test_static_global() != 100) return 1;
+    if(use_static_func(5) != 110) return 2;  // 5*2 + 100
+    if(test_static() != 1) return 3;
+    if(test_static() != 2) return 4;
+    if(test_static() != 3) return 5;
     return 0;
 }
