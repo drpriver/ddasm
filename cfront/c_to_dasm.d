@@ -1407,6 +1407,9 @@ struct CDasmWriter {
         if(use_stack){
             if(max_call_slots < N_REG_ARGS)
                 reg_base = max_call_slots;
+            // Also need to avoid clobbering rarg registers used by struct params
+            if(total_param_slots > reg_base)
+                reg_base = total_param_slots;
         }
         else {
             if(max_call_slots < N_REG_ARGS)
