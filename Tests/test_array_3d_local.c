@@ -1,3 +1,4 @@
+#pragma library("libc")
 int printf(const char* fmt, ...);
 
 int main() {

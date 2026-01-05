@@ -1,4 +1,5 @@
 // Test <errno.h> - Errors
+#pragma library("libc")
 #include <errno.h>
 
 int test_errno(void) {

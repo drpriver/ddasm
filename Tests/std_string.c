@@ -1,4 +1,5 @@
 // Test <string.h> - String handling
+#pragma library("libc")
 #include <string.h>
 
 size_t test_string(const char *s) {

@@ -1,4 +1,5 @@
 // Test <signal.h> - Signal handling
+#pragma library("libc")
 #include <signal.h>
 
 void handler(int sig) {

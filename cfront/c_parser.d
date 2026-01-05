@@ -164,6 +164,15 @@ struct CParser {
         return null;
     }
 
+    // Look up variable in local scope only (not globals)
+    CType* lookup_local_variable(str name){
+        for(auto scope_ = current_scope; scope_ !is null; scope_ = scope_.parent){
+            if(auto t = name in scope_.variables)
+                return *t;
+        }
+        return null;
+    }
+
     // Look up enum constant in scope chain
     long* lookup_enum_constant(str name){
         // Walk the scope chain from innermost to outermost
@@ -2247,11 +2256,9 @@ struct CParser {
             add_function(*func);
             return 0;
         }
-        // add it here so it is in table for recursive functions.
-        add_function(*func);
-
-        // Parse function body
+        // Parse function body - set is_definition BEFORE add_function for recursion
         func.is_definition = true;
+        add_function(*func);
         consume(CTokenType.LEFT_BRACE, "Expected '{' for function body");
         if(ERROR_OCCURRED) return 1;
 
@@ -2292,7 +2299,11 @@ struct CParser {
         current_return_type = null;
 
         func.body = body[];
-        add_function(*func);
+        // Update the function entry with the parsed body
+        // (function was already added before parsing for recursion support)
+        if(auto idx = func.name.lexeme in func_indices){
+            functions[*idx].body = body[];
+        }
         return 0;
     }
 
@@ -5357,16 +5368,41 @@ struct CParser {
             }
             CToken id_tok = advance();
             // Resolve identifier and create appropriate expression
-            if(auto t = lookup_variable(id_tok.lexeme)){
+            // Check local scope first
+            if(auto t = lookup_local_variable(id_tok.lexeme)){
                 // Check if this is a static local - use mangled name for codegen
+                // (static locals are stored as globals but resolved from local scope)
                 if(auto mangled = lookup_static_local_name(id_tok.lexeme)){
                     CToken mangled_tok = id_tok;
                     mangled_tok.lexeme = *mangled;
-                    return CIdentifier.make_var(allocator, mangled_tok, t);
+                    // Static locals are stored as globals
+                    if(auto idx = *mangled in global_indices){
+                        CGlobalVar* gvar = &globals[*idx];
+                        if(gvar.is_extern && gvar.library.length > 0)
+                            return CIdentifier.make_extern_var(allocator, mangled_tok, t, gvar.library);
+                        return CIdentifier.make_global_var(allocator, mangled_tok, t);
+                    }
+                    return CIdentifier.make_global_var(allocator, mangled_tok, t);
                 }
-                return CIdentifier.make_var(allocator, id_tok, t);
+                return CIdentifier.make_local_var(allocator, id_tok, t);
             }
+            // Check global scope
+            else if(auto t = id_tok.lexeme in global_var_types){
+                if(auto idx = id_tok.lexeme in global_indices){
+                    CGlobalVar* gvar = &globals[*idx];
+                    if(gvar.is_extern && gvar.library.length > 0)
+                        return CIdentifier.make_extern_var(allocator, id_tok, *t, gvar.library);
+                }
+                return CIdentifier.make_global_var(allocator, id_tok, *t);
+            }
+            // Check functions
             else if(auto t = id_tok.lexeme in func_types){
+                if(auto idx = id_tok.lexeme in func_info){
+                    CFunction* func = &functions[*idx];
+                    // Extern func if it has a library and is not a definition
+                    if(func.library.length > 0 && !func.is_definition)
+                        return CIdentifier.make_extern_func(allocator, id_tok, *t, func.library);
+                }
                 return CIdentifier.make_func(allocator, id_tok, *t);
             }
             else if(long* e = lookup_enum_constant(id_tok.lexeme)){

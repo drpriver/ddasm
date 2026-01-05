@@ -2997,12 +2997,9 @@ struct CDasmWriter {
     int get_expr_reg(CExpr* expr){
         expr = expr.ungroup();
         if(auto id = expr.as_identifier()){
-            str name = id.name.lexeme;
             // Don't return register for arrays (they decay to pointers, need address computation)
-            if(CType** vt = name in var_types){
-                if((*vt).is_array()) return -1;
-            }
-            if(int* r = name in reglocals)
+            if(id.expr.type && id.expr.type.is_array()) return -1;
+            if(int* r = id.name.lexeme in reglocals)
                 return *r;
         }
         return -1;
@@ -3029,14 +3026,10 @@ struct CDasmWriter {
                 CIdentifier* id = expr.as_identifier();
                 // Enum constants are simple (just a move immediate)
                 if(id.ref_kind == IdentifierRefKind.ENUM_CONST) return true;
-                str name = id.name.lexeme;
                 // Arrays need address computation
-                // FIXME: Does that really need more than one reg?
-                if(CType** vt = name in var_types){
-                    if((*vt).is_array()) return false;
-                }
-                if(name in reglocals) return true;
-                return false; // XXX: what cases is this
+                if(id.expr.type && id.expr.type.is_array()) return false;
+                if(id.name.lexeme in reglocals) return true;
+                return false;
             }break;
             case BINARY:{
                 CBinary* b = expr.as_binary();
@@ -3061,97 +3054,98 @@ struct CDasmWriter {
         if(target == TARGET_IS_NOTHING) return 0;
 
         str name = expr.name.lexeme;
+        CType* t = expr.expr.type;
 
-        // Handle enum constants first - we have the value directly from parsing
-        if(expr.ref_kind == IdentifierRefKind.ENUM_CONST){
-            sb.writef("    move r% %\n", target, expr.enum_value);
-            return 0;
-        }
+        final switch(expr.ref_kind){
+            case IdentifierRefKind.ENUM_CONST:
+                sb.writef("    move r% %\n", target, expr.enum_value);
+                return 0;
 
-        // Check if this is an array - arrays decay to pointers (address of first element)
-        if(CType** vt = name in var_types){
-            if((*vt).is_array()){
-                if(int* offset = name in stacklocals){
-                    // Local array-to-pointer decay: compute address of first element
-                    sb.writef("    add r% rbp %\n", target, P(*offset));
+            case IdentifierRefKind.LOCAL_VAR:
+                // Array-to-pointer decay for local arrays
+                if(t && t.is_array()){
+                    if(int* offset = name in stacklocals){
+                        sb.writef("    add r% rbp %\n", target, P(*offset));
+                        return 0;
+                    }
+                }
+                // Register-allocated local
+                if(int* r = name in reglocals){
+                    if(target == *r) return 0;
+                    sb.writef("    move r% r%\n", target, *r);
                     return 0;
                 }
-            }
-        }
-
-        // Global array-to-pointer decay: just return the address
-        if(CType** gtype = name in global_types){
-            if((*gtype) && (*gtype).is_array()){
-                // For extern objects, use qualified name with module alias
-                if(str* mod_alias = name in extern_objs){
-                    sb.writef("    move r% var %.%\n", target, *mod_alias, name);
-                } else {
-                    sb.writef("    move r% var %\n", target, name);
+                // Stack-allocated local
+                if(int* offset = name in stacklocals){
+                    sb.writef("    local_read r% %\n", target, P(*offset));
+                    if(t && t.is_float32()){
+                        sb.writef("    ftod r% r%\n", target, target);
+                    }
+                    return 0;
                 }
-                return 0;
-            }
-        }
-
-        // Function-to-pointer decay: when a function name is used as an expression
-        // (not being called), it decays to a pointer to the function
-        if(name in func_return_types){
-            // Check if it's an external function
-            if(str* mod_alias = name in extern_funcs){
-                used_funcs[name] = true;  // Mark as used for dlimport
-                sb.writef("    move r% function %.%\n", target, *mod_alias, name);
-            } else {
-                sb.writef("    move r% function %\n", target, name);
-            }
-            return 0;
-        }
-
-        if(int* r = name in reglocals){
-            if(target == *r) return 0;  // Already in target register
-            sb.writef("    move r% r%\n", target, *r);
-            return 0;
-        }
-
-        if(int* offset = name in stacklocals){
-            // Read from stack
-            sb.writef("    local_read r% %\n", target, P(*offset));
-            // Convert float32 to double after reading
-            if(CType** vtype = name in var_types){
-                if(*vtype && (*vtype).is_float32()){
-                    sb.writef("    ftod r% r%\n", target, target);
-                }
-            }
-            return 0;
-        }
-
-        // Must be a global or function
-        // Track if it's an extern object
-        if(name in extern_objs){
-            used_objs[name] = true;
-        }
-
-        // Get the global's type for sized read
-        if(CType** gtype_ = name in global_types){
-            if(!*gtype_){
-                // Might be an ICE?
-                error(expr.expr.token, "Read of global with unknown type");
+                error(expr.expr.token, "Local variable not found in stack or registers");
                 return -1;
-            }
-            CType* gtype = *gtype_;
-            size_t var_size = gtype.size_of();
-            bool is_signed = gtype.is_signed;
-            // Get address into target register, then do sized read
-            // For extern objects, use qualified name with module alias
-            if(str* mod_alias = name in extern_objs)
-                sb.writef("    move r% var %.%\n", target, *mod_alias, name);
-            else
+
+            case IdentifierRefKind.GLOBAL_VAR:
+                // Array-to-pointer decay for global arrays
+                if(t && t.is_array()){
+                    sb.writef("    move r% var %\n", target, name);
+                    return 0;
+                }
+                // Read global variable value
+                if(t is null){
+                    error(expr.expr.token, "Global variable has no type");
+                    return -1;
+                }
                 sb.writef("    move r% var %\n", target, name);
-            sb.writef("    % r% r%\n", read_instr_for_size(var_size, is_signed), target, target);
+                sb.writef("    % r% r%\n", read_instr_for_size(t.size_of(), t.is_signed), target, target);
+                return 0;
+
+            case IdentifierRefKind.EXTERN_VAR:
+                used_objs[name] = true;  // Track for dlimport
+                str* obj_alias = name in extern_objs;
+                if(obj_alias is null){
+                    error(expr.expr.token, "Extern variable not found in module alias table");
+                    return -1;
+                }
+                // Array-to-pointer decay for extern arrays
+                if(t && t.is_array()){
+                    sb.writef("    move r% var %.%\n", target, *obj_alias, name);
+                    return 0;
+                }
+                // Read extern variable value
+                if(t is null){
+                    error(expr.expr.token, "Extern variable has no type");
+                    return -1;
+                }
+                sb.writef("    move r% var %.%\n", target, *obj_alias, name);
+                sb.writef("    % r% r%\n", read_instr_for_size(t.size_of(), t.is_signed), target, target);
+                return 0;
+
+            case IdentifierRefKind.FUNCTION:
+                // Function-to-pointer decay
+                sb.writef("    move r% function %\n", target, name);
+                return 0;
+
+            case IdentifierRefKind.EXTERN_FUNC:
+                used_funcs[name] = true;  // Track for dlimport
+                str* func_alias = name in extern_funcs;
+                if(func_alias is null){
+                    error(expr.expr.token, "Extern function not found in module alias table");
+                    return -1;
+                }
+                sb.writef("    move r% function %.%\n", target, *func_alias, name);
+                return 0;
+
+            case IdentifierRefKind.BUILTIN:
+                // Builtins shouldn't be used as values - they should be called
+                error(expr.expr.token, "Builtin function used as value");
+                return -1;
+
+            case IdentifierRefKind.UNKNOWN:
+                error(expr.expr.token, "Unresolved identifier");
+                return -1;
         }
-        else {
-            error(expr.expr.token, "Read of unknown global");
-            return -1;
-        }
-        return 0;
     }
 
     int gen_binary(CBinary* expr, int target){
@@ -3632,27 +3626,54 @@ struct CDasmWriter {
             if(CIdentifier* id = expr.operand.as_identifier()){
                 if(target == TARGET_IS_NOTHING) return 0;
                 str name = id.name.lexeme;
-                if(int* offset = name in stacklocals){
-                    // Compute stack address: rbp + offset * wordsize
-                    // Stack grows up, so locals are at positive offsets from rbp
-                    sb.writef("    add r% rbp %\n", target, P(*offset));
-                    return 0;
+
+                final switch(id.ref_kind){
+                    case IdentifierRefKind.LOCAL_VAR:
+                        if(int* offset = name in stacklocals){
+                            sb.writef("    add r% rbp %\n", target, P(*offset));
+                            return 0;
+                        }
+                        if(name in reglocals){
+                            error(expr.expr.token, "Cannot take address of register variable");
+                            return 1;
+                        }
+                        error(expr.expr.token, "Local variable not found");
+                        return 1;
+
+                    case IdentifierRefKind.GLOBAL_VAR:
+                        sb.writef("    move r% var %\n", target, name);
+                        return 0;
+
+                    case IdentifierRefKind.EXTERN_VAR:
+                        used_objs[name] = true;
+                        if(str* obj_alias = name in extern_objs){
+                            sb.writef("    move r% var %.%\n", target, *obj_alias, name);
+                        } else {
+                            error(expr.expr.token, "Extern variable not found in alias table");
+                            return 1;
+                        }
+                        return 0;
+
+                    case IdentifierRefKind.FUNCTION:
+                        sb.writef("    move r% function %\n", target, name);
+                        return 0;
+
+                    case IdentifierRefKind.EXTERN_FUNC:
+                        used_funcs[name] = true;
+                        if(str* func_alias = name in extern_funcs){
+                            sb.writef("    move r% function %.%\n", target, *func_alias, name);
+                        } else {
+                            error(expr.expr.token, "Extern function not found in alias table");
+                            return 1;
+                        }
+                        return 0;
+
+                    case IdentifierRefKind.ENUM_CONST:
+                    case IdentifierRefKind.BUILTIN:
+                    case IdentifierRefKind.UNKNOWN:
+                        error(expr.expr.token, "Cannot take address of this identifier");
+                        return 1;
                 }
-                if(name in reglocals){
-                    error(expr.expr.token, "Cannot take address of register variable");
-                    return 1;
-                }
-                // Global variable - track extern object usage
-                if(name in extern_objs){
-                    used_objs[name] = true;
-                }
-                // For extern objects, use qualified name with module alias
-                if(str* mod_alias = name in extern_objs){
-                    sb.writef("    move r% var %.%\n", target, *mod_alias, name);
-                } else {
-                    sb.writef("    move r% var %\n", target, name);
-                }
-                return 0;
             }
 
             // Address of member access: &p.x or &pp->x
@@ -4283,20 +4304,11 @@ struct CDasmWriter {
         int total_args = total_slots;  // Accounts for multi-register struct params
 
         // Generate call
-        // Check if callee is a direct function call (identifier that's a function name, not a variable)
+        // Check if callee is a direct function call (identifier with FUNCTION or EXTERN_FUNC ref_kind)
         CIdentifier* id = expr.callee.as_identifier();
-        bool is_direct_call = false;
-        if(id !is null){
-            // Check if this identifier is a function, not a function pointer variable
-            // It's a direct call if it's in extern_funcs or func_return_types but NOT in var_types
-            bool is_func = (id.name.lexeme in extern_funcs) !is null ||
-                          (id.name.lexeme in func_return_types) !is null ||
-                          (id.name.lexeme in func_info) !is null;
-            bool is_var = (id.name.lexeme in var_types) !is null ||
-                         (id.name.lexeme in global_types) !is null ||
-                         (id.name.lexeme in reglocals) !is null;
-            is_direct_call = is_func && !is_var;
-        }
+        bool is_direct_call = id !is null &&
+            (id.ref_kind == IdentifierRefKind.FUNCTION ||
+             id.ref_kind == IdentifierRefKind.EXTERN_FUNC);
 
         if(is_direct_call){
             // Save registers before call:
@@ -4316,14 +4328,34 @@ struct CDasmWriter {
 
             // Direct call - use qualified name for extern functions
             // For varargs with float args, emit float mask as third argument
-            if(str* mod_alias = id.name.lexeme in extern_funcs){
-                used_funcs[id.name.lexeme] = true;  // Mark as used
+            if(id.ref_kind == IdentifierRefKind.EXTERN_FUNC){
+                used_funcs[id.name.lexeme] = true;  // Mark as used for dlimport
+                str* func_alias = id.name.lexeme in extern_funcs;
+                if(func_alias is null){
+                    error(expr.expr.token, "Extern function not found in alias table");
+                    return -1;
+                }
                 if(callee_is_varargs && varargs_float_mask != 0){
-                    sb.writef("    call function %.% % %\n", *mod_alias, id.name.lexeme, total_args, H(varargs_float_mask));
+                    sb.writef("    call function %.% % %\n", *func_alias, id.name.lexeme, total_args, H(varargs_float_mask));
                 } else {
-                    sb.writef("    call function %.% %\n", *mod_alias, id.name.lexeme, total_args);
+                    sb.writef("    call function %.% %\n", *func_alias, id.name.lexeme, total_args);
                 }
             } else {
+                // Local function call - verify the function has a definition
+                if(auto func_ptr = id.name.lexeme in func_info){
+                    CFunction* func = *func_ptr;
+                    if(!func.is_definition){
+                        // Function declared but not defined, and no library specified
+                        import dlib.stringbuilder : StringBuilder;
+                        StringBuilder msg;
+                        msg.allocator = allocator;
+                        msg.write("call to undefined function '");
+                        msg.write(id.name.lexeme);
+                        msg.write("' - add #pragma library to specify which library it comes from, or provide a definition");
+                        error(expr.expr.token, msg.borrow());
+                        return -1;
+                    }
+                }
                 called_funcs[id.name.lexeme] = true;  // Track internal call (for inline function generation)
                 if(callee_is_varargs && varargs_float_mask != 0){
                     sb.writef("    call function % % %\n", id.name.lexeme, total_args, H(varargs_float_mask));
@@ -4438,9 +4470,9 @@ struct CDasmWriter {
 
             // Check for register variable
             if(int* r = name in reglocals){
-                CType** var_type_ptr = name in var_types;
-                bool is_float_op = var_type_ptr && (*var_type_ptr).is_float();
-                bool is_float32 = var_type_ptr && (*var_type_ptr).is_float32();
+                CType* var_type = id.expr.type;
+                bool is_float_op = var_type && var_type.is_float();
+                bool is_float32 = var_type && var_type.is_float32();
 
                 if(expr.op == CTokenType.EQUAL){
                     // Simple assignment
@@ -4515,8 +4547,8 @@ struct CDasmWriter {
             // Check for stack variable
             if(int* offset = name in stacklocals){
                 // Check if this is a struct/union assignment
-                CType** var_type_ptr = name in var_types;
-                if(var_type_ptr && (*var_type_ptr).is_struct_or_union()){
+                CType* var_type = id.expr.type;
+                if(var_type && var_type.is_struct_or_union()){
                     // Struct/union assignment - use memcpy
                     if(expr.op != CTokenType.EQUAL){
                         error(expr.expr.token, "Compound assignment not supported for structs");
@@ -4563,7 +4595,7 @@ struct CDasmWriter {
                     sb.writef("    add r% rbp %\n", dst_reg, P(*offset));
 
                     // memcpy dst src size
-                    size_t struct_size = (*var_type_ptr).size_of();
+                    size_t struct_size = var_type.size_of();
                     sb.writef("    memcpy r% r% %\n", dst_reg, src_reg, struct_size);
 
                     // Return address of destination for chained assignment
@@ -4588,8 +4620,8 @@ struct CDasmWriter {
                     int cur_reg = regallocator.allocate();
                     sb.writef("    local_read r% %\n", cur_reg, P(*offset));
                     // Convert float32 to double after reading
-                    bool is_float_op = var_type_ptr && (*var_type_ptr).is_float();
-                    if(var_type_ptr && (*var_type_ptr).is_float32()){
+                    bool is_float_op = var_type && var_type.is_float();
+                    if(var_type && var_type.is_float32()){
                         sb.writef("    ftod r% r%\n", cur_reg, cur_reg);
                     }
 
@@ -4651,7 +4683,7 @@ struct CDasmWriter {
                 // then gen_expression already converted it, so no need for another dtof
                 CType* val_type = expr.value.type;
                 bool val_is_float32 = val_type && val_type.is_float32();
-                if(var_type_ptr && (*var_type_ptr).is_float32() && !val_is_float32){
+                if(var_type && var_type.is_float32() && !val_is_float32){
                     sb.writef("    dtof r% r%\n", val_reg, val_reg);
                 }
                 sb.writef("    local_write % r%\n", P(*offset), val_reg);
@@ -4663,10 +4695,17 @@ struct CDasmWriter {
                 return 0;
             }
 
-            // Check for global variable
-            if(CType** gtype = name in global_types){
+            // Check for global variable (including extern)
+            if(id.ref_kind == IdentifierRefKind.GLOBAL_VAR ||
+               id.ref_kind == IdentifierRefKind.EXTERN_VAR){
+                CType* gtype = id.expr.type;
+                if(gtype is null){
+                    error(expr.expr.token, "Global variable has no type");
+                    return 1;
+                }
+
                 // Track extern object usage
-                if(name in extern_objs){
+                if(id.ref_kind == IdentifierRefKind.EXTERN_VAR){
                     used_objs[name] = true;
                 }
 
@@ -4675,15 +4714,19 @@ struct CDasmWriter {
                 int val_reg = regallocator.allocate();
 
                 // Get address of global and its size
-                // For extern objects, use qualified name with module alias
-                if(str* mod_alias = name in extern_objs){
-                    sb.writef("    move r% var %.%\n", addr_reg, *mod_alias, name);
+                if(id.ref_kind == IdentifierRefKind.EXTERN_VAR){
+                    str* obj_alias = name in extern_objs;
+                    if(obj_alias is null){
+                        error(expr.expr.token, "Extern variable not found in alias table");
+                        return -1;
+                    }
+                    sb.writef("    move r% var %.%\n", addr_reg, *obj_alias, name);
                 } else {
                     sb.writef("    move r% var %\n", addr_reg, name);
                 }
-                size_t var_size = (*gtype).size_of();
-                bool is_signed = (*gtype).is_signed;
-                bool is_float_op = (*gtype).is_float();
+                size_t var_size = gtype.size_of();
+                bool is_signed = gtype.is_signed;
+                bool is_float_op = gtype.is_float();
 
                 if(expr.op == CTokenType.EQUAL){
                     // Simple assignment
@@ -4694,7 +4737,7 @@ struct CDasmWriter {
                     int cur_reg = regallocator.allocate();
                     sb.writef("    % r% r%\n", read_instr_for_size(var_size, is_signed), cur_reg, addr_reg);
                     // Convert float32 to double after reading
-                    if((*gtype) && (*gtype).is_float32()){
+                    if(gtype.is_float32()){
                         sb.writef("    ftod r% r%\n", cur_reg, cur_reg);
                     }
 
@@ -4756,7 +4799,7 @@ struct CDasmWriter {
                 // then gen_expression already converted it, so no need for another dtof
                 CType* val_type = expr.value.type;
                 bool val_is_float32 = val_type && val_type.is_float32();
-                if((*gtype) && (*gtype).is_float32() && !val_is_float32){
+                if(gtype.is_float32() && !val_is_float32){
                     sb.writef("    dtof r% r%\n", val_reg, val_reg);
                 }
                 sb.writef("    % r% r%\n", write_instr_for_size(var_size), addr_reg, val_reg);
@@ -5246,27 +5289,42 @@ struct CDasmWriter {
         // Identifier - get address of struct variable
         if(CIdentifier* id = e.as_identifier()){
             str name = id.name.lexeme;
-            // Local variable on stack
-            if(int* offset = name in stacklocals){
-                if(target != TARGET_IS_NOTHING)
-                    sb.writef("    add r% rbp %\n", target, P(*offset));
-                return 0;
-            }
-            // Global or extern variable
-            if(name in global_types || name in extern_objs){
-                if(name in extern_objs){
-                    used_objs[name] = true;
-                }
-                if(target != TARGET_IS_NOTHING)
-                    if(str* mod_alias = name in extern_objs){
-                        sb.writef("    move r% var %.%\n", target, *mod_alias, name);
-                    } else {
-                        sb.writef("    move r% var %\n", target, name);
+
+            final switch(id.ref_kind){
+                case IdentifierRefKind.LOCAL_VAR:
+                    if(int* offset = name in stacklocals){
+                        if(target != TARGET_IS_NOTHING)
+                            sb.writef("    add r% rbp %\n", target, P(*offset));
+                        return 0;
                     }
-                return 0;
+                    error(id.name, "Local variable not found on stack");
+                    return 1;
+
+                case IdentifierRefKind.GLOBAL_VAR:
+                    if(target != TARGET_IS_NOTHING)
+                        sb.writef("    move r% var %\n", target, name);
+                    return 0;
+
+                case IdentifierRefKind.EXTERN_VAR:
+                    used_objs[name] = true;
+                    if(target != TARGET_IS_NOTHING){
+                        str* obj_alias = name in extern_objs;
+                        if(obj_alias is null){
+                            error(id.name, "Extern variable not found in alias table");
+                            return 1;
+                        }
+                        sb.writef("    move r% var %.%\n", target, *obj_alias, name);
+                    }
+                    return 0;
+
+                case IdentifierRefKind.FUNCTION:
+                case IdentifierRefKind.EXTERN_FUNC:
+                case IdentifierRefKind.ENUM_CONST:
+                case IdentifierRefKind.BUILTIN:
+                case IdentifierRefKind.UNKNOWN:
+                    error(id.name, "Cannot take address of this identifier for struct pass-by-value");
+                    return 1;
             }
-            error(id.name, "Cannot take address of unknown variable for struct pass-by-value");
-            return 1;
         }
 
         // Member access - get address of struct member

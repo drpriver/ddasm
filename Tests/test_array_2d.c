@@ -1,5 +1,6 @@
 int arr[2][3] = {{1, 2, 3}, {4, 5, 6}};
 
+#pragma library("libc")
 int printf(const char* fmt, ...);
 
 int main() {

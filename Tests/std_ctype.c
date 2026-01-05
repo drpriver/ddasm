@@ -1,4 +1,5 @@
 // Test <ctype.h> - Character handling
+#pragma library("libc")
 #include <ctype.h>
 
 int test_ctype(int c) {

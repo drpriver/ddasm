@@ -1,3 +1,4 @@
+#pragma library("libc")
 int printf(const char* fmt, ...);
 
 long add8(long a, long b, long c, long d, long e, long f, long g, long h) {

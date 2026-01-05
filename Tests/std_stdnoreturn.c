@@ -1,4 +1,5 @@
 // Test <stdnoreturn.h> - Noreturn macro (C11)
+#pragma library("libc")
 #include <stdnoreturn.h>
 #include <stdlib.h>
 

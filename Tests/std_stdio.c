@@ -1,4 +1,5 @@
 // Test <stdio.h> - Input/output
+#pragma library("libc")
 #include <stdio.h>
 
 int test_stdio(void) {

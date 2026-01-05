@@ -684,9 +684,12 @@ struct CVaArg {
 // What kind of thing an identifier resolved to
 enum IdentifierRefKind : ubyte {
     UNKNOWN,       // Not yet resolved (shouldn't happen after parsing)
-    VARIABLE,      // Local or global variable
+    LOCAL_VAR,     // Local variable (stack or register - codegen decides)
+    GLOBAL_VAR,    // Global variable defined in this translation unit
+    EXTERN_VAR,    // External variable (from dlimport)
     ENUM_CONST,    // Enum constant (has integer value)
-    FUNCTION,      // Function reference
+    FUNCTION,      // Function defined in this translation unit
+    EXTERN_FUNC,   // External function (from dlimport)
     BUILTIN,       // __builtin_* function
 }
 
@@ -696,7 +699,8 @@ struct CIdentifier {
     IdentifierRefKind ref_kind;
 
     // Resolution data (depends on ref_kind)
-    long enum_value;  // For ENUM_CONST: the constant's integer value
+    long enum_value;    // For ENUM_CONST: the constant's integer value
+    str extern_module;  // For EXTERN_VAR/EXTERN_FUNC: module alias (e.g., "Libc")
 
     static CExpr* make(Allocator a, CToken t, CType* type){
         auto data = a.zalloc(typeof(this).sizeof);
@@ -709,14 +713,37 @@ struct CIdentifier {
         return &result.expr;
     }
 
-    static CExpr* make_var(Allocator a, CToken t, CType* type){
+    static CExpr* make_local_var(Allocator a, CToken t, CType* type){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
         result.expr.kind = CExprKind.IDENTIFIER;
         result.expr.token = t;
         result.expr.type = type;
         result.name = t;
-        result.ref_kind = IdentifierRefKind.VARIABLE;
+        result.ref_kind = IdentifierRefKind.LOCAL_VAR;
+        return &result.expr;
+    }
+
+    static CExpr* make_global_var(Allocator a, CToken t, CType* type){
+        auto data = a.zalloc(typeof(this).sizeof);
+        auto result = cast(typeof(this)*)data.ptr;
+        result.expr.kind = CExprKind.IDENTIFIER;
+        result.expr.token = t;
+        result.expr.type = type;
+        result.name = t;
+        result.ref_kind = IdentifierRefKind.GLOBAL_VAR;
+        return &result.expr;
+    }
+
+    static CExpr* make_extern_var(Allocator a, CToken t, CType* type, str module_alias){
+        auto data = a.zalloc(typeof(this).sizeof);
+        auto result = cast(typeof(this)*)data.ptr;
+        result.expr.kind = CExprKind.IDENTIFIER;
+        result.expr.token = t;
+        result.expr.type = type;
+        result.name = t;
+        result.ref_kind = IdentifierRefKind.EXTERN_VAR;
+        result.extern_module = module_alias;
         return &result.expr;
     }
 
@@ -743,6 +770,18 @@ struct CIdentifier {
         return &result.expr;
     }
 
+    static CExpr* make_extern_func(Allocator a, CToken t, CType* type, str module_alias){
+        auto data = a.zalloc(typeof(this).sizeof);
+        auto result = cast(typeof(this)*)data.ptr;
+        result.expr.kind = CExprKind.IDENTIFIER;
+        result.expr.token = t;
+        result.expr.type = type;
+        result.name = t;
+        result.ref_kind = IdentifierRefKind.EXTERN_FUNC;
+        result.extern_module = module_alias;
+        return &result.expr;
+    }
+
     static CExpr* make_builtin(Allocator a, CToken t, CType* type){
         auto data = a.zalloc(typeof(this).sizeof);
         auto result = cast(typeof(this)*)data.ptr;
@@ -752,6 +791,11 @@ struct CIdentifier {
         result.name = t;
         result.ref_kind = IdentifierRefKind.BUILTIN;
         return &result.expr;
+    }
+
+    // Deprecated - use specific make_* variants
+    static CExpr* make_var(Allocator a, CToken t, CType* type){
+        return make_local_var(a, t, type);  // Default to local for backwards compat
     }
 }
 

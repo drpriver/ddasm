@@ -1,4 +1,5 @@
 // Test <stdlib.h> - General utilities
+#pragma library("libc")
 #include <stdlib.h>
 
 int test_stdlib(void) {

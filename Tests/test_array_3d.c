@@ -1,3 +1,4 @@
+#pragma library("libc")
 int printf(const char* fmt, ...);
 
 int arr[2][3][4] = {

@@ -1,4 +1,5 @@
 // Test <wctype.h> - Wide character classification
+#pragma library("libc")
 #include <wctype.h>
 
 int test_wctype(wint_t c) {
