@@ -1499,45 +1499,50 @@ struct CParser {
             return result;
         }
 
-        // sizeof(type) or sizeof(expr) in constant expression
+        // sizeof(type) or sizeof expr in constant expression
         if(match(CTokenType.SIZEOF)){
-            consume(CTokenType.LEFT_PAREN, "Expected '(' after sizeof");
-            if(ERROR_OCCURRED){
-                result.err = true;
-                return result;
-            }
+            if(match(CTokenType.LEFT_PAREN)){
+                // Check if it's sizeof(type) or sizeof(expr)
+                if(is_type_specifier(peek())){
+                    // sizeof(type) - use parse_type_name for array types
+                    CType* type = parse_type_name();
+                    if(type is null){
+                        result.err = true;
+                        return result;
+                    }
 
-            // Check if it's sizeof(type) or sizeof(expr)
-            if(is_type_specifier(peek())){
-                // sizeof(type) - use parse_type_name for array types
-                CType* type = parse_type_name();
-                if(type is null){
-                    result.err = true;
+                    consume(CTokenType.RIGHT_PAREN, "Expected ')' after type");
+                    if(ERROR_OCCURRED){
+                        result.err = true;
+                        return result;
+                    }
+
+                    result.value = cast(long) type.size_of();
+                    return result;
+                } else {
+                    // sizeof(expr) - parse expression and infer its type
+                    CType* expr_type = parse_sizeof_expr_type();
+                    if(expr_type is null){
+                        result.err = true;
+                        return result;
+                    }
+
+                    consume(CTokenType.RIGHT_PAREN, "Expected ')' after sizeof expression");
+                    if(ERROR_OCCURRED){
+                        result.err = true;
+                        return result;
+                    }
+
+                    result.value = cast(long) expr_type.size_of();
                     return result;
                 }
-
-                consume(CTokenType.RIGHT_PAREN, "Expected ')' after type");
-                if(ERROR_OCCURRED){
-                    result.err = true;
-                    return result;
-                }
-
-                result.value = cast(long) type.size_of();
-                return result;
             } else {
-                // sizeof(expr) - parse expression and infer its type
+                // sizeof expr - no parentheses
                 CType* expr_type = parse_sizeof_expr_type();
                 if(expr_type is null){
                     result.err = true;
                     return result;
                 }
-
-                consume(CTokenType.RIGHT_PAREN, "Expected ')' after sizeof expression");
-                if(ERROR_OCCURRED){
-                    result.err = true;
-                    return result;
-                }
-
                 result.value = cast(long) expr_type.size_of();
                 return result;
             }
@@ -1633,9 +1638,9 @@ struct CParser {
             // Primary expression (identifier, number, etc.)
             if(check(CTokenType.IDENTIFIER)){
                 CToken id = advance();
-                // Look up variable type in global_var_types
-                if(CType** vtype = id.lexeme in global_var_types){
-                    current_type = *vtype;
+                // Look up variable type (checks local scope chain then globals)
+                if(CType* vtype = lookup_variable(id.lexeme)){
+                    current_type = vtype;
                 } else {
                     error(id, "Unknown variable in sizeof expression");
                     return null;
@@ -2377,7 +2382,16 @@ struct CParser {
                 }
                 // Brace-enclosed initializer list
                 if(CInitList* ilist = gvar.initializer.as_init_list()){
-                    gvar.var_type.array_size = ilist.elements.length;
+                    // Count elements, but __embed contributes its length in bytes
+                    size_t total = 0;
+                    foreach(elem; ilist.elements){
+                        if(CEmbed* emb = elem.value.as_embed()){
+                            total += emb.length;
+                        } else {
+                            total++;
+                        }
+                    }
+                    gvar.var_type.array_size = total;
                 }
             }
         }
@@ -4252,6 +4266,12 @@ struct CParser {
                 return null;
             }
 
+            // Declare variable in scope BEFORE parsing initializer
+            // (C requires variable to be in scope for its own initializer, e.g. int x = sizeof x;)
+            if(!declare_variable(name.lexeme, var_type, name)){
+                ERROR_OCCURRED = true;
+            }
+
             CExpr* initializer = null;
             if(match(CTokenType.EQUAL)){
                 initializer = parse_initializer();
@@ -4281,22 +4301,12 @@ struct CParser {
                 gvar.is_extern = false;
                 add_or_merge_global(gvar);
 
-                // Register in local scope with original name
-                if(!declare_variable(name.lexeme, var_type, name)){
-                    ERROR_OCCURRED = true;
-                }
                 // Register name mapping so identifier lookup can find the mangled name
                 current_scope.static_local_names[name.lexeme] = mangled_name;
 
                 // No runtime initialization needed - static vars are initialized at program start
             } else {
-                // Regular local variable
-                // Register local variable in current scope (with redeclaration check)
-                if(!declare_variable(name.lexeme, var_type, name)){
-                    // Redeclaration error already reported by declare_variable
-                    ERROR_OCCURRED = true;
-                }
-
+                // Regular local variable (already declared above)
                 decls ~= CVarDecl.make(allocator, var_type, name, initializer, type_tok);
             }
 

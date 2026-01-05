@@ -1127,7 +1127,10 @@ struct CDasmWriter {
                 byte_offset++;
                 count++;
             } else {
-                // Scalar literal
+                // Scalar literal - skip if past array bounds (after non-word-aligned embed)
+                if(byte_offset >= size_words * 8){
+                    return count;
+                }
                 long val = 0;
                 try_eval_const(init, val);
                 // Convert to target type if needed (especially int->float)
@@ -1175,6 +1178,10 @@ struct CDasmWriter {
             byte_offset = ((byte_offset + embed.length) + 7) & ~cast(size_t)7;
             count += embed.length;
         } else {
+            // Skip if we're already past the array bounds (can happen after non-word-aligned embed)
+            if(byte_offset >= size_words * 8){
+                return count;
+            }
             // Try to evaluate as constant expression
             long val = 0;
             try_eval_const(init, val);
@@ -1222,17 +1229,15 @@ struct CDasmWriter {
                 size_t emitted = emit_init_values(gvar.initializer, vtype, scalar_size,
                                                   word_val, byte_offset, size_words);
 
-                // Emit final word only if there's a partial word or non-zero value
-                // (embeds handle their own data, so word_val=0 and aligned means nothing to emit)
-                if(word_val != 0 || byte_offset % 8 != 0){
+                // Emit final word only if there's a partial word with non-zero value
+                // (embeds handle their own data, linker zero-inits remaining space)
+                if(word_val != 0){
+                    sb.writef("% ", H(word_val));
+                } else if(byte_offset % 8 != 0 && byte_offset <= size_bytes){
+                    // Partial word with zero value - only emit if within array bounds
                     sb.writef("% ", H(word_val));
                 }
-
-                // Emit remaining zero words if needed
-                size_t words_emitted = (byte_offset + 7) / 8;
-                for(size_t w = words_emitted; w < size_words; w++){
-                    sb.write("0 ");
-                }
+                // No need to emit trailing zeros - linker zero-inits
             } else {
                 // Scalar variable
                 long val = 0;

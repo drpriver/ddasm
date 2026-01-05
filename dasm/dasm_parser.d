@@ -245,9 +245,17 @@ struct ParseContext{
                                     break;
                             }
                         }
-                        // Validate initializer count
-                        if(var.initializers.count > var.size){
-                            err_print(tok, "too many initializers: got ", var.initializers.count, " but size is ", var.size);
+                        // Validate initializer count (embeds contribute ceil(length/8) words)
+                        size_t effective_count = 0;
+                        foreach(ref arg; var.initializers[]){
+                            if(arg.kind == EMBED){
+                                effective_count += (arg.embed.length + 7) / 8;
+                            } else {
+                                effective_count++;
+                            }
+                        }
+                        if(effective_count > var.size){
+                            err_print(tok, "too many initializers: got ", effective_count, " but size is ", var.size);
                             return PARSE_ERROR;
                         }
                         prog.variables.push(var);
