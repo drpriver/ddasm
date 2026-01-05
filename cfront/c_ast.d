@@ -295,7 +295,7 @@ struct CType {
     // Get a struct/union field by name
     StructField* get_field(str name){
         if(kind != CTypeKind.STRUCT && kind != CTypeKind.UNION) return null;
-        foreach(ref f; fields){
+        foreach(ref StructField f; fields){
             if(f.name == name) return &f;
         }
         return null;

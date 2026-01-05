@@ -405,7 +405,7 @@ int bar0 = __COUNTER__(bar);  // 0
 int foo1 = __COUNTER__(foo);  // 1
 ```
 
-### `__EXPAND__(string-literal)`
+#### `__EXPAND__(string-literal)`
 
 Destringifies a string literal into preprocessor tokens - the inverse of `#` stringification.
 
@@ -424,7 +424,7 @@ __EXPAND__(CODE)              // → int y = 42;
 
 This is the primitive that enables `__ENV__` to work with `#if`.
 
-### `__ENV__(NAME)` and `__ENV__(NAME, "default")`
+#### `__ENV__(NAME)` and `__ENV__(NAME, "default")`
 
 Gets an environment variable as a string literal.
 
@@ -448,3 +448,95 @@ Combine with `__EXPAND__` for conditional compilation based on environment:
 int debug_mode = 1;
 #endif
 ```
+
+### C Extensions
+
+#### Gnu Statement Expressions
+
+Like the feature in GCC/clang.
+
+#### `static if`
+
+NOT IMPLEMENTED 
+
+This is in many ways like `#if`, but operates at the c parser level instead.
+
+The condition inside of the `if()` is evaluated at parse time. 
+If it is truthy, the code within the braces is added.
+If it is falsey, the code within the braces is skipped and the else branch if present is used instead.
+
+The braces (if present) after the condition do not introduce a new scope. 
+The code in the branch not taken do not need to be syntactically valid, but any
+`()`, `[]` and `{}` need to be balanced.
+
+##### `static switch`
+
+NOT IMPLEMENTED
+
+Like `static if`. Unlike normal `switch`, the `switch` must have the form:
+
+``` c
+switch(cond){
+    case 1:
+        // code if cond == 1;
+    case 2:
+        // code if cond == 2;
+    default:
+        // code if no condition matches;
+}
+```
+In other words, no static Duff's device.
+
+`break` at the end of the `case` is optional, with fallthrough semantics. 
+`break` within the case is translated to a goto to after the switch.
+
+#### Universal member access
+
+The `.` operator can be used on pointer expressions, in which case it acts like `->`.
+
+#### `_Alignof expr`
+
+Like `sizeof`, `_Alignof` is treated as a unary operator that desugars to `_Alignof(typeof(expr))`.
+
+#### Local Functions
+
+NOT IMPLEMENTED
+
+Functions can be defined inside of other functions.  This desugars to a static
+function.  The inner function has access to types and enums of its parent
+function, but cannot access variables etc.
+
+#### Function literals
+
+NOT IMPLEMENTED
+
+Function literals can be used as expressions. This desugars as a reference
+to a static function. If used within function scope, it desugars to a local
+function.
+
+
+#### `[]` operator on struct/union types.
+
+NOT IMPLEMENTED
+
+If the expression within the `[]` is a compile-time constant expression,
+gets the Nth member of the struct/union.
+
+```c
+#pragma library("libc")
+int printf(const char*, ...);
+typedef struct { float x, y; } Vector2;
+
+void foo(int x){
+    Vector2 v = {1, 2};
+    printf("v.x = %f, v[0] = %f\n", v.x, v[0]);
+    printf("v.y = %f, v[1] = %f\n", v.y, v[1]);
+    // below errors
+    // printf("v[2] = %f\n", v[2]);
+    int x = 0;
+    // printf("v[x] = %f\n", v[x]);
+}
+
+int main(){
+    foo(0);
+}

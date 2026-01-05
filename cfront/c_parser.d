@@ -13,6 +13,7 @@ import dlib.table : Table;
 import dlib.str_util: startswith;
 
 import cfront.c_pp_to_c : CToken, CTokenType;
+import cfront.c_const_eval: try_eval_constant, ConstValue;
 import cfront.c_ast;
 
 // =============================================================================
@@ -4963,11 +4964,30 @@ struct CParser {
                 if(index is null) return null;
                 consume(CTokenType.RIGHT_BRACKET, "Expected ']' after subscript");
                 if(ERROR_OCCURRED) return null;
-                if(!expr.type.is_indexable){
-                    errorf(bracket, "Indexing requires an array or pointer type, type is ", str_for(expr.type.kind));
-                    return null;
+                if(expr.type.is_struct_or_union){
+                    ConstValue v = try_eval_constant(index);
+                    if(v.kind != v.kind.INTEGER){
+                        errorf(index.token, "(Extension): Indexing a struct or union type requires a compile-time evaluable constant integer, idx is type: ", str_for(index.type.kind));
+                        return null;
+                    }
+                    if(v.int_val < 0 || v.int_val >= expr.type.fields.length){
+                        errorf(index.token, "(Extension): Index of struct type out of bounds: idx = ", v.int_val, ", fields.length = ", expr.type.fields.length);
+                        return null;
+                    }
+                    CToken member = index.token;
+                    member.type = CTokenType.IDENTIFIER;
+                    member.lexeme = expr.type.fields[v.int_val].name;
+                    CToken fake_dot = bracket;
+                    fake_dot.type = CTokenType.DOT;
+                    expr = CMemberAccess.make(allocator, expr, member, false, fake_dot, expr.type.fields[v.int_val].type);
                 }
-                expr = CSubscript.make(allocator, expr, index, bracket, expr.type.element_type());
+                else {
+                    if(!expr.type.is_indexable){
+                        errorf(bracket, "Indexing requires an array or pointer type, type is ", str_for(expr.type.kind));
+                        return null;
+                    }
+                    expr = CSubscript.make(allocator, expr, index, bracket, expr.type.element_type());
+                }
             } else if(match(CTokenType.DOT)){
                 // Member access: expr.member
                 CToken dot = previous();
@@ -5052,10 +5072,7 @@ struct CParser {
         else {
             if(!check(CTokenType.RIGHT_PAREN)){
                 size_t arg_idx = 0;
-                do {
-                    CToken tok = peek();
-                    // Use parse_assignment, not parse_expression, to avoid comma operator
-                    CExpr* arg = parse_assignment();
+                CExpr* do_arg_cast(CToken tok, CExpr* arg){
                     if(arg is null) return null;
 
                     // Apply implicit cast if we have parameter type info
@@ -5127,8 +5144,53 @@ struct CParser {
                                 break;
                         }
                     }
-                    args ~= arg;
-                    arg_idx++;
+                    else {
+                        error(tok, "Too many arguments to function");
+                        return null;
+                    }
+                    return arg;
+                }
+                do {
+                    // EXTENSION: __unpack(s) -> s.x, s.y, ...
+                    if(match_id("__unpack")){
+                        CToken unpack = previous();
+                        if(!match(CTokenType.LEFT_PAREN)){
+                            error(peek(), "Need '(' for __unpack");
+                            return null;
+                        }
+                        CToken tok = peek();
+                        CExpr* e = parse_assignment();
+                        if(e is null) return null;
+                        if(!match(CTokenType.RIGHT_PAREN)){
+                            error(peek(), "Need ')' for __unpack");
+                            return null;
+                        }
+                        if(!e.type.is_struct && !(e.type.is_pointer && e.type.pointed_to.is_struct)){
+                            error(tok, "argument of __unpack must be a struct or pointer to struct");
+                            return null;
+                        }
+                        CType* st = e.type.is_struct?e.type:e.type.pointed_to;
+                        foreach(ref StructField f; st.fields){
+                            CToken member = unpack;
+                            member.type = CTokenType.IDENTIFIER;
+                            member.lexeme = f.name;
+                            CExpr* arg = CMemberAccess.make(allocator, e, member, e.type.is_pointer, unpack, f.type);
+                            arg = do_arg_cast(unpack, arg);
+                            if(arg is null) return null;
+                            args ~= arg;
+                            arg_idx++;
+                        }
+                    }
+                    else {
+                        CToken tok = peek();
+                        // Use parse_assignment, not parse_expression, to avoid comma operator
+                        CExpr* arg = parse_assignment();
+                        if(arg is null) return null;
+                        arg = do_arg_cast(tok, arg);
+                        if(arg is null) return null;
+                        args ~= arg;
+                        arg_idx++;
+                    }
                 } while(match(CTokenType.COMMA));
             }
         }
