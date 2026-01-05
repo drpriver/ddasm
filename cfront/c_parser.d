@@ -4164,6 +4164,12 @@ struct CParser {
     // (6.7.1) init-declarator-list:
     //     init-declarator
     //     init-declarator-list , init-declarator
+    //
+    // EXTENSION: Inner function definition (like GCC nested functions)
+    // At block scope, also allows:
+    //     declaration-specifiers declarator compound-statement
+    // This is the same as (6.9.2) function-definition but at block scope.
+    // Desugars to a static function with mangled name.
     CStmt* parse_var_decl(){
         CToken type_tok = peek();
 
@@ -4273,7 +4279,27 @@ struct CParser {
     }
 
     // EXTENSION: Inner (nested) function definition
-    // Desugars to a static function with mangled name
+    //
+    // Grammar (extending block-item at block scope):
+    // (6.8.3) block-item:
+    //     declaration
+    //     unlabeled-statement
+    //     label
+    //     function-definition              <-- EXTENSION
+    //
+    // (6.9.2) function-definition:
+    //     declaration-specifiers declarator function-body
+    // (6.9.2) function-body:
+    //     compound-statement
+    //
+    // Standard C only allows function-definition at file scope (6.9.1).
+    // This extension allows it at block scope (like GCC nested functions).
+    //
+    // Semantics:
+    // - Desugars to a static function with mangled name (outer/inner$N)
+    // - Inner function has access to outer scope for type resolution (typeof works)
+    // - Inner function cannot access outer scope variables at runtime
+    // - Inner function is only visible within the enclosing function
     CStmt* parse_inner_function(CType* return_type, CDeclarator* decl, CToken name){
         // Generate mangled name: outer_func/inner_func$counter
         str mangled_name = mwritef(allocator, "%/%$%",
