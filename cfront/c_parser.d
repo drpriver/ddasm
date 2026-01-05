@@ -23,6 +23,7 @@ struct Scope {
     Table!(str, CType*) variables;
     Table!(str, long) enum_constants;
     Table!(str, str) static_local_names;  // Original name -> mangled global name
+    Table!(str, str) inner_function_names;  // Local name -> mangled global name
     Scope* parent;
 }
 
@@ -140,6 +141,7 @@ struct CParser {
         new_scope.variables.data.allocator = allocator;
         new_scope.enum_constants.data.allocator = allocator;
         new_scope.static_local_names.data.allocator = allocator;
+        new_scope.inner_function_names.data.allocator = allocator;
         new_scope.parent = current_scope;
         current_scope = new_scope;
     }
@@ -190,6 +192,15 @@ struct CParser {
     str* lookup_static_local_name(str name){
         for(auto scope_ = current_scope; scope_ !is null; scope_ = scope_.parent){
             if(auto mangled = name in scope_.static_local_names)
+                return mangled;
+        }
+        return null;
+    }
+
+    // Look up inner function mangled name in scope chain
+    str* lookup_inner_function_name(str name){
+        for(auto scope_ = current_scope; scope_ !is null; scope_ = scope_.parent){
+            if(auto mangled = name in scope_.inner_function_names)
                 return mangled;
         }
         return null;
@@ -3412,6 +3423,13 @@ struct CParser {
             return parse_static_if();
         }
 
+        // Handle typedef at block scope
+        if(check(CTokenType.TYPEDEF)){
+            int err = parse_typedef(null);
+            if(err) return null;
+            return CEmptyStmt.get();
+        }
+
         // Check for variable declaration (starts with type or storage class)
         if(check(CTokenType.STATIC) || is_type_specifier(peek())){
             return parse_var_decl();
@@ -4186,6 +4204,11 @@ struct CParser {
                 return null;
             }
 
+            // Check for inner function definition
+            if(decl.is_function && check(CTokenType.LEFT_BRACE)){
+                return parse_inner_function(base_type, decl, name);
+            }
+
             // Declare variable in scope BEFORE parsing initializer
             // (C requires variable to be in scope for its own initializer, e.g. int x = sizeof x;)
             if(!declare_variable(name.lexeme, var_type, name)){
@@ -4247,6 +4270,79 @@ struct CParser {
 
         // Multiple declarations - wrap in a block
         return CBlock.make(allocator, decls[], type_tok);
+    }
+
+    // EXTENSION: Inner (nested) function definition
+    // Desugars to a static function with mangled name
+    CStmt* parse_inner_function(CType* return_type, CDeclarator* decl, CToken name){
+        // Generate mangled name: outer_func/inner_func$counter
+        str mangled_name = mwritef(allocator, "%/%$%",
+            current_function_name, name.lexeme, static_local_counter++)[];
+
+        // Create function structure with mangled name
+        CFunction func;
+        CToken mangled_tok = name;
+        mangled_tok.lexeme = mangled_name;
+        func.name = mangled_tok;
+        func.return_type = return_type;
+        func.params = decl.params;
+        func.is_varargs = decl.is_varargs;
+        func.is_inline = false;
+        func.is_definition = true;
+
+        // Register function globally with mangled name (before parsing body for recursion)
+        add_function(func);
+
+        // Register mapping in local scope so inner function can be called by its local name
+        current_scope.inner_function_names[name.lexeme] = mangled_name;
+
+        // Save outer function context
+        str saved_function_name = current_function_name;
+        CType* saved_return_type = current_return_type;
+        int saved_counter = static_local_counter;
+
+        // Set up inner function context
+        current_function_name = mangled_name;
+        current_return_type = return_type;
+        static_local_counter = 0;
+
+        // Parse function body - keep scope chain for type resolution!
+        // Push scope for parameters only (don't clear outer scope)
+        push_scope();
+
+        // Add parameters to inner function's scope
+        foreach(ref param; decl.params){
+            if(param.name.lexeme.length > 0){
+                current_scope.variables[param.name.lexeme] = param.type;
+            }
+        }
+
+        // Consume '{' and parse body
+        consume(CTokenType.LEFT_BRACE, "Expected '{' for function body");
+        if(ERROR_OCCURRED){ pop_scope(); return null; }
+
+        auto body_ = make_barray!(CStmt*)(allocator);
+        while(!check(CTokenType.RIGHT_BRACE) && !at_end){
+            CStmt* stmt = parse_statement();
+            if(stmt is null){ pop_scope(); return null; }
+            body_ ~= stmt;
+        }
+
+        consume(CTokenType.RIGHT_BRACE, "Expected '}' after function body");
+        pop_scope();
+
+        // Restore outer function context
+        current_function_name = saved_function_name;
+        current_return_type = saved_return_type;
+        static_local_counter = saved_counter;
+
+        // Update function with body
+        func.body = body_[];
+        if(auto idx = mangled_name in func_indices){
+            functions[*idx].body = body_[];
+        }
+
+        return CEmptyStmt.get();  // No runtime statement needed
     }
 
     // (6.7.11) initializer:
@@ -5368,6 +5464,14 @@ struct CParser {
                         return CIdentifier.make_extern_var(allocator, id_tok, *t, gvar.library);
                 }
                 return CIdentifier.make_global_var(allocator, id_tok, *t);
+            }
+            // Check inner functions (before global functions)
+            else if(auto mangled = lookup_inner_function_name(id_tok.lexeme)){
+                if(auto t = *mangled in func_types){
+                    CToken mangled_tok = id_tok;
+                    mangled_tok.lexeme = *mangled;
+                    return CIdentifier.make_func(allocator, mangled_tok, *t);
+                }
             }
             // Check functions
             else if(auto t = id_tok.lexeme in func_types){

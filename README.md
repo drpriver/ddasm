@@ -544,13 +544,47 @@ The `.` operator can be used on pointer expressions, in which case it acts like 
 
 Like `sizeof`, `_Alignof` is treated as a unary operator that desugars to `_Alignof(typeof(expr))`.
 
-#### Local Functions
+#### Local Functions (Inner/Nested Functions)
 
-NOT IMPLEMENTED
+Functions can be defined inside of other functions. This desugars to a static
+function with a mangled name (`outer/inner$N`). The inner function has access
+to types, typedefs, and enums of its parent function, but cannot access local
+variables at runtime.
 
-Functions can be defined inside of other functions.  This desugars to a static
-function.  The inner function has access to types and enums of its parent
-function, but cannot access variables etc.
+``` c
+void outer() {
+    typedef int myint;
+    int x = 42;
+
+    // Inner function can use typedefs and typeof from outer scope
+    void inner(myint a, typeof(x) b) {
+        printf("%d %d\n", a, b);
+    }
+
+    inner(1, 2);  // OK: call inner function
+
+    // Recursive inner functions work
+    void countdown(int n) {
+        if (n > 0) {
+            printf("%d\n", n);
+            countdown(n - 1);
+        }
+    }
+    countdown(3);
+}
+```
+
+**What works:**
+- Typedefs defined in outer function
+- `typeof(outer_var)` for type expressions
+- Enum constants from outer scope
+- Recursive calls to the inner function
+- Nested inner functions (inner inside inner)
+- Multiple inner functions in the same outer function
+
+**What doesn't work:**
+- Accessing outer function's local variables (error at codegen)
+- Closures (no variable capture)
 
 #### Function literals
 
