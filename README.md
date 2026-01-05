@@ -457,15 +457,15 @@ Like the feature in GCC/clang.
 
 #### `static if`
 
-NOT IMPLEMENTED 
+NOT IMPLEMENTED
 
 This is in many ways like `#if`, but operates at the c parser level instead.
 
-The condition inside of the `if()` is evaluated at parse time. 
+The condition inside of the `if()` is evaluated at parse time.
 If it is truthy, the code within the braces is added.
 If it is falsey, the code within the braces is skipped and the else branch if present is used instead.
 
-The braces (if present) after the condition do not introduce a new scope. 
+The braces (if present) after the condition do not introduce a new scope.
 The code in the branch not taken do not need to be syntactically valid, but any
 `()`, `[]` and `{}` need to be balanced.
 
@@ -487,7 +487,7 @@ switch(cond){
 ```
 In other words, no static Duff's device.
 
-`break` at the end of the `case` is optional, with fallthrough semantics. 
+`break` at the end of the `case` is optional, with fallthrough semantics.
 `break` within the case is translated to a goto to after the switch.
 
 #### Universal member access
@@ -514,6 +514,38 @@ Function literals can be used as expressions. This desugars as a reference
 to a static function. If used within function scope, it desugars to a local
 function.
 
+
+#### `__unpack()` for argument lists or initializer-lists
+
+A special syntactic construct `__unpack` is valid in function calls or
+initializer lists. It works on structs, pointers to structs or array or
+arrays. For structs it expands to members to all of the fields of the
+struct. For arrays, it expands to all of the members of the array.
+
+For example:
+
+```c
+struct Point { int x, y; } p = {1, 2};
+printf("p = %d,%d\n", __unpack(p));
+```
+
+is syntactic sugar for
+
+```c
+struct Point { int x, y; } p = {1, 2};
+printf("p = %d,%d\n", p.x, p.y);
+```
+
+It is implementation-defined (lol) whether the argument to `__unpack` is
+evaluated multiple times. Currently it is as that was easy, but in the
+future we might change that.
+
+It can also be applied to arrays.
+
+```c
+int data[2] = {1, 2};
+struct Point { int x, y; } p = {__unpack(data)};
+```
 
 #### `[]` operator on struct/union types.
 

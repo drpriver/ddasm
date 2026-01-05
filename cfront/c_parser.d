@@ -4010,7 +4010,8 @@ struct CParser {
         // Handle empty initializer {}
         if(!check(CTokenType.RIGHT_BRACE)){
             do {
-                // EXTENSION: __unpack(s) -> s.x, s.y, ... in initializer lists
+                // EXTENSION: __unpack(s) -> s.x, s.y, ... (for structs)
+                // EXTENSION: __unpack(arr) -> arr[0], arr[1], ... (for arrays)
                 if(match_id("__unpack")){
                     CToken unpack = previous();
                     if(!match(CTokenType.LEFT_PAREN)){
@@ -4024,18 +4025,33 @@ struct CParser {
                         error(peek(), "Need ')' for __unpack");
                         return null;
                     }
-                    if(!e.type.is_struct && !(e.type.is_pointer && e.type.pointed_to.is_struct)){
-                        error(tok, "argument of __unpack must be a struct or pointer to struct");
+                    if(e.type.is_struct || (e.type.is_pointer && e.type.pointed_to.is_struct)){
+                        // Struct unpacking
+                        CType* st = e.type.is_struct ? e.type : e.type.pointed_to;
+                        foreach(ref StructField f; st.fields){
+                            CToken member = unpack;
+                            member.type = CTokenType.IDENTIFIER;
+                            member.lexeme = f.name;
+                            CInitElement elem;
+                            elem.value = CMemberAccess.make(allocator, e, member, e.type.is_pointer, unpack, f.type);
+                            elements ~= elem;
+                        }
+                    } else if(e.type.is_array){
+                        // Array unpacking
+                        if(e.type.array_size == 0){
+                            error(tok, "__unpack requires fixed-size array");
+                            return null;
+                        }
+                        CType* elem_type = e.type.pointed_to;
+                        foreach(i; 0 .. e.type.array_size){
+                            CExpr* idx = CLiteral.make_int(allocator, cast(int)i, unpack);
+                            CInitElement elem;
+                            elem.value = CSubscript.make(allocator, e, idx, unpack, elem_type);
+                            elements ~= elem;
+                        }
+                    } else {
+                        error(tok, "argument of __unpack must be a struct, pointer to struct, or fixed-size array");
                         return null;
-                    }
-                    CType* st = e.type.is_struct ? e.type : e.type.pointed_to;
-                    foreach(ref StructField f; st.fields){
-                        CToken member = unpack;
-                        member.type = CTokenType.IDENTIFIER;
-                        member.lexeme = f.name;
-                        CInitElement elem;
-                        elem.value = CMemberAccess.make(allocator, e, member, e.type.is_pointer, unpack, f.type);
-                        elements ~= elem;
                     }
                 } else {
                     CInitElement elem;
@@ -4703,7 +4719,8 @@ struct CParser {
                     return arg;
                 }
                 do {
-                    // EXTENSION: __unpack(s) -> s.x, s.y, ...
+                    // EXTENSION: __unpack(s) -> s.x, s.y, ... (for structs)
+                    // EXTENSION: __unpack(arr) -> arr[0], arr[1], ... (for arrays)
                     if(match_id("__unpack")){
                         CToken unpack = previous();
                         if(!match(CTokenType.LEFT_PAREN)){
@@ -4717,20 +4734,37 @@ struct CParser {
                             error(peek(), "Need ')' for __unpack");
                             return null;
                         }
-                        if(!e.type.is_struct && !(e.type.is_pointer && e.type.pointed_to.is_struct)){
-                            error(tok, "argument of __unpack must be a struct or pointer to struct");
+                        if(e.type.is_struct || (e.type.is_pointer && e.type.pointed_to.is_struct)){
+                            // Struct unpacking
+                            CType* st = e.type.is_struct ? e.type : e.type.pointed_to;
+                            foreach(ref StructField f; st.fields){
+                                CToken member = unpack;
+                                member.type = CTokenType.IDENTIFIER;
+                                member.lexeme = f.name;
+                                CExpr* arg = CMemberAccess.make(allocator, e, member, e.type.is_pointer, unpack, f.type);
+                                arg = do_arg_cast(unpack, arg);
+                                if(arg is null) return null;
+                                args ~= arg;
+                                arg_idx++;
+                            }
+                        } else if(e.type.is_array){
+                            // Array unpacking
+                            if(e.type.array_size == 0){
+                                error(tok, "__unpack requires fixed-size array");
+                                return null;
+                            }
+                            CType* elem_type = e.type.pointed_to;
+                            foreach(i; 0 .. e.type.array_size){
+                                CExpr* idx = CLiteral.make_int(allocator, cast(int)i, unpack);
+                                CExpr* arg = CSubscript.make(allocator, e, idx, unpack, elem_type);
+                                arg = do_arg_cast(unpack, arg);
+                                if(arg is null) return null;
+                                args ~= arg;
+                                arg_idx++;
+                            }
+                        } else {
+                            error(tok, "argument of __unpack must be a struct, pointer to struct, or fixed-size array");
                             return null;
-                        }
-                        CType* st = e.type.is_struct?e.type:e.type.pointed_to;
-                        foreach(ref StructField f; st.fields){
-                            CToken member = unpack;
-                            member.type = CTokenType.IDENTIFIER;
-                            member.lexeme = f.name;
-                            CExpr* arg = CMemberAccess.make(allocator, e, member, e.type.is_pointer, unpack, f.type);
-                            arg = do_arg_cast(unpack, arg);
-                            if(arg is null) return null;
-                            args ~= arg;
-                            arg_idx++;
                         }
                     }
                     else {
