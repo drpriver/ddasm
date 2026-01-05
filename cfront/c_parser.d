@@ -2577,7 +2577,13 @@ struct CParser {
             if(check(CTokenType.LEFT_BRACKET)){
                 // (6.7.7.1) array-declarator:
                 //     direct-declarator [ type-qualifier-list_opt assignment-expression_opt ]
+                //     direct-declarator [ static type-qualifier-list_opt assignment-expression ]
+                //     direct-declarator [ type-qualifier-list static assignment-expression ]
+                //     direct-declarator [ type-qualifier-list_opt * ]
                 advance();  // consume '['
+
+                // Skip optional 'static' and type qualifiers (const, volatile, restrict)
+                skip_array_qualifiers();
 
                 // Parse array size if present
                 size_t dim = 0;
@@ -3886,6 +3892,19 @@ struct CParser {
                 return false;
             }
             return false;
+        }
+    }
+
+    // Skip 'static' and type qualifiers inside array brackets (C99 6.7.6.3)
+    // Handles: [static const N], [const static N], [restrict], [*], etc.
+    void skip_array_qualifiers(){
+        while(true){
+            if(match(CTokenType.STATIC)){}
+            else if(match(CTokenType.CONST)){}
+            else if(match(CTokenType.VOLATILE)){}
+            else if(match(CTokenType.RESTRICT)){}
+            else if(match(CTokenType.STAR)){} // VLA with unspecified size
+            else break;
         }
     }
 
