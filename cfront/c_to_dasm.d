@@ -4726,6 +4726,64 @@ struct CDasmWriter {
                     used_objs[name] = true;
                 }
 
+                // Check if this is a struct/union assignment
+                if(gtype.is_struct_or_union()){
+                    if(expr.op != CTokenType.EQUAL){
+                        error(expr.expr.token, "Compound assignment not supported for structs");
+                        return 1;
+                    }
+
+                    int before = regallocator.alloced;
+                    int dst_reg = regallocator.allocate();
+                    int src_reg = regallocator.allocate();
+
+                    // Evaluate source FIRST (may clobber registers)
+                    CExpr* val = expr.value.ungroup();
+                    if(CIdentifier* src_id = val.as_identifier()){
+                        str src_name = src_id.name.lexeme;
+                        if(int* src_offset = src_name in stacklocals){
+                            sb.writef("    add r% rbp %\n", src_reg, P(*src_offset));
+                        } else if(src_id.ref_kind == IdentifierRefKind.GLOBAL_VAR){
+                            sb.writef("    move r% var %\n", src_reg, src_name);
+                        } else {
+                            error(expr.expr.token, "Source struct must be a variable");
+                            return 1;
+                        }
+                    } else if(val.kind == CExprKind.CALL){
+                        int err = gen_expression(val, src_reg);
+                        if(err) return err;
+                    } else if(val.kind == CExprKind.ASSIGN){
+                        int err = gen_expression(val, src_reg);
+                        if(err) return err;
+                    } else {
+                        int err = gen_struct_address(val, src_reg);
+                        if(err) return err;
+                    }
+
+                    // Get address of global destination
+                    if(id.ref_kind == IdentifierRefKind.EXTERN_VAR){
+                        str* obj_alias = name in extern_objs;
+                        if(obj_alias is null){
+                            error(expr.expr.token, "Extern variable not found");
+                            return -1;
+                        }
+                        sb.writef("    move r% var %.%\n", dst_reg, *obj_alias, name);
+                    } else {
+                        sb.writef("    move r% var %\n", dst_reg, name);
+                    }
+
+                    // memcpy dst src size
+                    size_t struct_size = gtype.size_of();
+                    sb.writef("    memcpy r% r% %\n", dst_reg, src_reg, struct_size);
+
+                    if(target != TARGET_IS_NOTHING){
+                        sb.writef("    move r% r%\n", target, dst_reg);
+                    }
+
+                    regallocator.reset_to(before);
+                    return 0;
+                }
+
                 int before = regallocator.alloced;
                 int addr_reg = regallocator.allocate();
                 int val_reg = regallocator.allocate();
