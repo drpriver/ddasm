@@ -4467,6 +4467,21 @@ struct CDasmWriter {
                 }
             } else {
                 sb.writef("    move r% rout1\n", target);
+                // For sub-32-bit return types (_Bool, char, short), mask to proper size
+                // Native functions may leave garbage in upper bits of rax
+                // Note: 32-bit writes to eax automatically zero upper 32 bits in AMD64
+                CType* ret_type = callee_func_type.return_type;
+                if(ret_type && !ret_type.is_float()){
+                    size_t ret_size = ret_type.size_of();
+                    if(ret_size == 1){
+                        // _Bool, char, unsigned char - mask to 8 bits
+                        sb.writef("    and r% r% 0xff\n", target, target);
+                    } else if(ret_size == 2){
+                        // short, unsigned short - mask to 16 bits
+                        sb.writef("    and r% r% 0xffff\n", target, target);
+                    }
+                    // 32-bit and 64-bit don't need masking
+                }
             }
         }
 

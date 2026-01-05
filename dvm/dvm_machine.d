@@ -1175,7 +1175,7 @@ struct Machine {
                     if(int b = begin(SCMP_I)) return b;
                     registers[RFLAGS] = 0;
                     intptr_t lhs = cast(intptr_t)read_reg;
-                    uintptr_t rhs = get_signed;
+                    intptr_t rhs = get_signed;
                     if(lhs == rhs){
                         registers[RFLAGS] = CmpFlags.ZERO;
                     }
