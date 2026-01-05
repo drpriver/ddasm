@@ -549,8 +549,6 @@ struct Point { int x, y; } p = {__unpack(data)};
 
 #### `[]` operator on struct/union types.
 
-NOT IMPLEMENTED
-
 If the expression within the `[]` is a compile-time constant expression,
 gets the Nth member of the struct/union.
 
