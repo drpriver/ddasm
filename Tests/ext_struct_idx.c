@@ -6,6 +6,7 @@ struct MyStruct {
     int x, y;
     char* txt;
 };
+struct Point {int x, y;};
 
 int main(){
     struct MyStruct m = { 1, 2, "hello"};
@@ -36,4 +37,13 @@ int main(){
     if(strcmp(__unpack(((pair))))) return __LINE__;
     // puts(__unpack(m));
 #endif
+    struct Point p = {3, 4};
+#ifdef __DDASM__
+    struct MyStruct m2 = {__unpack(p), "world"};
+    printf("%d, %d, %s\n", __unpack(m2));
+    if(m2[0] != 3) return __LINE__;
+    if(m2[1] != 4) return __LINE__;
+    if(strcmp(m2[2], "world") != 0) return __LINE__;
+#endif
+    return 0;
 }

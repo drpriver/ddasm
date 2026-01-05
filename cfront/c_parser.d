@@ -4010,17 +4010,46 @@ struct CParser {
         // Handle empty initializer {}
         if(!check(CTokenType.RIGHT_BRACE)){
             do {
-                CInitElement elem;
+                // EXTENSION: __unpack(s) -> s.x, s.y, ... in initializer lists
+                if(match_id("__unpack")){
+                    CToken unpack = previous();
+                    if(!match(CTokenType.LEFT_PAREN)){
+                        error(peek(), "Need '(' for __unpack");
+                        return null;
+                    }
+                    CToken tok = peek();
+                    CExpr* e = parse_assignment();
+                    if(e is null) return null;
+                    if(!match(CTokenType.RIGHT_PAREN)){
+                        error(peek(), "Need ')' for __unpack");
+                        return null;
+                    }
+                    if(!e.type.is_struct && !(e.type.is_pointer && e.type.pointed_to.is_struct)){
+                        error(tok, "argument of __unpack must be a struct or pointer to struct");
+                        return null;
+                    }
+                    CType* st = e.type.is_struct ? e.type : e.type.pointed_to;
+                    foreach(ref StructField f; st.fields){
+                        CToken member = unpack;
+                        member.type = CTokenType.IDENTIFIER;
+                        member.lexeme = f.name;
+                        CInitElement elem;
+                        elem.value = CMemberAccess.make(allocator, e, member, e.type.is_pointer, unpack, f.type);
+                        elements ~= elem;
+                    }
+                } else {
+                    CInitElement elem;
 
-                // Parse optional designation
-                elem.designators = parse_designation();
-                if(ERROR_OCCURRED) return null;
+                    // Parse optional designation
+                    elem.designators = parse_designation();
+                    if(ERROR_OCCURRED) return null;
 
-                // Parse initializer (recursive for nested braces)
-                elem.value = parse_initializer();
-                if(elem.value is null) return null;
+                    // Parse initializer (recursive for nested braces)
+                    elem.value = parse_initializer();
+                    if(elem.value is null) return null;
 
-                elements ~= elem;
+                    elements ~= elem;
+                }
             } while(match(CTokenType.COMMA) && !check(CTokenType.RIGHT_BRACE));
         }
 
