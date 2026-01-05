@@ -3858,6 +3858,9 @@ struct CParser {
         consume(CTokenType.LEFT_PAREN, "Expected '(' after 'for'");
         if(ERROR_OCCURRED) return null;
 
+        // C99: for loop has its own scope for variables declared in initializer
+        push_scope();
+
         // Initializer
         CStmt* init = null;
         if(!check(CTokenType.SEMICOLON)){
@@ -3866,7 +3869,7 @@ struct CParser {
             } else {
                 init = parse_expr_stmt();
             }
-            if(init is null) return null;
+            if(init is null){ pop_scope(); return null; }
         } else {
             advance();  // consume ';'
         }
@@ -3875,24 +3878,25 @@ struct CParser {
         CExpr* condition = null;
         if(!check(CTokenType.SEMICOLON)){
             condition = parse_expression();
-            if(condition is null) return null;
+            if(condition is null){ pop_scope(); return null; }
         }
         consume(CTokenType.SEMICOLON, "Expected ';' after for condition");
-        if(ERROR_OCCURRED) return null;
+        if(ERROR_OCCURRED){ pop_scope(); return null; }
 
         // Increment
         CExpr* increment = null;
         if(!check(CTokenType.RIGHT_PAREN)){
             increment = parse_expression();
-            if(increment is null) return null;
+            if(increment is null){ pop_scope(); return null; }
         }
 
         consume(CTokenType.RIGHT_PAREN, "Expected ')' after for clauses");
-        if(ERROR_OCCURRED) return null;
+        if(ERROR_OCCURRED){ pop_scope(); return null; }
 
         CStmt* body = parse_statement();
-        if(body is null) return null;
+        if(body is null){ pop_scope(); return null; }
 
+        pop_scope();
         return CForStmt.make(allocator, init, condition, increment, body, keyword);
     }
 
