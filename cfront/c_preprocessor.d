@@ -330,6 +330,10 @@ struct CPreprocessor {
         // function macro.
         define_func_macro_const("__has_include", 1, "0");
         define_func_macro_const("__has_include_next", 1, "0");
+        {
+            static immutable str[2] params = ["cond", "p"];
+            define_func_macro("__builtin_expect", cast(str[])params[], "(cond)");
+        }
 
         // Compiler built-in types
         define_object_macro("__builtin_va_list", "void*");
@@ -387,6 +391,32 @@ struct CPreprocessor {
             params ~= "_";  // Dummy param name
         }
         def.params = params[];
+
+        macros[name] = def;
+    }
+
+    void define_func_macro(str name, str[] params, str value){
+        PPMacroDef def;
+        def.name = name;
+        def.is_function_like = true;
+        def.is_variadic = false;
+        def.is_undefined = false;
+        def.params = params;
+        // Tokenize the value
+        if(value.length > 0){
+            Barray!PPToken value_tokens = make_barray!PPToken(allocator);
+            pp_tokenize(cast(const(ubyte)[])value, "<builtin>", &value_tokens, allocator);
+            // Remove EOF and newline tokens, but keep whitespace for proper spacing
+            Barray!PPToken filtered = make_barray!PPToken(allocator);
+            foreach(tok; value_tokens[]){
+                if(tok.type != PPTokenType.PP_EOF && tok.type != PPTokenType.PP_NEWLINE){
+                    filtered ~= tok;
+                }
+            }
+            def.replacement = filtered[];
+        } else {
+            def.replacement = null;
+        }
 
         macros[name] = def;
     }

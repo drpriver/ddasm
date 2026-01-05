@@ -72,7 +72,6 @@ struct CParser {
     Table!(str, CType*) global_var_types; // Global variable types (for sizeof in const exprs)
 
     // Type tracking for implicit casts
-    Table!(str, CType*) local_var_types;  // DEPRECATED: use current_scope instead
     Scope* current_scope;  // Current lexical scope (linked list to parent scopes)
     Table!(str, CType*) func_types;        // Function name -> function type (for setting expr types)
     Table!(str, size_t) func_info;         // Function name -> index in functions array
@@ -253,8 +252,6 @@ struct CParser {
             return false;
         }
         current_scope.variables[name] = type;
-        // Also update legacy local_var_types for compatibility during migration
-        local_var_types[name] = type;
         return true;
     }
 
@@ -680,7 +677,6 @@ struct CParser {
         enum_constants.data.allocator = allocator;
         typedef_types.data.allocator = allocator;
         global_var_types.data.allocator = allocator;
-        local_var_types.data.allocator = allocator;
         func_types.data.allocator = allocator;
         func_info.data.allocator = allocator;
         func_indices.data.allocator = allocator;
@@ -941,18 +937,11 @@ struct CParser {
                             func.is_definition = true;
                             add_function(func);  // Add before parsing body for recursion
 
-                            // Set up type context for function body
-                            local_var_types.count = 0;
-                            auto idxes = local_var_types._idxes();
-                            if(idxes.length > 0) idxes[] = uint.max;
-                            current_return_type = func.return_type;
-
                             // Push function body scope and add parameters
                             push_scope();
                             foreach(ref param; func.params){
                                 if(param.name.lexeme.length > 0){
                                     current_scope.variables[param.name.lexeme] = param.type;
-                                    local_var_types[param.name.lexeme] = param.type;  // Legacy compat
                                 }
                             }
 
@@ -972,9 +961,6 @@ struct CParser {
                             pop_scope();  // End function body scope
 
                             // Clear type context
-                            local_var_types.count = 0;
-                            auto idxes2 = local_var_types._idxes();
-                            if(idxes2.length > 0) idxes2[] = uint.max;
                             current_return_type = null;
 
                             func.body = body_[];
@@ -2283,40 +2269,35 @@ struct CParser {
         if(ERROR_OCCURRED) return 1;
 
         // Set up type context for function body
-        // Reset local_var_types table (clear count and indices)
-        local_var_types.count = 0;
-        auto idxes = local_var_types._idxes();
-        if(idxes.length > 0) idxes[] = uint.max;
         current_return_type = ret_type;
         current_function_name = func.name.lexeme;
         static_local_counter = 0;
 
         // Push function body scope and add parameters
         push_scope();
+
+        scope(exit) {
+            current_function_name = null;
+            current_return_type = null;
+            // Clear type context after function
+            pop_scope();
+        }
+
         foreach(ref param; func.params){
             if(param.name.lexeme.length > 0){
                 current_scope.variables[param.name.lexeme] = param.type;
-                local_var_types[param.name.lexeme] = param.type;  // Legacy compat
             }
         }
 
         auto body = make_barray!(CStmt*)(allocator);
         while(!check(CTokenType.RIGHT_BRACE) && !at_end){
             CStmt* stmt = parse_statement();
-            if(stmt is null){ pop_scope(); return 1; }
+            if(stmt is null){ return 1; }
             body ~= stmt;
         }
 
         consume(CTokenType.RIGHT_BRACE, "Expected '}' after function body");
-        if(ERROR_OCCURRED){ pop_scope(); return 1; }
-
-        pop_scope();  // End function body scope
-
-        // Clear type context after function
-        local_var_types.count = 0;
-        auto idxes2 = local_var_types._idxes();
-        if(idxes2.length > 0) idxes2[] = uint.max;
-        current_return_type = null;
+        if(ERROR_OCCURRED){ return 1; }
 
         func.body = body[];
         // Update the function entry with the parsed body
@@ -5227,6 +5208,16 @@ struct CParser {
         }
         if(match(CTokenType.FALSE_KW)){
             return CLiteral.make_int(allocator, 0, previous());
+        }
+
+        if(match(CTokenType.FUNC)){
+            if(!current_function_name.length){
+                error(previous(), "__func__ used outside of a function");
+                return null;
+            }
+            CLiteral* lit = CLiteral.make(allocator, previous(), make_pointer_type(allocator, &TYPE_CHAR)).as_literal;
+            lit.value.lexeme = mwritef(allocator, "\"%\"", current_function_name)[];
+            return &lit.expr;
         }
 
         // C11 _Generic selection

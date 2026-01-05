@@ -122,6 +122,7 @@ enum CTokenType : uint {
 
     // Special
     ELLIPSIS = 900,  // ...
+    FUNC = 901,
     EOF = 0,
     ERROR = 1,
 }
@@ -298,101 +299,126 @@ struct PPToCConverter {
     // Check if identifier is a keyword
     CTokenType check_keyword(str name){
         // Keywords sorted by length for efficient matching
-        if(name.length == 2){
-            if(name == "if") return CTokenType.IF;
-            if(name == "do") return CTokenType.DO;
-        }
-        if(name.length == 3){
-            if(name == "int") return CTokenType.INT;
-            if(name == "for") return CTokenType.FOR;
-            if(name == "asm") return CTokenType.ASM;
-        }
-        if(name.length == 4){
-            if(name == "void") return CTokenType.VOID;
-            if(name == "char") return CTokenType.CHAR;
-            if(name == "long") return CTokenType.LONG;
-            if(name == "else") return CTokenType.ELSE;
-            if(name == "case") return CTokenType.CASE;
-            if(name == "enum") return CTokenType.ENUM;
-            if(name == "goto") return CTokenType.GOTO;
-            if(name == "dasm") return CTokenType.DASM;
-            if(name == "auto") return CTokenType.AUTO;
-            if(name == "bool") return CTokenType.BOOL;
-            if(name == "true") return CTokenType.TRUE_KW;
-        }
-        if(name.length == 5){
-            if(name == "short") return CTokenType.SHORT;
-            if(name == "float") return CTokenType.FLOAT;
-            if(name == "while") return CTokenType.WHILE;
-            if(name == "break") return CTokenType.BREAK;
-            if(name == "const") return CTokenType.CONST;
-            if(name == "union") return CTokenType.UNION;
-            if(name == "__asm") return CTokenType.ASM;
-            if(name == "_Bool") return CTokenType.BOOL;
-            if(name == "false") return CTokenType.FALSE_KW;
-        }
-        if(name.length == 6){
-            if(name == "double") return CTokenType.DOUBLE;
-            if(name == "return") return CTokenType.RETURN;
-            if(name == "switch") return CTokenType.SWITCH;
-            if(name == "static") return CTokenType.STATIC;
-            if(name == "extern") return CTokenType.EXTERN;
-            if(name == "struct") return CTokenType.STRUCT;
-            if(name == "sizeof") return CTokenType.SIZEOF;
-            if(name == "signed") return CTokenType.SIGNED;
-            if(name == "inline") return CTokenType.INLINE;
-            if(name == "__dasm") return CTokenType.DASM;
-            if(name == "typeof") return CTokenType.TYPEOF;
-        }
-        if(name.length == 7){
-            if(name == "typedef") return CTokenType.TYPEDEF;
-            if(name == "default") return CTokenType.DEFAULT;
-            if(name == "__asm__") return CTokenType.ASM;
-            if(name == "_Atomic") return CTokenType.ATOMIC;
-            if(name == "alignof") return CTokenType.ALIGNOF;
-        }
-        if(name.length == 8){
-            if(name == "unsigned") return CTokenType.UNSIGNED;
-            if(name == "volatile") return CTokenType.VOLATILE;
-            if(name == "continue") return CTokenType.CONTINUE;
-            if(name == "_Alignof") return CTokenType.ALIGNOF;
-            if(name == "_Countof") return CTokenType.COUNTOF;
-            if(name == "noreturn") return CTokenType.NORETURN;
-            if(name == "register") return CTokenType.REGISTER;
-            if(name == "restrict") return CTokenType.RESTRICT;
-            if(name == "_Float16") return CTokenType.FLOAT16;
-            if(name == "_Float32") return CTokenType.FLOAT32;
-            if(name == "__int128") return CTokenType.INT128;
-            if(name == "_Float64") return CTokenType.FLOAT64;
-            if(name == "__inline") return CTokenType.INLINE;
-            if(name == "_Complex") return CTokenType.COMPLEX;
-            if(name == "_Generic") return CTokenType.GENERIC;
-            if(name == "__dasm__") return CTokenType.DASM;
-        }
-        if(name.length == 9){
-            if(name == "_Noreturn") return CTokenType.NORETURN;
-            if(name == "_Float128") return CTokenType.FLOAT128;
-            if(name == "_Float32x") return CTokenType.FLOAT32X;
-            if(name == "_Float64x") return CTokenType.FLOAT64X;
-        }
-        if(name.length == 10){
-            if(name == "__restrict") return CTokenType.RESTRICT;
-            if(name == "__inline__") return CTokenType.INLINE;
-            if(name == "__int128_t") return CTokenType.INT128;
-            if(name == "_Decimal32") return CTokenType.DECIMAL32;
-            if(name == "_Decimal64") return CTokenType.DECIMAL64;
-            if(name == "__typeof__") return CTokenType.TYPEOF;
-        }
-        if(name.length == 11){
-            if(name == "__uint128_t") return CTokenType.UINT128;
-            if(name == "_Decimal128") return CTokenType.DECIMAL128;
-        }
-        if(name.length == 12){
-            if(name == "__restrict__") return CTokenType.RESTRICT;
-        }
-        if(name.length == 14){
-            if(name == "_Static_assert") return CTokenType.STATIC_ASSERT;
-            if(name == "static_assert") return CTokenType.STATIC_ASSERT;
+        switch(name.length){
+            case 2:{
+                if(name == "if") return CTokenType.IF;
+                if(name == "do") return CTokenType.DO;
+                break;
+            }
+            case 3:{
+                if(name == "int") return CTokenType.INT;
+                if(name == "for") return CTokenType.FOR;
+                if(name == "asm") return CTokenType.ASM;
+                break;
+            }
+            case 4:{
+                if(name == "void") return CTokenType.VOID;
+                if(name == "char") return CTokenType.CHAR;
+                if(name == "long") return CTokenType.LONG;
+                if(name == "else") return CTokenType.ELSE;
+                if(name == "case") return CTokenType.CASE;
+                if(name == "enum") return CTokenType.ENUM;
+                if(name == "goto") return CTokenType.GOTO;
+                if(name == "dasm") return CTokenType.DASM;
+                if(name == "auto") return CTokenType.AUTO;
+                if(name == "bool") return CTokenType.BOOL;
+                if(name == "true") return CTokenType.TRUE_KW;
+                break;
+            }
+            case 5:{
+                if(name == "short") return CTokenType.SHORT;
+                if(name == "float") return CTokenType.FLOAT;
+                if(name == "while") return CTokenType.WHILE;
+                if(name == "break") return CTokenType.BREAK;
+                if(name == "const") return CTokenType.CONST;
+                if(name == "union") return CTokenType.UNION;
+                if(name == "__asm") return CTokenType.ASM;
+                if(name == "_Bool") return CTokenType.BOOL;
+                if(name == "false") return CTokenType.FALSE_KW;
+                break;
+            }
+            case 6:{
+                if(name == "double") return CTokenType.DOUBLE;
+                if(name == "return") return CTokenType.RETURN;
+                if(name == "switch") return CTokenType.SWITCH;
+                if(name == "static") return CTokenType.STATIC;
+                if(name == "extern") return CTokenType.EXTERN;
+                if(name == "struct") return CTokenType.STRUCT;
+                if(name == "sizeof") return CTokenType.SIZEOF;
+                if(name == "signed") return CTokenType.SIGNED;
+                if(name == "inline") return CTokenType.INLINE;
+                if(name == "__dasm") return CTokenType.DASM;
+                if(name == "typeof") return CTokenType.TYPEOF;
+                break;
+            }
+            case 7:{
+                if(name == "typedef") return CTokenType.TYPEDEF;
+                if(name == "default") return CTokenType.DEFAULT;
+                if(name == "__asm__") return CTokenType.ASM;
+                if(name == "_Atomic") return CTokenType.ATOMIC;
+                if(name == "alignof") return CTokenType.ALIGNOF;
+                break;
+            }
+            case 8:{
+                if(name == "unsigned") return CTokenType.UNSIGNED;
+                if(name == "volatile") return CTokenType.VOLATILE;
+                if(name == "continue") return CTokenType.CONTINUE;
+                if(name == "_Alignof") return CTokenType.ALIGNOF;
+                if(name == "_Countof") return CTokenType.COUNTOF;
+                if(name == "noreturn") return CTokenType.NORETURN;
+                if(name == "register") return CTokenType.REGISTER;
+                if(name == "restrict") return CTokenType.RESTRICT;
+                if(name == "_Float16") return CTokenType.FLOAT16;
+                if(name == "_Float32") return CTokenType.FLOAT32;
+                if(name == "__int128") return CTokenType.INT128;
+                if(name == "_Float64") return CTokenType.FLOAT64;
+                if(name == "__inline") return CTokenType.INLINE;
+                if(name == "_Complex") return CTokenType.COMPLEX;
+                if(name == "_Generic") return CTokenType.GENERIC;
+                if(name == "__dasm__") return CTokenType.DASM;
+                if(name == "__func__") return CTokenType.FUNC;
+                break;
+            }
+            case 9:{
+                if(name == "_Noreturn") return CTokenType.NORETURN;
+                if(name == "_Float128") return CTokenType.FLOAT128;
+                if(name == "_Float32x") return CTokenType.FLOAT32X;
+                if(name == "_Float64x") return CTokenType.FLOAT64X;
+                break;
+            }
+            case 10:{
+                if(name == "__restrict") return CTokenType.RESTRICT;
+                if(name == "__inline__") return CTokenType.INLINE;
+                if(name == "__int128_t") return CTokenType.INT128;
+                if(name == "_Decimal32") return CTokenType.DECIMAL32;
+                if(name == "_Decimal64") return CTokenType.DECIMAL64;
+                if(name == "__typeof__") return CTokenType.TYPEOF;
+                break;
+            }
+            case 11:{
+                if(name == "__uint128_t") return CTokenType.UINT128;
+                if(name == "_Decimal128") return CTokenType.DECIMAL128;
+                break;
+            }
+            case 12:{
+                if(name == "__restrict__") return CTokenType.RESTRICT;
+                if(name == "__FUNCTION__") return CTokenType.FUNC;
+                break;
+            }
+            case 13:{
+                if(name == "static_assert") return CTokenType.STATIC_ASSERT;
+                break;
+            }
+            case 14:{
+                if(name == "_Static_assert") return CTokenType.STATIC_ASSERT;
+                break;
+            }
+            case 19:{
+                if(name == "__PRETTY_FUNCTION__") return CTokenType.FUNC;
+                break;
+            }
+            default:
+                break;
         }
 
         return CTokenType.IDENTIFIER;
