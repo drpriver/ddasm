@@ -207,6 +207,33 @@ struct CParser {
         return null;
     }
 
+    // Try to look up a function by name (for UFCS)
+    // Returns CIdentifier* for the function or null if not found
+    CExpr* try_lookup_function(CToken name_tok){
+        str name = name_tok.lexeme;
+
+        // Check inner functions first
+        if(auto mangled = lookup_inner_function_name(name)){
+            if(auto t = *mangled in func_types){
+                CToken mangled_tok = name_tok;
+                mangled_tok.lexeme = *mangled;
+                return CIdentifier.make_func(allocator, mangled_tok, *t);
+            }
+        }
+
+        // Check regular/extern functions
+        if(auto t = name in func_types){
+            if(auto idx = name in func_info){
+                CFunction* func = &functions[*idx];
+                if(func.library.length > 0 && !func.is_definition)
+                    return CIdentifier.make_extern_func(allocator, name_tok, *t, func.library);
+            }
+            return CIdentifier.make_func(allocator, name_tok, *t);
+        }
+
+        return null;
+    }
+
     // Declare enum constant in current scope (or global if no scope)
     // Returns false if redeclaration error
     bool declare_enum_constant(str name, long value, CToken tok){
@@ -5189,25 +5216,42 @@ struct CParser {
                 CToken dot = previous();
                 CToken member = consume(CTokenType.IDENTIFIER, "Expected member name after '.'");
                 if(ERROR_OCCURRED) return null;
-                if(expr.type.is_pointer() && expr.type.pointed_to.is_struct_or_union()){
-                    // EXTENSION: allow dot operator on pointers by creating an implicit
-                    // dereference.
-                    // Could maybe do this via a synthetic arrow?
-                    // But this "just works" so whatever.
-                    expr = CUnary.make(allocator, CTokenType.STAR, expr, true, dot, expr.type.pointed_to);
-                    if(!expr) return null;
-                }
+
+                // EXTENSION: allow dot operator on pointers - treat as arrow
+                bool use_arrow = false;
                 CType* obj_type = expr.type;
+                if(obj_type.is_pointer() && obj_type.pointed_to.is_struct_or_union()){
+                    use_arrow = true;
+                    obj_type = obj_type.pointed_to;
+                }
+
                 if(!obj_type.is_struct_or_union()){
+                    // EXTENSION: UFCS for non-struct types (e.g., int.to_string())
+                    if(check(CTokenType.LEFT_PAREN)){
+                        if(CExpr* func_id = try_lookup_function(member)){
+                            advance(); // consume '('
+                            expr = finish_call(func_id, expr);
+                            if(expr is null) return null;
+                            continue;
+                        }
+                    }
                     error(dot, "'.' operator requires a struct or union type");
                     return null;
                 }
                 // Set type from struct field
                 if(StructField *field = obj_type.get_field(member.lexeme)){
-                    CType* type = field.type;
-                    expr = CMemberAccess.make(allocator, expr, member, false, dot, field.type);
+                    expr = CMemberAccess.make(allocator, expr, member, use_arrow, dot, field.type);
                 }
                 else {
+                    // EXTENSION: UFCS - x.foo(args) -> foo(x, args)
+                    if(check(CTokenType.LEFT_PAREN)){
+                        if(CExpr* func_id = try_lookup_function(member)){
+                            advance(); // consume '('
+                            expr = finish_call(func_id, expr);
+                            if(expr is null) return null;
+                            continue;
+                        }
+                    }
                     error(member, "Unknown field name");
                     return null;
                 }
@@ -5218,10 +5262,28 @@ struct CParser {
                 if(ERROR_OCCURRED) return null;
                 CType* obj_type = expr.type;
                 if(!obj_type.is_pointer){
+                    // EXTENSION: UFCS for non-pointer types
+                    if(check(CTokenType.LEFT_PAREN)){
+                        if(CExpr* func_id = try_lookup_function(member)){
+                            advance(); // consume '('
+                            expr = finish_call(func_id, expr);
+                            if(expr is null) return null;
+                            continue;
+                        }
+                    }
                     error(arrow, "'->' operator requires a pointer type");
                     return null;
                 }
                 if(!obj_type.pointed_to.is_struct_or_union){
+                    // EXTENSION: UFCS for pointer to non-struct
+                    if(check(CTokenType.LEFT_PAREN)){
+                        if(CExpr* func_id = try_lookup_function(member)){
+                            advance(); // consume '('
+                            expr = finish_call(func_id, expr);
+                            if(expr is null) return null;
+                            continue;
+                        }
+                    }
                     error(arrow, "'->' operator requires a pointer to a structure or union");
                     return null;
                 }
@@ -5230,6 +5292,15 @@ struct CParser {
                     expr = CMemberAccess.make(allocator, expr, member, true, arrow, field.type);
                 }
                 else {
+                    // EXTENSION: UFCS - ptr->foo(args) -> foo(ptr, args)
+                    if(check(CTokenType.LEFT_PAREN)){
+                        if(CExpr* func_id = try_lookup_function(member)){
+                            advance(); // consume '('
+                            expr = finish_call(func_id, expr);
+                            if(expr is null) return null;
+                            continue;
+                        }
+                    }
                     error(member, "Unknown field name");
                     return null;
                 }
@@ -5248,7 +5319,8 @@ struct CParser {
     // (6.5.3.1) argument-expression-list:
     //     assignment-expression
     //     argument-expression-list , assignment-expression
-    CExpr* finish_call(CExpr* callee){
+    // ufcs_receiver: if non-null, this is a UFCS call and receiver is prepended as first arg
+    CExpr* finish_call(CExpr* callee, CExpr* ufcs_receiver = null){
         CToken paren = previous();
         auto args = make_barray!(CExpr*)(allocator);
 
@@ -5266,8 +5338,31 @@ struct CParser {
             current--;
         }
         else {
+            // UFCS: prepend receiver as first argument
+            size_t arg_idx = 0;
+            if(ufcs_receiver !is null){
+                if(function_type.param_types.length == 0){
+                    error(paren, "UFCS: function has no parameters to receive the object");
+                    return null;
+                }
+                CType* param0_type = function_type.param_types[0];
+                CExpr* receiver = ufcs_receiver;
+
+                // Auto-ref: if param expects pointer to receiver's type, take address
+                if(param0_type.is_pointer && !receiver.type.is_pointer){
+                    if(types_compatible(param0_type.pointed_to, receiver.type)){
+                        // Insert & operator
+                        receiver = CUnary.make(allocator, CTokenType.AMP, receiver, true, paren, make_pointer_type(allocator, receiver.type));
+                    }
+                }
+
+                receiver = implicit_cast(receiver, param0_type, paren);
+                if(receiver is null) return null;
+                args ~= receiver;
+                arg_idx = 1;
+            }
+
             if(!check(CTokenType.RIGHT_PAREN)){
-                size_t arg_idx = 0;
                 CExpr* do_arg_cast(CToken tok, CExpr* arg){
                     if(arg is null) return null;
 

@@ -28,6 +28,8 @@ int main(){
 #ifdef __DDASM__
     struct MyStruct *pm = &m;
     printf("%d, %d, %s\n", __unpack(m));
+    // . can be used instead of ->
+    printf("%d, %d, %s\n", m.x, m.y, m.txt);
     printf("%d, %d, %s\n", __unpack(pm));
     struct SPair {
         const char *p, *p2;

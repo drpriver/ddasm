@@ -540,6 +540,53 @@ In other words, no static Duff's device.
 
 The `.` operator can be used on pointer expressions, in which case it acts like `->`.
 
+#### Uniform Function Call Syntax (UFCS) or "functions as methods"
+
+If the `.` operator fails to find a member of a struct or when applied to a non-struct type
+it is checked whether there is a function that takes the lhs of the `.` or a pointer to the lhs of the `.`.
+If so, then it is interpreted as actually a function call. This is easier to show as an example:
+
+```
+int double_it(int x){
+    return x * 2;
+}
+int x = 3;
+int y = x.double_it();
+// literal requires parens or else it gets parsed as a double.
+int z = (3).double_it();
+```
+
+This can be used to have method syntax for structs without classes.
+
+```
+struct DynamicArray {
+    int* data;
+    size_t count, capacity;
+};
+void da_append(struct DynamicArray* da, int v){
+    if(da.count >= da.capacity){
+        size_t capacity = da.capacity?da.capacity*2:1;
+        void* data = realloc(da.data, da.capacity * sizeof *da.data);
+        if(!data) oom();
+        da.data = data;
+        da.capacity = capacity;
+    }
+    da.data[da.count++] = v;
+}
+
+struct DynamicArray da = {0};
+da.da_append(1);
+da.da_append(2);
+for(size_t i = 0; i < da.count; i++){
+    printf("%zu] %d\n", i, da.data[i]);
+}
+```
+
+Note that `da.da_append(1)` works even though `da_append` takes a pointer - the `&` is
+inserted automatically when the function expects a pointer to the receiver's type.
+
+Calls can be chained: `x.double_it().triple()` becomes `triple(double_it(x))`.
+
 #### `_Alignof expr`
 
 Like `sizeof`, `_Alignof` is treated as a unary operator that desugars to `_Alignof(typeof(expr))`.
