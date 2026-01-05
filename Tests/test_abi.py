@@ -119,7 +119,7 @@ STRUCT_OFFSET_TYPES = [
 
 def generate_size_align_code(headers, types, feature_macro=None):
     """Generate C code to print sizeof and alignof for types."""
-    code = ''
+    code = '#pragma library("libc")\n'
     if feature_macro:
         code += f'#define {feature_macro}\n'
     code += '#include <stdio.h>\n#include <stddef.h>\n'
@@ -139,7 +139,8 @@ def generate_size_align_code(headers, types, feature_macro=None):
 def generate_offsetof_code(header, struct_type, members, feature_macro=None):
     """Generate C code to print offsetof for struct members."""
     macro_def = f'#define {feature_macro}\n' if feature_macro else ''
-    code = f'''{macro_def}#include <stdio.h>
+    code = f'''#pragma library("libc")
+{macro_def}#include <stdio.h>
 #include <stddef.h>
 #include <{header}>
 

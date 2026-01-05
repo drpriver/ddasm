@@ -170,6 +170,11 @@ ConstValue eval_literal(CLiteral* lit) {
     if (lit.value.type == CTokenType.FLOAT_LITERAL) {
         auto parsed = parse_float(lexeme);
         if (parsed.errored) return ConstValue.not_const();
+        // Check for float suffix (f/F) to preserve float32 precision
+        if (has_float_suffix(lexeme)) {
+            float f32 = cast(float)parsed.value;
+            return ConstValue.from_double(cast(double)f32);
+        }
         return ConstValue.from_double(parsed.value);
     }
 
@@ -464,6 +469,13 @@ bool is_unsigned_literal(str lex) {
         if ((last == 'u' || last == 'U') && (prev == 'l' || prev == 'L')) return true;
     }
     return false;
+}
+
+// Helper to check if a float literal has float suffix (f/F)
+bool has_float_suffix(str lex) {
+    if (lex.length == 0) return false;
+    char last = lex[$ - 1];
+    return last == 'f' || last == 'F';
 }
 
 // Parse a character literal to its integer value

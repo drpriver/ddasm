@@ -608,10 +608,23 @@ struct CParser {
             return;
         }
 
-        // If either is float, convert both to double (FLT_EVAL_METHOD=1)
-        if(lt.kind == CTypeKind.FLOAT || rt.kind == CTypeKind.FLOAT){
+        // Float handling (FLT_EVAL_METHOD=0 - use native float types)
+        if(lt.kind == CTypeKind.FLOAT && rt.kind == CTypeKind.FLOAT){
+            // Both float: no conversion needed, backend uses F* instructions
+            return;
+        }
+        if(lt.kind == CTypeKind.FLOAT){
+            // float op non-float: promote float to double, convert other if needed
             left = implicit_cast(left, &TYPE_DOUBLE, op_tok);
+            if(rt.is_arithmetic() && !rt.is_float())
+                right = implicit_cast(right, &TYPE_DOUBLE, op_tok);
+            return;
+        }
+        if(rt.kind == CTypeKind.FLOAT){
+            // non-float op float: promote float to double, convert other if needed
             right = implicit_cast(right, &TYPE_DOUBLE, op_tok);
+            if(lt.is_arithmetic() && !lt.is_float())
+                left = implicit_cast(left, &TYPE_DOUBLE, op_tok);
             return;
         }
 

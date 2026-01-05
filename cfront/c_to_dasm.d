@@ -2740,20 +2740,20 @@ struct CDasmWriter {
                 // int -> double
                 sb.writef("    itod r% r%\n", target, target);
             } else if(src_is_int && dst_is_float32){
-                // int -> float32: itod then dtof
-                sb.writef("    itod r% r%\n", target, target);
-                sb.writef("    dtof r% r%\n", target, target);
+                // int -> float32
+                sb.writef("    itof r% r%\n", target, target);
             } else if(src_is_double && dst_is_int){
                 // double -> int
                 sb.writef("    dtoi r% r%\n", target, target);
             } else if(src_is_float32 && dst_is_int){
-                // float32 -> int: gen_expression already converted to double, just dtoi
-                sb.writef("    dtoi r% r%\n", target, target);
+                // float32 -> int
+                sb.writef("    ftoi r% r%\n", target, target);
             } else if(src_is_double && dst_is_float32){
                 // double -> float32
                 sb.writef("    dtof r% r%\n", target, target);
             } else if(src_is_float32 && dst_is_double){
-                // float32 -> double: gen_expression already converted, nothing to do
+                // float32 -> double
+                sb.writef("    ftod r% r%\n", target, target);
             }
         }
 
@@ -2780,7 +2780,7 @@ struct CDasmWriter {
     }
 
     // Generate implicit type conversion from src_type to dst_type for value in register
-    // src_expr is used to determine if float32 values are already float32 bits or double
+    // Note: float32 values are always float32 bits (no auto-promotion to double)
     void gen_implicit_conversion(int reg, CExpr* src_expr, CType* dst_type){
         CType* src_type = src_expr ? src_expr.type : null;
         if(src_type is null || dst_type is null) return;
@@ -2797,32 +2797,22 @@ struct CDasmWriter {
             // int -> double
             sb.writef("    itod r% r%\n", reg, reg);
         } else if(src_is_int && dst_is_float32){
-            // int -> float32: itod then dtof
-            sb.writef("    itod r% r%\n", reg, reg);
-            sb.writef("    dtof r% r%\n", reg, reg);
+            // int -> float32
+            sb.writef("    itof r% r%\n", reg, reg);
         } else if(src_is_double && dst_is_int){
             // double -> int
             sb.writef("    dtoi r% r%\n", reg, reg);
         } else if(src_is_float32 && dst_is_int){
-            // float32 -> int: need ftod first if value is float32 bits
-            if(expr_produces_float32_bits(src_expr)){
-                sb.writef("    ftod r% r%\n", reg, reg);
-            }
-            sb.writef("    dtoi r% r%\n", reg, reg);
+            // float32 -> int
+            sb.writef("    ftoi r% r%\n", reg, reg);
         } else if(src_is_double && dst_is_float32){
             // double -> float32
             sb.writef("    dtof r% r%\n", reg, reg);
         } else if(src_is_float32 && dst_is_double){
-            // float32 -> double: need ftod if value is float32 bits
-            if(expr_produces_float32_bits(src_expr)){
-                sb.writef("    ftod r% r%\n", reg, reg);
-            }
-        } else if(src_is_float32 && dst_is_float32){
-            // float32 -> float32: only need dtof if value is double (variable read)
-            if(!expr_produces_float32_bits(src_expr)){
-                sb.writef("    dtof r% r%\n", reg, reg);
-            }
+            // float32 -> double
+            sb.writef("    ftod r% r%\n", reg, reg);
         }
+        // float32 -> float32: no conversion needed
     }
 
     int gen_compound_literal(CCompoundLiteral* expr, int target){
@@ -3078,9 +3068,7 @@ struct CDasmWriter {
                 // Stack-allocated local
                 if(int* offset = name in stacklocals){
                     sb.writef("    local_read r% %\n", target, P(*offset));
-                    if(t && t.is_float32()){
-                        sb.writef("    ftod r% r%\n", target, target);
-                    }
+                    // Note: float32 values stay as float32 bits - callers handle conversion
                     return 0;
                 }
                 error(expr.expr.token, "Local variable not found in stack or registers");
@@ -3302,6 +3290,16 @@ struct CDasmWriter {
         bool left_is_float = left_type && left_type.is_float();
         bool right_is_float = right_type && right_type.is_float();
         if(left_is_float || right_is_float){
+            bool left_is_float32 = left_type && left_type.is_float32();
+            bool right_is_float32 = right_type && right_type.is_float32();
+
+            // Determine instruction set: F* for float32+float32, D* for double
+            // After frontend usual_arithmetic_conversions:
+            // - float+float stays float (use F*)
+            // - float+double becomes double+double (use D*)
+            // - float+int becomes double+double (use D*)
+            bool use_float32 = left_is_float32 && right_is_float32;
+
             // Generate RHS into a register
             int rhs = get_expr_reg(expr.right);
             if(rhs < 0){
@@ -3309,53 +3307,53 @@ struct CDasmWriter {
                 int err = gen_expression(expr.right, rhs);
                 if(err) return err;
             }
-            // Convert non-float operand to float if needed
+            // Convert non-float operand to float if needed (fallback if frontend didn't)
             if(left_is_float && !right_is_float){
-                sb.writef("    itod r% r%\n", rhs, rhs);
+                sb.writef("    % r% r%\n", use_float32 ? "itof" : "itod", rhs, rhs);
             } else if(!left_is_float && right_is_float){
-                sb.writef("    itod r% r%\n", lhs, lhs);
+                sb.writef("    % r% r%\n", use_float32 ? "itof" : "itod", lhs, lhs);
             }
-            // Generate float operation
+            // Generate float operation using F* or D* instructions
             switch(expr.op) with (CTokenType){
                 case PLUS:
-                    sb.writef("    dadd r% r% r%\n", target, lhs, rhs);
+                    sb.writef("    % r% r% r%\n", use_float32 ? "fadd" : "dadd", target, lhs, rhs);
                     break;
                 case MINUS:
-                    sb.writef("    dsub r% r% r%\n", target, lhs, rhs);
+                    sb.writef("    % r% r% r%\n", use_float32 ? "fsub" : "dsub", target, lhs, rhs);
                     break;
                 case STAR:
-                    sb.writef("    dmul r% r% r%\n", target, lhs, rhs);
+                    sb.writef("    % r% r% r%\n", use_float32 ? "fmul" : "dmul", target, lhs, rhs);
                     break;
                 case SLASH:
-                    sb.writef("    ddiv r% r% r%\n", target, lhs, rhs);
+                    sb.writef("    % r% r% r%\n", use_float32 ? "fdiv" : "ddiv", target, lhs, rhs);
                     break;
                 case EQUAL_EQUAL:
-                    sb.writef("    dcmp r% r%\n", lhs, rhs);
+                    sb.writef("    % r% r%\n", use_float32 ? "fcmp" : "dcmp", lhs, rhs);
                     sb.writef("    move r% 0\n", target);
                     sb.writef("    cmov eq r% 1\n", target);
                     break;
                 case BANG_EQUAL:
-                    sb.writef("    dcmp r% r%\n", lhs, rhs);
+                    sb.writef("    % r% r%\n", use_float32 ? "fcmp" : "dcmp", lhs, rhs);
                     sb.writef("    move r% 0\n", target);
                     sb.writef("    cmov ne r% 1\n", target);
                     break;
                 case LESS:
-                    sb.writef("    dcmp r% r%\n", lhs, rhs);
+                    sb.writef("    % r% r%\n", use_float32 ? "fcmp" : "dcmp", lhs, rhs);
                     sb.writef("    move r% 0\n", target);
                     sb.writef("    cmov lt r% 1\n", target);
                     break;
                 case LESS_EQUAL:
-                    sb.writef("    dcmp r% r%\n", lhs, rhs);
+                    sb.writef("    % r% r%\n", use_float32 ? "fcmp" : "dcmp", lhs, rhs);
                     sb.writef("    move r% 0\n", target);
                     sb.writef("    cmov le r% 1\n", target);
                     break;
                 case GREATER:
-                    sb.writef("    dcmp r% r%\n", lhs, rhs);
+                    sb.writef("    % r% r%\n", use_float32 ? "fcmp" : "dcmp", lhs, rhs);
                     sb.writef("    move r% 0\n", target);
                     sb.writef("    cmov gt r% 1\n", target);
                     break;
                 case GREATER_EQUAL:
-                    sb.writef("    dcmp r% r%\n", lhs, rhs);
+                    sb.writef("    % r% r%\n", use_float32 ? "fcmp" : "dcmp", lhs, rhs);
                     sb.writef("    move r% 0\n", target);
                     sb.writef("    cmov ge r% 1\n", target);
                     break;
@@ -3985,10 +3983,14 @@ struct CDasmWriter {
                     // Unary plus is a no-op
                     break;
                 case MINUS:
-                    if(is_float_op)
-                        sb.writef("    dneg r% r%\n", target, target);
-                    else
+                    if(is_float_op){
+                        if(operand_type.is_float32())
+                            sb.writef("    fneg r% r%\n", target, target);
+                        else
+                            sb.writef("    dneg r% r%\n", target, target);
+                    } else {
                         sb.writef("    neg r% r%\n", target, target);
+                    }
                     break;
                 case BANG:
                     sb.writef("    not r% r%\n", target, target);
@@ -5157,10 +5159,10 @@ struct CDasmWriter {
                 // Read scalar field value
                 size_t field_size = field.type.size_of();
                 bool is_signed = field.type.is_signed;
-                // For float32 fields, use unsigned read (no sign extend) and convert to double
+                // For float32 fields, use unsigned read (no sign extend)
+                // Note: float32 values stay as float32 bits - callers handle conversion
                 if(field.type.is_float32()){
                     sb.writef("    read4 r% r%\n", target, obj_reg);
-                    sb.writef("    ftod r% r%\n", target, target);
                 } else {
                     sb.writef("    % r% r%\n", read_instr_for_size(field_size, is_signed), target, obj_reg);
                 }
