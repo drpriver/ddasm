@@ -3789,6 +3789,30 @@ struct CDasmWriter {
                         sb.writef("    % r% r% %\n", op_instr, new_val, val_reg, inc_amount);
                         sb.writef("    % r% r%\n", write_instr, addr_reg, new_val);
                     }
+                } else {
+                    // Global variable (including static locals)
+                    size_t var_size = operand_type ? operand_type.size_of() : 4;
+                    bool is_signed = operand_type ? operand_type.is_signed : true;
+                    str read_instr = read_instr_for_size(var_size, is_signed);
+                    str write_instr = write_instr_for_size(var_size);
+                    int addr_reg = regallocator.allocate();
+                    int val_reg = target != TARGET_IS_NOTHING ? target : regallocator.allocate();
+
+                    // Get address of global variable
+                    sb.writef("    move r% var %\n", addr_reg, name);
+                    // Read current value
+                    sb.writef("    % r% r%\n", read_instr, val_reg, addr_reg);
+
+                    if(expr.is_prefix){
+                        // ++x: increment, write, return new value
+                        sb.writef("    % r% r% %\n", op_instr, val_reg, val_reg, inc_amount);
+                        sb.writef("    % r% r%\n", write_instr, addr_reg, val_reg);
+                    } else {
+                        // x++: save old value, increment, write, return old value
+                        int new_val = regallocator.allocate();
+                        sb.writef("    % r% r% %\n", op_instr, new_val, val_reg, inc_amount);
+                        sb.writef("    % r% r%\n", write_instr, addr_reg, new_val);
+                    }
                 }
                 regallocator.reset_to(before);
                 return 0;

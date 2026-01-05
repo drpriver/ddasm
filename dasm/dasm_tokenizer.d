@@ -93,7 +93,9 @@ struct Tokenizer {
             for(;token_length < MAX_TOK_LENGTH && cur < s.length; ++token_length, ++cur, ++col){
                 auto c = s[cur];
                 switch(c){
-                    case 0: .. case 47:
+                    case 0: .. case 35:    // before '$' (36)
+                    case 37: .. case 46:   // between '$' and '/' (47)
+                    // Allow '$' (36) and '/' (47) in identifiers for static local mangling
                     case 58: .. case 64:
                     case 91: .. case 94:
                     case 96:

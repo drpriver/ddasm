@@ -8,7 +8,7 @@ import core.stdc.stdio : fprintf, stderr;
 import dlib.aliases;
 import dlib.allocator : Allocator;
 import dlib.barray : Barray, make_barray;
-import dlib.stringbuilder : StringBuilder, Q;
+import dlib.stringbuilder : StringBuilder, Q, mwritef;
 import dlib.table : Table;
 import dlib.str_util: startswith;
 
@@ -21,6 +21,7 @@ import cfront.c_ast;
 struct Scope {
     Table!(str, CType*) variables;
     Table!(str, long) enum_constants;
+    Table!(str, str) static_local_names;  // Original name -> mangled global name
     Scope* parent;
 }
 
@@ -80,6 +81,8 @@ struct CParser {
     // Track global names to indices for merging extern decls with definitions
     Table!(str, size_t) global_indices;
     CType* current_return_type;            // Current function's return type (for return checking)
+    str current_function_name;             // Current function name (for static local mangling)
+    int static_local_counter;              // Counter for static locals in current function
     StringBuilder error_sb;
     Barray!CFunction functions;
     Barray!CGlobalVar globals;
@@ -136,6 +139,7 @@ struct CParser {
         auto new_scope = cast(Scope*)data.ptr;
         new_scope.variables.data.allocator = allocator;
         new_scope.enum_constants.data.allocator = allocator;
+        new_scope.static_local_names.data.allocator = allocator;
         new_scope.parent = current_scope;
         current_scope = new_scope;
     }
@@ -170,6 +174,15 @@ struct CParser {
         // Fall back to global enum_constants
         if(auto val = name in enum_constants)
             return val;
+        return null;
+    }
+
+    // Look up static local mangled name in scope chain
+    str* lookup_static_local_name(str name){
+        for(auto scope_ = current_scope; scope_ !is null; scope_ = scope_.parent){
+            if(auto mangled = name in scope_.static_local_names)
+                return mangled;
+        }
         return null;
     }
 
@@ -2243,6 +2256,8 @@ struct CParser {
         auto idxes = local_var_types._idxes();
         if(idxes.length > 0) idxes[] = uint.max;
         current_return_type = ret_type;
+        current_function_name = func.name.lexeme;
+        static_local_counter = 0;
 
         // Push function body scope and add parameters
         push_scope();
@@ -3803,8 +3818,8 @@ struct CParser {
             return parse_label();
         }
 
-        // Check for variable declaration (starts with type)
-        if(is_type_specifier(peek())){
+        // Check for variable declaration (starts with type or storage class)
+        if(check(CTokenType.STATIC) || is_type_specifier(peek())){
             return parse_var_decl();
         }
 
@@ -4199,6 +4214,10 @@ struct CParser {
     //     init-declarator-list , init-declarator
     CStmt* parse_var_decl(){
         CToken type_tok = peek();
+
+        // Check for static storage class
+        bool is_static = match(CTokenType.STATIC);
+
         CType* base_type = parse_base_type();
         if(base_type is null) return null;
 
@@ -4232,11 +4251,6 @@ struct CParser {
                 error("Expected variable name");
                 return null;
             }
-            // Register local variable in current scope (with redeclaration check)
-            if(!declare_variable(name.lexeme, var_type, name)){
-                // Redeclaration error already reported by declare_variable
-                ERROR_OCCURRED = true;
-            }
 
             CExpr* initializer = null;
             if(match(CTokenType.EQUAL)){
@@ -4249,12 +4263,52 @@ struct CParser {
                 }
             }
 
-            decls ~= CVarDecl.make(allocator, var_type, name, initializer, type_tok);
+            if(is_static){
+                // Static local: create global with mangled name, register in local scope
+                // Mangled name: funcname/varname$counter
+                str mangled_name = mwritef(allocator, "%/%$%",
+                    current_function_name, name.lexeme, static_local_counter++)[];
+
+                // Create a modified token with the mangled name for the global
+                CToken mangled_tok = name;
+                mangled_tok.lexeme = mangled_name;
+
+                // Create global variable
+                CGlobalVar gvar;
+                gvar.name = mangled_tok;
+                gvar.var_type = var_type;
+                gvar.initializer = initializer;
+                gvar.is_extern = false;
+                add_or_merge_global(gvar);
+
+                // Register in local scope with original name
+                if(!declare_variable(name.lexeme, var_type, name)){
+                    ERROR_OCCURRED = true;
+                }
+                // Register name mapping so identifier lookup can find the mangled name
+                current_scope.static_local_names[name.lexeme] = mangled_name;
+
+                // No runtime initialization needed - static vars are initialized at program start
+            } else {
+                // Regular local variable
+                // Register local variable in current scope (with redeclaration check)
+                if(!declare_variable(name.lexeme, var_type, name)){
+                    // Redeclaration error already reported by declare_variable
+                    ERROR_OCCURRED = true;
+                }
+
+                decls ~= CVarDecl.make(allocator, var_type, name, initializer, type_tok);
+            }
 
         } while(match(CTokenType.COMMA));
 
         consume(CTokenType.SEMICOLON, "Expected ';' after variable declaration");
         if(ERROR_OCCURRED) return null;
+
+        // If no runtime declarations (all static), return empty statement
+        if(decls[].length == 0){
+            return CEmptyStmt.get();
+        }
 
         // If only one declaration, return it directly
         if(decls[].length == 1){
@@ -5294,6 +5348,12 @@ struct CParser {
             CToken id_tok = advance();
             // Resolve identifier and create appropriate expression
             if(auto t = lookup_variable(id_tok.lexeme)){
+                // Check if this is a static local - use mangled name for codegen
+                if(auto mangled = lookup_static_local_name(id_tok.lexeme)){
+                    CToken mangled_tok = id_tok;
+                    mangled_tok.lexeme = *mangled;
+                    return CIdentifier.make_var(allocator, mangled_tok, t);
+                }
                 return CIdentifier.make_var(allocator, id_tok, t);
             }
             else if(auto t = id_tok.lexeme in func_types){
