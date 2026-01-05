@@ -6,6 +6,11 @@ int test_named_enum() {
         GREEN = 2,
         BLUE = 3
     };
+    {
+        enum {
+            GREEN = 4,
+        };
+    }
 
     enum Color c = GREEN;
     return c;

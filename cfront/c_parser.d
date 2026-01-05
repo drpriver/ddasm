@@ -20,6 +20,7 @@ import cfront.c_ast;
 // =============================================================================
 struct Scope {
     Table!(str, CType*) variables;
+    Table!(str, long) enum_constants;
     Scope* parent;
 }
 
@@ -134,6 +135,7 @@ struct CParser {
         void[] data = allocator.zalloc(Scope.sizeof);
         auto new_scope = cast(Scope*)data.ptr;
         new_scope.variables.data.allocator = allocator;
+        new_scope.enum_constants.data.allocator = allocator;
         new_scope.parent = current_scope;
         current_scope = new_scope;
     }
@@ -158,6 +160,48 @@ struct CParser {
         return null;
     }
 
+    // Look up enum constant in scope chain
+    long* lookup_enum_constant(str name){
+        // Walk the scope chain from innermost to outermost
+        for(auto scope_ = current_scope; scope_ !is null; scope_ = scope_.parent){
+            if(auto val = name in scope_.enum_constants)
+                return val;
+        }
+        // Fall back to global enum_constants
+        if(auto val = name in enum_constants)
+            return val;
+        return null;
+    }
+
+    // Declare enum constant in current scope (or global if no scope)
+    // Returns false if redeclaration error
+    bool declare_enum_constant(str name, long value, CToken tok){
+        if(current_scope !is null){
+            // Check for redeclaration in same scope
+            if(name in current_scope.enum_constants){
+                errorf(tok, "redeclaration of enumerator '", name, "'");
+                return false;
+            }
+            if(name in current_scope.variables){
+                errorf(tok, "redeclaration of '", name, "' as enum constant");
+                return false;
+            }
+            current_scope.enum_constants[name] = value;
+        } else {
+            // At file scope
+            if(name in enum_constants){
+                errorf(tok, "redeclaration of enumerator '", name, "'");
+                return false;
+            }
+            if(name in global_var_types){
+                errorf(tok, "redeclaration of '", name, "' as enum constant");
+                return false;
+            }
+            enum_constants[name] = value;
+        }
+        return true;
+    }
+
     // Check if variable is declared in current scope (for redeclaration errors)
     bool is_declared_in_current_scope(str name){
         if(current_scope is null) return false;
@@ -168,12 +212,22 @@ struct CParser {
     bool declare_variable(str name, CType* type, CToken tok){
         if(current_scope is null){
             // At global scope, use global_var_types
+            // Check for collision with enum constant
+            if(name in enum_constants){
+                errorf(tok, "'", name, "' redeclared as different kind of symbol");
+                return false;
+            }
             global_var_types[name] = type;
             return true;
         }
         // Check for redeclaration in same scope
         if(name in current_scope.variables){
             errorf(tok, "redeclaration of '", name, "' in same scope");
+            return false;
+        }
+        // Check for collision with enum constant in same scope
+        if(name in current_scope.enum_constants){
+            errorf(tok, "'", name, "' redeclared as different kind of symbol");
             return false;
         }
         current_scope.variables[name] = type;
@@ -400,7 +454,7 @@ struct CParser {
                 if(auto t = lookup_variable(id.name.lexeme))
                     return t;
                 // Could be an enum constant - return int
-                if(id.name.lexeme in enum_constants)
+                if(lookup_enum_constant(id.name.lexeme) !is null)
                     return &TYPE_INT;
                 return null;
             case BINARY:
@@ -1391,8 +1445,8 @@ struct CParser {
 
         if(match(CTokenType.IDENTIFIER)){
             CToken tok = previous();
-            // Look up in already-defined enum constants
-            if(long* val = tok.lexeme in enum_constants){
+            // Look up in already-defined enum constants (using scope chain)
+            if(long* val = lookup_enum_constant(tok.lexeme)){
                 result.value = *val;
                 return result;
             }
@@ -1729,8 +1783,9 @@ struct CParser {
             ec.value = value;
             constants ~= ec;
 
-            // Register in global constants table
-            enum_constants[const_name.lexeme] = value;
+            // Register in current scope (or global if at file scope)
+            if(!declare_enum_constant(const_name.lexeme, value, const_name))
+                return 1;
 
             // Next implicit value is one more
             next_value = value + 1;
@@ -2022,7 +2077,8 @@ struct CParser {
                     ec.name = const_name.lexeme;
                     ec.value = value;
                     constants ~= ec;
-                    enum_constants[const_name.lexeme] = value;
+                    if(!declare_enum_constant(const_name.lexeme, value, const_name))
+                        return 1;
                     next_value = value + 1;
 
                     if(!check(CTokenType.RIGHT_BRACE)){
@@ -2841,7 +2897,8 @@ struct CParser {
                     if(result.err) return 1;
                     enum_val = result.value;
                 }
-                enum_constants[ename.lexeme] = enum_val;
+                if(!declare_enum_constant(ename.lexeme, enum_val, ename))
+                    return 1;
                 enum_val++;
                 if(!match(CTokenType.COMMA)) break;
             }
@@ -3630,7 +3687,8 @@ struct CParser {
                         value = expr_result.value;
                     }
 
-                    enum_constants[const_name.lexeme] = value;
+                    if(!declare_enum_constant(const_name.lexeme, value, const_name))
+                        return null;
                     next_value = value + 1;
 
                     if(!check(CTokenType.RIGHT_BRACE)){
@@ -5244,7 +5302,7 @@ struct CParser {
             else if(auto t = id_tok.lexeme in func_types){
                 return CIdentifier.make_func(allocator, id_tok, *t);
             }
-            else if(long* e = id_tok.lexeme in enum_constants){
+            else if(long* e = lookup_enum_constant(id_tok.lexeme)){
                 return CIdentifier.make_enum_const(allocator, id_tok, *e);
             }
             else if(id_tok.lexeme.startswith("__builtin_")){
