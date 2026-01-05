@@ -1,4 +1,3 @@
-// SKIP: just a compiler bug
 // Test (6.7.1) storage-class specifiers: static, extern
 
 // External declaration
@@ -27,7 +26,7 @@ int use_static_func(int x) {
     return static_func(x) + static_global;
 }
 int main(){
-    test_static();
-    test_static_global();
+    if (test_static_global() != 100) return 1;
+    if (use_static_func(5) != 110) return 2;  // 5*2 + 100
     return 0;
 }

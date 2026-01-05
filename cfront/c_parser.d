@@ -852,14 +852,11 @@ struct CParser {
                     if(err) return err;
                     func.is_static = true;
                 } else {
-                    // Static variable - skip (internal linkage, not relevant for us)
-                    int brace_depth = 0;
-                    while(!at_end){
-                        if(check(CTokenType.LEFT_BRACE)){ brace_depth++; advance(); }
-                        else if(check(CTokenType.RIGHT_BRACE)){ brace_depth--; advance(); if(brace_depth == 0) break; }
-                        else if(check(CTokenType.SEMICOLON) && brace_depth == 0){ advance(); break; }
-                        else advance();
-                    }
+                    // Static global variable - parse like regular global but with internal linkage
+                    int err = parse_init_declarator_list(type_, name, false, null);
+                    if(err) return err;
+                    consume(CTokenType.SEMICOLON, "Expected ';' after static variable declaration");
+                    if(ERROR_OCCURRED) return 1;
                 }
             } else if(check(CTokenType.IDENTIFIER) && peek_at(1).type == CTokenType.LEFT_PAREN &&
                        (peek().lexeme in typedef_types) is null){
