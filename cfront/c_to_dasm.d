@@ -378,7 +378,6 @@ struct CDasmWriter {
     Table!(str, CType*) global_types; // Global variable types
     Table!(str, CType*) func_return_types; // Function return types (for struct returns)
     Table!(str, CFunction*) func_info;     // Function info (for varargs check)
-    Table!(str, long) enum_constants; // Enum constant values (name -> value)
 
     // Loop control
     int current_continue_target = -1;
@@ -621,14 +620,6 @@ struct CDasmWriter {
         foreach(ref func; unit.functions){
             func_return_types[func.name.lexeme] = func.return_type;
             func_info[func.name.lexeme] = &func;
-        }
-
-        // Load enum constants
-        enum_constants.data.allocator = allocator;
-        foreach(ref edef; unit.enums){
-            foreach(ref ec; edef.constants){
-                enum_constants[ec.name] = ec.value;
-            }
         }
 
         // Generate functions and track if we have main/start
@@ -1027,10 +1018,10 @@ struct CDasmWriter {
             return try_eval_const(cast_expr.operand, value);
         }
 
-        // Check for enum constants
+        // Check for enum constants - use resolved ref_kind from parsing
         if(CIdentifier* ident = expr.as_identifier()){
-            if(long* ec = ident.name.lexeme in enum_constants){
-                value = *ec;
+            if(ident.ref_kind == IdentifierRefKind.ENUM_CONST){
+                value = ident.enum_value;
                 return true;
             }
         }
@@ -2612,8 +2603,8 @@ struct CDasmWriter {
         // have side-effects, so just handle that in the specific handler function.
         e = e.ungroup();
 
-        // Try constant folding (pass enum_constants for enum constant lookups)
-        ConstValue cv = try_eval_constant(e, &enum_constants);
+        // Try constant folding (enum constants are resolved at parse time)
+        ConstValue cv = try_eval_constant(e);
         if(cv.is_const()){
             if(target != TARGET_IS_NOTHING) {
                 if (cv.is_float()) {
@@ -2773,7 +2764,7 @@ struct CDasmWriter {
         if(t is null || t.kind != CTypeKind.FLOAT) return false;
 
         // Check if constant-foldable (produces float32 bits)
-        ConstValue cv = try_eval_constant(expr, &enum_constants);
+        ConstValue cv = try_eval_constant(expr);
         if(cv.is_const()) return true;
 
         // Cast to float32 produces float32 bits
@@ -3030,6 +3021,8 @@ struct CDasmWriter {
             case LITERAL: return true;
             case IDENTIFIER:{
                 CIdentifier* id = expr.as_identifier();
+                // Enum constants are simple (just a move immediate)
+                if(id.ref_kind == IdentifierRefKind.ENUM_CONST) return true;
                 str name = id.name.lexeme;
                 // Arrays need address computation
                 // FIXME: Does that really need more than one reg?
@@ -3037,7 +3030,6 @@ struct CDasmWriter {
                     if((*vt).is_array()) return false;
                 }
                 if(name in reglocals) return true;
-                if(name in enum_constants) return true;
                 return false; // XXX: what cases is this
             }break;
             case BINARY:{
@@ -3122,12 +3114,6 @@ struct CDasmWriter {
                     sb.writef("    ftod r% r%\n", target, target);
                 }
             }
-            return 0;
-        }
-
-        // Legacy fallback: Check for enum constant in table (for backward compat)
-        if(long* val = name in enum_constants){
-            sb.writef("    move r% %\n", target, *val);
             return 0;
         }
 

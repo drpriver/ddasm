@@ -88,8 +88,7 @@ struct ConstValue {
 
 // Try to evaluate an expression at compile time
 // Returns NOT_CONST if the expression cannot be evaluated
-// enum_constants: optional table of enum constant names to their values
-ConstValue try_eval_constant(CExpr* expr, EnumTable* enum_constants = null) {
+ConstValue try_eval_constant(CExpr* expr) {
     if (expr is null) return ConstValue.not_const();
 
     // Unwrap grouping parentheses
@@ -100,16 +99,16 @@ ConstValue try_eval_constant(CExpr* expr, EnumTable* enum_constants = null) {
             return eval_literal(expr.as_literal);
 
         case IDENTIFIER:
-            return eval_identifier(expr.as_identifier, enum_constants);
+            return eval_identifier(expr.as_identifier);
 
         case BINARY:
-            return eval_binary(expr.as_binary, enum_constants);
+            return eval_binary(expr.as_binary);
 
         case UNARY:
-            return eval_unary(expr.as_unary, enum_constants);
+            return eval_unary(expr.as_unary);
 
         case CAST:
-            return eval_cast(expr.as_cast, enum_constants);
+            return eval_cast(expr.as_cast);
 
         case SIZEOF:
             return eval_sizeof(expr.as_sizeof);
@@ -121,7 +120,7 @@ ConstValue try_eval_constant(CExpr* expr, EnumTable* enum_constants = null) {
             return eval_countof(expr.as_countof);
 
         case TERNARY:
-            return eval_ternary(expr.as_ternary, enum_constants);
+            return eval_ternary(expr.as_ternary);
 
         case GROUPING:
             // Already handled by ungroup()
@@ -136,19 +135,12 @@ ConstValue try_eval_constant(CExpr* expr, EnumTable* enum_constants = null) {
 }
 
 // Evaluate identifier - only enum constants are compile-time constant
-ConstValue eval_identifier(CIdentifier* ident, EnumTable* enum_constants) {
+ConstValue eval_identifier(CIdentifier* ident) {
     if (ident is null) return ConstValue.not_const();
 
     // Use resolved ref_kind from parsing - enum constants have their value stored
     if (ident.ref_kind == IdentifierRefKind.ENUM_CONST) {
         return ConstValue.from_int(ident.enum_value);
-    }
-
-    // Legacy fallback: check enum_constants table (for backward compat)
-    if (enum_constants !is null) {
-        if (long* val = ident.name.lexeme in *enum_constants) {
-            return ConstValue.from_int(*val);
-        }
     }
 
     return ConstValue.not_const();
@@ -185,26 +177,26 @@ ConstValue eval_literal(CLiteral* lit) {
     return ConstValue.not_const();
 }
 
-ConstValue eval_binary(CBinary* expr, EnumTable* enum_constants) {
-    auto left = try_eval_constant(expr.left, enum_constants);
+ConstValue eval_binary(CBinary* expr) {
+    auto left = try_eval_constant(expr.left);
     if (!left.is_const()) return ConstValue.not_const();
 
     // Short-circuit evaluation for && and ||
     if (expr.op == CTokenType.AMP_AMP) {
         if (left.is_zero()) return ConstValue.from_int(0);
-        auto right = try_eval_constant(expr.right, enum_constants);
+        auto right = try_eval_constant(expr.right);
         if (!right.is_const()) return ConstValue.not_const();
         return ConstValue.from_int(right.is_zero() ? 0 : 1);
     }
 
     if (expr.op == CTokenType.PIPE_PIPE) {
         if (!left.is_zero()) return ConstValue.from_int(1);
-        auto right = try_eval_constant(expr.right, enum_constants);
+        auto right = try_eval_constant(expr.right);
         if (!right.is_const()) return ConstValue.not_const();
         return ConstValue.from_int(right.is_zero() ? 0 : 1);
     }
 
-    auto right = try_eval_constant(expr.right, enum_constants);
+    auto right = try_eval_constant(expr.right);
     if (!right.is_const()) return ConstValue.not_const();
 
     // If either operand is a float, use float arithmetic
@@ -322,8 +314,8 @@ ConstValue eval_binary_float(CTokenType op, ConstValue left, ConstValue right) {
     }
 }
 
-ConstValue eval_unary(CUnary* expr, EnumTable* enum_constants) {
-    auto operand = try_eval_constant(expr.operand, enum_constants);
+ConstValue eval_unary(CUnary* expr) {
+    auto operand = try_eval_constant(expr.operand);
     if (!operand.is_const()) return ConstValue.not_const();
 
     switch (expr.op) with (CTokenType) {
@@ -363,8 +355,8 @@ ConstValue eval_unary(CUnary* expr, EnumTable* enum_constants) {
     }
 }
 
-ConstValue eval_cast(CCast* expr, EnumTable* enum_constants) {
-    auto operand = try_eval_constant(expr.operand, enum_constants);
+ConstValue eval_cast(CCast* expr) {
+    auto operand = try_eval_constant(expr.operand);
     if (!operand.is_const()) return ConstValue.not_const();
 
     CType* t = expr.cast_type;
@@ -448,15 +440,15 @@ ConstValue eval_countof(CCountof* expr) {
     return ConstValue.not_const();
 }
 
-ConstValue eval_ternary(CTernary* expr, EnumTable* enum_constants) {
-    auto cond = try_eval_constant(expr.condition, enum_constants);
+ConstValue eval_ternary(CTernary* expr) {
+    auto cond = try_eval_constant(expr.condition);
     if (!cond.is_const()) return ConstValue.not_const();
 
     // Only evaluate the branch that will be taken
     if (!cond.is_zero()) {
-        return try_eval_constant(expr.if_true, enum_constants);
+        return try_eval_constant(expr.if_true);
     } else {
-        return try_eval_constant(expr.if_false, enum_constants);
+        return try_eval_constant(expr.if_false);
     }
 }
 
