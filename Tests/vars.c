@@ -1,4 +1,3 @@
-// SKIP
 // tenative definitions
 int x, y, z;
 // declarations
@@ -10,8 +9,11 @@ int main(){
     printf("%p, %p, %p\n", &x, &y, &z);
     printf("%d, %d, %d\n", a, b, c);
     printf("%p, %p, %p\n", &a, &b, &c);
+    return 0;
 }
 // definitions
 int a = 0;
 int b = 1;
 int c = 2;
+
+int z = 'z';

@@ -547,7 +547,7 @@ struct ParseContext{
                         err_print(tok, "Expected an identifier as a ", label, " name, got ", Q(tok.text));
                         return;
                     }
-                    if(kind == FUNCTION){
+                    // if(kind == FUNCTION){
                         Token fake = tok;
                         for(;;){
                             if(tokenizer.current_token.type == DOT){
@@ -567,13 +567,13 @@ struct ParseContext{
                         }
                         result.kind = kind;
                         result.function_name = fake.text;
-                    }
-                    else {
-                        result.kind = kind;
+                    // }
+                    // else {
+                        // result.kind = kind;
                         // these all pun, so whatever
-                        result.function_name = tok.text;
-                        return;
-                    }
+                        // result.function_name = tok.text;
+                        // return;
+                    // }
                 }
                 switch(text){
                     case "function":

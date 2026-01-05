@@ -76,6 +76,8 @@ struct CParser {
     Table!(str, size_t) func_info;         // Function name -> index in functions array
     // Track function names to indices for merging forward declarations with definitions
     Table!(str, size_t) func_indices;
+    // Track global names to indices for merging extern decls with definitions
+    Table!(str, size_t) global_indices;
     CType* current_return_type;            // Current function's return type (for return checking)
     StringBuilder error_sb;
     Barray!CFunction functions;
@@ -178,6 +180,32 @@ struct CParser {
         // Also update legacy local_var_types for compatibility during migration
         local_var_types[name] = type;
         return true;
+    }
+
+    // Add or merge a global variable declaration/definition
+    // C allows: extern int a; ... int a = 0; (definition overrides declaration)
+    // Also: int a; ... int a = 1; (definition with init overrides tentative)
+    void add_or_merge_global(CGlobalVar gvar){
+        str name = gvar.name.lexeme;
+        if(size_t* existing_idx = name in global_indices){
+            // Merge: definition beats extern, initializer beats tentative
+            CGlobalVar* prev = &globals[*existing_idx];
+            if(gvar.is_extern && !prev.is_extern){
+                // Keep the definition, ignore extern
+            } else if(!gvar.is_extern && prev.is_extern){
+                // Definition overrides extern declaration
+                *prev = gvar;
+            } else if(gvar.initializer !is null && prev.initializer is null){
+                // Definition with initializer overrides tentative
+                *prev = gvar;
+            }
+            // Otherwise keep existing (first definition wins)
+        } else {
+            global_indices[name] = globals.count;
+            globals ~= gvar;
+        }
+        // Always update the type lookup
+        global_var_types[name] = gvar.var_type;
     }
 
     // =========================================================================
@@ -567,6 +595,7 @@ struct CParser {
         func_types.data.allocator = allocator;
         func_info.data.allocator = allocator;
         func_indices.data.allocator = allocator;
+        global_indices.data.allocator = allocator;
         error_sb.allocator = allocator;
 
         while(!at_end){
@@ -637,7 +666,7 @@ struct CParser {
                         if(err) return err;
                     } else {
                         // Global variable - use unified init-declarator-list parsing
-                        int err = parse_init_declarator_list(&globals, type_, name, saw_extern, current_library);
+                        int err = parse_init_declarator_list( type_, name, saw_extern, current_library);
                         if(err) return err;
                         consume(CTokenType.SEMICOLON, "Expected ';' after variable declaration");
                         if(ERROR_OCCURRED) return 1;
@@ -684,7 +713,7 @@ struct CParser {
                         if(err) return err;
                     } else {
                         // Global variable - use unified init-declarator-list parsing
-                        int err = parse_init_declarator_list(&globals, type_, name, saw_extern, current_library);
+                        int err = parse_init_declarator_list( type_, name, saw_extern, current_library);
                         if(err) return err;
                         consume(CTokenType.SEMICOLON, "Expected ';' after variable declaration");
                         if(ERROR_OCCURRED) return 1;
@@ -717,7 +746,7 @@ struct CParser {
                         if(err) return err;
                     } else {
                         // Global variable - use unified init-declarator-list parsing
-                        int err = parse_init_declarator_list(&globals, type_, name, saw_extern, current_library);
+                        int err = parse_init_declarator_list( type_, name, saw_extern, current_library);
                         if(err) return err;
                         consume(CTokenType.SEMICOLON, "Expected ';' after variable declaration");
                         if(ERROR_OCCURRED) return 1;
@@ -892,9 +921,7 @@ struct CParser {
                         consume(CTokenType.SEMICOLON, "Expected ';' after variable declaration");
                         if(ERROR_OCCURRED) return 1;
 
-                        // Register variable type for lookups
-                        global_var_types[name.lexeme] = gvar.var_type;
-                        globals ~= gvar;
+                        add_or_merge_global(gvar);
                     }
                 } else {
                     CToken name = consume(CTokenType.IDENTIFIER, "Expected identifier");
@@ -907,7 +934,7 @@ struct CParser {
                         if(err) return err;
                     } else {
                         // Global variable - use unified init-declarator-list parsing
-                        int err = parse_init_declarator_list(&globals, base_type, name, saw_extern, current_library);
+                        int err = parse_init_declarator_list( base_type, name, saw_extern, current_library);
                         if(err) return err;
                         consume(CTokenType.SEMICOLON, "Expected ';' after variable declaration");
                         if(ERROR_OCCURRED) return 1;
@@ -3199,11 +3226,11 @@ struct CParser {
     //
     // Parses a comma-separated list of global variable declarations.
     // The first variable (first_type, first_name) has already been parsed.
-    // Adds all variables to the globals array.
+    // Uses add_or_merge_global to handle extern->definition merging.
     // Does NOT consume the final semicolon - caller must do that.
     // is_extern: true if 'extern' keyword was present (declaration only, object defined elsewhere)
     // library: from #pragma library, specifies which library contains the extern object
-    int parse_init_declarator_list(Barray!CGlobalVar* globals, CType* first_type, CToken first_name,
+    int parse_init_declarator_list(CType* first_type, CToken first_name,
                                    bool is_extern = false, str library = null){
         // Get base type by unwrapping pointers (for subsequent declarators)
         CType* base_type = unwrap_pointers(first_type);
@@ -3215,7 +3242,7 @@ struct CParser {
         CGlobalVar gvar;
         int err = parse_global_var_rest(first_type, first_name, &gvar, is_extern, library);
         if(err) return err;
-        *globals ~= gvar;
+        add_or_merge_global(gvar);
 
         // Parse remaining comma-separated declarators
         while(match(CTokenType.COMMA)){
@@ -3227,7 +3254,7 @@ struct CParser {
             CGlobalVar gvar2;
             err = parse_global_var_rest(decl_type, next_name, &gvar2, is_extern, library);
             if(err) return err;
-            *globals ~= gvar2;
+            add_or_merge_global(gvar2);
         }
 
         return 0;
