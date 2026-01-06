@@ -19,6 +19,7 @@ import dvm.dvm_regs;
 import dvm.dvm_args;
 import dvm.dvm_linker : link_single_instruction, SingleInstructionLinkResult;
 import dasm.dasm_parser : parse_single_instruction, SingleInstructionResult;
+import dvm.dvm_trampoline: call_varargs, call_varargs_float, call_native_trampoline, call_native_float;
 enum RunFlags: uint {
     NONE = 0,
     DEBUG = 1 << 0,
@@ -145,7 +146,6 @@ struct Machine {
 
         // Use float-aware trampoline if any args or returns are floats
         if (arg_types != 0 || func.ret_types != 0) {
-            import dvm.varargs_trampoline_float: call_varargs_float;
             registers[ROUT1] = call_varargs_float(
                 cast(void*)func.native_function_,
                 args.ptr,
@@ -155,7 +155,6 @@ struct Machine {
                 func.ret_types
             );
         } else {
-            import dvm.varargs_trampoline: call_varargs;
             registers[ROUT1] = call_varargs(
                 cast(void*)func.native_function_,
                 args.ptr,
@@ -180,7 +179,6 @@ struct Machine {
 
         // Use float-aware trampoline if any args or returns are floats, or if we have struct args
         if (func.arg_types != 0 || func.ret_types != 0 || func.struct_arg_sizes_ !is null) {
-            import dvm.native_trampoline_float: call_native_float;
             // Check if there are 2 return values (for struct returns in XMM0+XMM1)
             uintptr_t* ret2_ptr = (func.n_ret > 1) ? &result2 : null;
             result = call_native_float(
@@ -193,7 +191,6 @@ struct Machine {
                 func.struct_arg_sizes_
             );
         } else {
-            import dvm.native_trampoline: call_native_trampoline;
             result = call_native_trampoline(
                 cast(void*)func.native_function_,
                 args.ptr,
