@@ -92,6 +92,7 @@ struct LinkedModule {
     Box!(uintptr_t[]) variables;
     // table to look variables up by name
     Table!(str, uintptr_t*) variable_table;
+    Table!(str, LinkedModule*) imports;
     Function* start;
 
     FunctionInfo

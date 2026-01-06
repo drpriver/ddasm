@@ -19,6 +19,44 @@ import dvm.dvm_unlinked;
 import dvm.dvm_args;
 import dvm.dvm_instructions;
 
+// Convert un-escaped raw text into a ZString, processing escape sequences.
+ZString process_escapes(Allocator allocator, const char[] text){
+    StringBuilder sb;
+    sb.allocator = allocator;
+    for(size_t i = 0; i < text.length; i++){
+        char c = text[i];
+        if(c == '\\'){
+            if(i < text.length - 1){
+                char next = text[i+1];
+                switch(next){
+                    case 'n':  sb.write('\n'); i++; continue;
+                    case 't':  sb.write('\t'); i++; continue;
+                    case '\\': sb.write('\\'); i++; continue;
+                    case 'r':  sb.write('\r'); i++; continue;
+                    case 'e':  sb.write('\033'); i++; continue;
+                    case '0':  sb.write('\0'); i++; continue;
+                    case 'b':  sb.write('\b'); i++; continue;
+                    case 'x':  case 'X':
+                        if(i < text.length - 3){
+                            auto v = parse_hex_inner(text[i+2 .. i+4]);
+                            if(v.errored)
+                                break;
+                            sb.write(cast(char)v.value);
+                            i+=3;
+                            continue;
+                        }
+                        goto default;
+                    default: break;
+                }
+            }
+            sb.write('\\');
+            continue;
+        }
+        sb.write(c);
+    }
+    return sb.zdetach;
+}
+
 struct LinkContext {
     Allocator allocator;
     Allocator temp_allocator;
@@ -113,43 +151,7 @@ struct LinkContext {
     // Records the ZString in the string table.
     ZString
     make_string(const char[] text){
-        StringBuilder sb;
-        sb.allocator = allocator;
-        // This is slow and we should use simd to scan for
-        // escape codes.
-        for(size_t i = 0; i < text.length; i++){
-            char c = text[i];
-            if(c == '\\'){
-                if(i < text.length - 1){
-                    char next = text[i+1];
-                    switch(next){
-                        case 'n':  sb.write('\n'); i++; continue;
-                        case 't':  sb.write('\t'); i++; continue;
-                        case '\\': sb.write('\\'); i++; continue;
-                        case 'r':  sb.write('\r'); i++; continue;
-                        case 'e':  sb.write('\033'); i++; continue;
-                        case '0':  sb.write('\0'); i++; continue;
-                        case 'b':  sb.write('\b'); i++; continue;
-                        case 'x':  case 'X':
-                            if(i < text.length - 3){
-                                auto v = parse_hex_inner(text[i+2 .. i+4]);
-                                if(v.errored)
-                                    break;
-                                sb.write(cast(char)v.value);
-                                i+=3;
-                                continue;
-                            }
-                            goto default;
-                        default: break;
-                    }
-                }
-                // invalid backslash escape. Could error here.
-                sb.write('\\');
-                continue;
-            }
-            sb.write(c);
-        }
-        ZString result = sb.zdetach;
+        ZString result = process_escapes(allocator, text);
         prog.strings.push(result);
         return result;
     }
@@ -491,10 +493,9 @@ link_single_instruction(Allocator allocator, const ref AbstractInstruction inst,
                 return result;
 
             case STRING:
-                void[] p = allocator.zalloc(arg.text.length+1);
-                import core.stdc.string: memcpy;
-                memcpy(p.ptr, arg.text.ptr, arg.text.length);
-                result.bytecode[idx++] = cast(uintptr_t)p.ptr;
+                ZString z = process_escapes(allocator, arg.text);
+                prog.strings ~= z;
+                result.bytecode[idx++] = cast(uintptr_t)z.ptr;
                 break;
 
             case IMMEDIATE:
@@ -513,6 +514,16 @@ link_single_instruction(Allocator allocator, const ref AbstractInstruction inst,
                 if(auto fi = arg.function_name in prog.functions){
                     result.bytecode[idx++] = cast(uintptr_t)fi.func;
                 } else {
+                    // Try module.function lookup
+                    auto s = arg.function_name.split('.');
+                    if(s.tail.length){
+                        if(auto mod = s.head in prog.imports){
+                            if(auto fi = s.tail in (*mod).functions){
+                                result.bytecode[idx++] = cast(uintptr_t)fi.func;
+                                break;
+                            }
+                        }
+                    }
                     StringBuilder sb = {allocator: allocator};
                     sb.FORMAT("Unknown function: ", arg.function_name);
                     result.errmess = sb.zdetach;
@@ -524,6 +535,16 @@ link_single_instruction(Allocator allocator, const ref AbstractInstruction inst,
                 if(auto var = arg.variable in prog.variable_table){
                     result.bytecode[idx++] = cast(uintptr_t)*var;
                 } else {
+                    // Try module.variable lookup
+                    auto s = arg.variable.split('.');
+                    if(s.tail.length){
+                        if(auto mod = s.head in prog.imports){
+                            if(auto var = s.tail in (*mod).variable_table){
+                                result.bytecode[idx++] = cast(uintptr_t)*var;
+                                break;
+                            }
+                        }
+                    }
                     StringBuilder sb = {allocator: allocator};
                     sb.FORMAT("Unknown variable: ", arg.variable);
                     result.errmess = sb.zdetach;
@@ -594,6 +615,8 @@ link_module(
         // TODO: cleanup ctx.prog
         return err;
     }
+    ctx.prog.imports.data.allocator = allocator;
+    ctx.prog.imports.extend(modules.items);
     *prog = ctx.prog;
     return AsmError.NO_ERROR;
 }

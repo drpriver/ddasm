@@ -56,6 +56,7 @@ struct Machine {
         current_program = prog;
         registers[RegisterNames.RIP] = cast(uintptr_t)current_program.start.instructions_;
         registers[RegisterNames.RSP] = cast(uintptr_t)stack.data.ptr;
+        registers[RegisterNames.RBP] = cast(uintptr_t)stack.data.ptr;
         call_depth = 0;
         debugger_history.allocator = allocator;
         if(debug_history_file) debugger_history.load_history(debug_history_file);
@@ -217,24 +218,126 @@ struct Machine {
         }
     }}
 
+    // Print stack/local values. Stack grows up, so rbp < rsp.
+    // from_rsp: true = from rsp down (stack top), false = from rbp up (locals)
+    int print_stack_range(int start, int count, bool from_rsp){
+        uintptr_t* rsp = cast(uintptr_t*)registers[RegisterNames.RSP];
+        uintptr_t* rbp = cast(uintptr_t*)registers[RegisterNames.RBP];
+        if(rbp > rsp){
+            fprintf(stderr, "Invalid stack: rbp > rsp\n");
+            return 0;
+        }
+        int max_slots = cast(int)(rsp - rbp);
+        if(max_slots == 0){
+            fprintf(stderr, "Stack is empty\n");
+            return 0;
+        }
+        if(start < 0 || start >= max_slots){
+            fprintf(stderr, "Slot %d out of range (0-%d)\n", start, max_slots - 1);
+            return 0;
+        }
+        if(count < 0) count = max_slots - start;
+        if(start + count > max_slots) count = max_slots - start;
+
+        StringBuilder sb = {allocator: allocator};
+        scope(exit) sb.cleanup;
+        for(int i = start; i < start + count; i++){
+            uintptr_t val = from_rsp ? rsp[-1 - i] : rbp[i];
+            if(from_rsp)
+                sb.FORMAT("[rsp-", (i + 1) * cast(int)uintptr_t.sizeof, "] = ");
+            else
+                sb.FORMAT("[rbp+", i * cast(int)uintptr_t.sizeof, "] = ");
+            sb.hex("0x", val);
+            resolve_value(&sb, val);
+            sb.write('\n');
+        }
+        str text = sb.borrow;
+        fprintf(stderr, "%.*s", cast(int)text.length, text.ptr);
+        return count;
+    }
+
+    // Print a value with optional symbolic resolution
+    void print_resolved(str name, uintptr_t value, char prefix = 0, bool do_resolve = true){
+        StringBuilder sb = {allocator: allocator};
+        scope(exit) sb.cleanup;
+        if(prefix) sb.write(prefix);
+        sb.FORMAT(name, " -> ");
+        sb.hex("0x", value);
+        if(do_resolve) resolve_value(&sb, value);
+        sb.write('\n');
+        str text = sb.borrow;
+        fprintf(stderr, "%.*s", cast(int)text.length, text.ptr);
+    }
+
+    // Try to resolve a value to a symbolic name (function, string, etc.)
+    void resolve_value(SB)(SB* sb, uintptr_t value){
+        // Check functions
+        Function* func = cast(Function*)value;
+        foreach(v; current_program.functions.values){
+            if(v.func == func){
+                sb.write(" (function ");
+                sb.write(v.name);
+                sb.write(")");
+                return;
+            }
+        }
+        foreach(imp; current_program.imports.items){
+            foreach(v; imp.value.functions.values){
+                if(v.func == func){
+                    sb.write(" (function ");
+                    sb.write(imp.key);
+                    sb.write('.');
+                    sb.write(v.name);
+                    sb.write(")");
+                    return;
+                }
+            }
+        }
+        // Check strings
+        foreach(str; current_program.strings){
+            if(str.ptr == cast(const char*)value){
+                sb.write(" (\"");
+                sb.write(E(str[]));
+                sb.write("\")");
+                return;
+            }
+        }
+        foreach(imp; current_program.imports.items){
+            foreach(str; imp.value.strings){
+                if(str.ptr == cast(const char*)value){
+                    sb.write(" (\"");
+                    sb.write(E(str[]));
+                    sb.write("\")");
+                    return;
+                }
+            }
+        }
+    }
+
     void
     dump(int off=0){
+        StringBuilder sb = {allocator:allocator};
+        scope(exit) sb.cleanup;
         foreach(i, reg; registers){
             immutable RegisterInfo* ri = get_register_info(i);
-            if(!Fuzzing)fprintf(stderr, "[%s] = %#zx\n", ri.NAME.ptr, reg);
+            sb.FORMAT("[", ri.NAME, "] = ");
+            sb.hex("0x", reg);
+            resolve_value(&sb, reg);
+            sb.write('\n');
         }
+        str text = sb.borrow;
+        if(!Fuzzing)fprintf(stderr, "%.*s", cast(int)text.length, text.ptr);
+        sb.reset;
         for(size_t i = 0; i < 4; i++){
             if(!Fuzzing)fprintf(stderr, "ip[%zu] = %#zx\n", i, (cast(uintptr_t*)registers[RegisterNames.RIP])[i]);
         }
-        StringBuilder temp = {allocator:allocator};
-        scope(exit) temp.cleanup;
         uintptr_t* ip = cast(uintptr_t*)registers[RegisterNames.RIP];
         ip += off;
         for(int i = 0; i < 4; i++){
-            ip += disassemble_one_instruction(current_program, &temp, ip);
-            temp.write("\n     ");
+            ip += disassemble_one_instruction(current_program, &sb, ip);
+            sb.write("\n     ");
         }
-        str text = temp.borrow;
+        text = sb.borrow;
         if(!Fuzzing)fprintf(stderr, "Dis: %.*s\n", cast(int)text.length, text.ptr);
     }
 
@@ -461,13 +564,13 @@ struct Machine {
                         return BEGIN_OK;
                     }
                     if(immutable(RegisterInfo)* ri = get_register_info(buf)){
-                        fprintf(stderr, "%s -> 0x%llx\n", ri.name.ptr, registers[ri.register]);
+                        print_resolved(ri.name, registers[ri.register]);
                         debugger_history.add_line(buf);
                         continue;
                     }
                     if(buf[0] == '*'){
                         if(immutable(RegisterInfo)* ri = get_register_info(buf[1..$])){
-                            fprintf(stderr, "*%s -> 0x%llx\n", ri.name.ptr, *cast(uintptr_t*)registers[ri.register]);
+                            print_resolved(ri.name, *cast(uintptr_t*)registers[ri.register], '*');
                             debugger_history.add_line(buf);
                             continue;
                         }
@@ -498,6 +601,34 @@ struct Machine {
                             case "m2": case "mread2": mread = 2; break;
                             case "m4": case "mread4": mread = 4; break;
                             case "m": case "mread":   mread = 8; break;
+                            case "s": case "stack":
+                            case "v": case "locals":{
+                                import dlib.parse_numbers: parse_uint64;
+                                bool from_rsp = (cmd == "s" || cmd == "stack");
+                                if(arg == "all" || arg == "a"){
+                                    print_stack_range(0, -1, from_rsp);
+                                } else {
+                                    auto parts = arg.split(' ');
+                                    auto r1 = parse_uint64(parts.head);
+                                    if(r1.errored){
+                                        fprintf(stderr, "Invalid slot: %.*s\n", cast(int)parts.head.length, parts.head.ptr);
+                                        continue;
+                                    }
+                                    int slot = cast(int)r1.value;
+                                    if(parts.tail.length){
+                                        auto r2 = parse_uint64(parts.tail.stripped);
+                                        if(r2.errored){
+                                            fprintf(stderr, "Invalid end slot: %.*s\n", cast(int)parts.tail.length, parts.tail.ptr);
+                                            continue;
+                                        }
+                                        int end = cast(int)r2.value;
+                                        print_stack_range(slot, end - slot + 1, from_rsp);
+                                    } else {
+                                        print_stack_range(slot, 1, from_rsp);
+                                    }
+                                }
+                                debugger_history.add_line(buf);
+                            }continue;
                             default:
                                 // Commands with args that aren't recognized - try as dasm
                                 int dasm_result = try_execute_dasm(buf);
@@ -510,10 +641,10 @@ struct Machine {
                         if(mread){
                             immutable(RegisterInfo)* ri = get_register_info(arg);
                             if(!ri) continue;
-                            uintptr_t val;
+                            uintptr_t val = 0;
                             uintptr_t*r = cast(uintptr_t*)registers[ri.register];
                             memcpy(&val, r, mread);
-                            fprintf(stderr, "%s -> 0x%llx\n", ri.name.ptr, val);
+                            print_resolved(ri.name, val, 0, mread == 8);
                             debugger_history.add_line(buf);
                             continue;
                         }
@@ -544,6 +675,22 @@ struct Machine {
                         case "b": case "break": case "breakpoint":
                             fprintf(stderr, "Sorry, adding breakpoints isn't implemented yet.\n");
                             continue;
+                        case "s": case "stack":
+                            debugger_history.add_line(buf);
+                            print_stack_range(0, 10, true);
+                            continue;
+                        case "sa":
+                            debugger_history.add_line(buf);
+                            print_stack_range(0, -1, true);
+                            continue;
+                        case "v": case "locals":
+                            debugger_history.add_line(buf);
+                            print_stack_range(0, 10, false);
+                            continue;
+                        case "va":
+                            debugger_history.add_line(buf);
+                            print_stack_range(0, -1, false);
+                            continue;
                         case "h": case "help":
                             fprintf(stderr, "%s", ("Commands:\n"
                             ~"  next, n           execute next instruction\n"
@@ -551,6 +698,14 @@ struct Machine {
                             ~"  quit, q           halt execution\n"
                             ~"  list, l           print disassembly of entire function\n"
                             ~"  dump, d           print contents of registers\n"
+                            ~"  stack, s          print top 10 stack values (from rsp)\n"
+                            ~"  stack all, sa     print entire stack\n"
+                            ~"  stack N           print stack slot N\n"
+                            ~"  stack N M         print stack slots N to M\n"
+                            ~"  locals, v         print first 10 locals (from rbp)\n"
+                            ~"  locals all, va    print all locals\n"
+                            ~"  locals N          print local slot N\n"
+                            ~"  locals N M        print local slots N to M\n"
                             ~"  backtrace, bt     print stacktrace\n"
                             ~"  where             alias of backtrace\n"
                             ~"  help, h           print out this info\n"
@@ -1435,9 +1590,27 @@ disassemble_one_instruction(SB)(LinkedModule* prog, SB* sb, uintptr_t* ip){
                             goto handled;
                         }
                     }
+                    // Check imports
+                    foreach(imp; prog.imports.items){
+                        foreach(v; imp.value.functions.values){
+                            if(v.func == func){
+                                sb.write("function ");
+                                sb.write(imp.key);
+                                sb.write('.');
+                                sb.write(v.name);
+                                goto handled;
+                            }
+                        }
+                    }
                     foreach(str; prog.strings){
                         if(str.ptr == cast(const char*)value)
                             goto case STRING;
+                    }
+                    foreach(imp; prog.imports.items){
+                        foreach(str; imp.value.strings){
+                            if(str.ptr == cast(const char*)value)
+                                goto case STRING;
+                        }
                     }
                 }
                 // default:
@@ -1448,7 +1621,15 @@ disassemble_one_instruction(SB)(LinkedModule* prog, SB* sb, uintptr_t* ip){
                     foreach(str; prog.strings){
                         if(str.ptr == cast(const char*)value){
                             sb.write(Q(E(str[]), '"'));
-                            break;
+                            goto handled;
+                        }
+                    }
+                    foreach(imp; prog.imports.items){
+                        foreach(str; imp.value.strings){
+                            if(str.ptr == cast(const char*)value){
+                                sb.write(Q(E(str[]), '"'));
+                                goto handled;
+                            }
                         }
                     }
                     continue;
