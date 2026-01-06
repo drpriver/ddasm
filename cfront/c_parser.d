@@ -70,6 +70,7 @@ struct DeclSpecifiers {
     bool saw_long_long;  // second 'long' in 'long long'
     bool saw_float;
     bool saw_double;
+    bool saw_complex;  // _Complex (ignored - treated as underlying type)
 
     // The actual base type (struct X, typedef-name, etc.) - set directly for complex types
     CType* base_type;
@@ -478,6 +479,7 @@ struct CParser {
         if(match(CTokenType.FLOAT32))  { specs.saw_float = true; return true; }  // _Float32 → float
         if(match(CTokenType.FLOAT64))  { specs.saw_double = true; return true; }  // _Float64 → double
         if(match(CTokenType.FLOAT128)) { specs.saw_long = true; specs.saw_double = true; return true; }  // _Float128 → long double stub
+        if(match(CTokenType.COMPLEX))  { specs.saw_complex = true; return true; }  // _Complex (ignored)
 
         // Only one complex base type allowed
         if(specs.base_type !is null) return false;
@@ -1562,6 +1564,8 @@ struct CParser {
                 add_or_merge_global(gvar);
             }
         } while(match(CTokenType.COMMA));
+        Attributes attrs;
+        parse_gnu_attributes(attrs);
 
         consume(CTokenType.SEMICOLON, "Expected ';' after declaration");
         if(ERROR_OCCURRED) return 1;
