@@ -197,19 +197,6 @@ struct FloatResult {
     ParseNumberError errored;
 }
 
-// Check if a string represents a float literal (has '.' or 'e/E')
-// But NOT a hex literal (0x...)
-bool is_float_literal(const char[] s){
-    // Hex literals are not floats (even if they contain 'e')
-    if(s.length >= 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X'))
-        return false;
-    foreach(c; s){
-        if(c == '.' || c == 'e' || c == 'E')
-            return true;
-    }
-    return false;
-}
-
 // Parse a float literal using C library for accuracy
 // FIXME: use port of fast_float to avoid platform dependency.
 // FIXME: this should be templated on float vs double.
@@ -236,8 +223,8 @@ FloatResult parse_float(const char[] s){ with(ParseNumberError){
     char* endptr;
     double result = strtod(buf.ptr, &endptr);
 
-    // Check if parsing consumed any characters
-    if(endptr == buf.ptr) return FloatResult(0.0, INVALID_CHARACTER);
+    // Check if parsing consumed all characters
+    if(endptr != buf.ptr + num.length) return FloatResult(0.0, INVALID_CHARACTER);
 
     return FloatResult(result, NO_ERROR);
 }}

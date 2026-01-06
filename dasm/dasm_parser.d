@@ -9,7 +9,7 @@ import dlib.allocator;
 import dlib.zstring;
 import dlib.table;
 import dlib.stringbuilder;
-import dlib.parse_numbers: parse_unsigned_human, IntegerResult, is_float_literal, parse_float, FloatResult;
+import dlib.parse_numbers: parse_unsigned_human, IntegerResult;
 
 import dvm.dvm_defs;
 import dvm.dvm_unlinked;
@@ -504,6 +504,7 @@ struct ParseContext{
             }
             case NUMBER:{
                 // Check if this is a float literal
+                /*
                 if(is_float_literal(tok.text)){
                     FloatResult f = parse_float(tok.text);
                     if(f.errored){
@@ -515,6 +516,7 @@ struct ParseContext{
                     result.kind = IMMEDIATE;
                     return result;
                 }
+                */
                 IntegerResult!ulong e = parse_unsigned_human(tok.text);
                 if(e.errored){
                     err_print(tok, "Unable to parse a number from ", Q(tok.text));

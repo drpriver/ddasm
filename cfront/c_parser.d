@@ -692,8 +692,9 @@ struct CParser {
             return true;
         }
 
-        // Typedef names
-        if(check(CTokenType.IDENTIFIER)){
+        // Typedef names - only if we don't already have a type
+        // This handles "int myint" where myint is a typedef: int is the type, myint is the declarator
+        if(check(CTokenType.IDENTIFIER) && specs.base_type is null && !has_primitive_type_flags(specs)){
             if(auto t = peek().lexeme in typedef_types){
                 advance();
                 specs.base_type = *t;
@@ -2795,7 +2796,10 @@ struct CParser {
                 return true;
             }
             // Check for typedef names and special identifier keywords
+            // But local variables shadow typedef names, so check local scope first
             if(tok.type == IDENTIFIER){
+                // If there's a local variable with this name, it's not a type
+                if(lookup_local_variable(tok.lexeme) !is null) return false;
                 if(tok.lexeme in typedef_types) return true;
                 // Special type keywords that may not have token types
                 str lex = tok.lexeme;
@@ -4443,6 +4447,11 @@ struct CParser {
                         return null;
                     }
                     type = operand.type.pointed_to;
+                    // Dereferencing pointer-to-array produces array type.
+                    // Arrays decay to addresses, so this is a no-op type change, not a memory read.
+                    if(type.is_array){
+                        return CCast.make(allocator, type, operand, op);
+                    }
                     break;
                 case AMP:
                     // Address-of: result is pointer to operand type

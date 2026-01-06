@@ -409,29 +409,76 @@ struct Machine {
                     if(!buf.length){
                         return BEGIN_OK;
                     }
+                    if(immutable(RegisterInfo)* ri = get_register_info(buf)){
+                        fprintf(stderr, "%s -> 0x%llx\n", ri.name.ptr, registers[ri.register]);
+                        debugger_history.add_line(buf);
+                        continue;
+                    }
+                    if(buf[0] == '*'){
+                        if(immutable(RegisterInfo)* ri = get_register_info(buf[1..$])){
+                            fprintf(stderr, "*%s -> 0x%llx\n", ri.name.ptr, *cast(uintptr_t*)registers[ri.register]);
+                            debugger_history.add_line(buf);
+                            continue;
+                        }
+                        else {
+                            fprintf(stderr, "Unknown register name\n");
+                            continue;
+                        }
+                    }
                     Split s = buf.split(' ');
                     str cmd = s.head;
                     str arg = s.tail?s.tail.stripped:null;
+                    size_t mread = 0;
                     if(arg.length){
                         switch(cmd){
                             case "w": case "watch":{
                                 immutable(RegisterInfo)* ri = get_register_info(arg);
                                 if(!ri) continue;
                                 watches[ri.register] = true;
+                                debugger_history.add_line(buf);
                             }continue;
                             case "uw": case "unwatch":{
                                 immutable(RegisterInfo)* ri = get_register_info(arg);
                                 if(!ri) continue;
                                 watches[ri.register] = false;
+                                debugger_history.add_line(buf);
                             }continue;
+                            case "m1": case "mread1": mread = 1; break;
+                            case "m2": case "mread2": mread = 2; break;
+                            case "m4": case "mread4": mread = 4; break;
+                            case "m": case "mread":   mread = 8; break;
+                            case "move":
+                                Split args = arg.split(' ');
+                                arg = args.head;
+                                str arg2 = args.tail.stripped;
+                                if(!arg2.length) continue;
+                                immutable(RegisterInfo)* dst = get_register_info(arg);
+                                immutable(RegisterInfo)* src = get_register_info(arg2);
+                                if(!dst || !src) {
+                                    fprintf(stderr, "Unknown reg names\n");
+                                    continue;
+                                }
+                                registers[dst.register] = registers[src.register];
+                                debugger_history.add_line(buf);
+                                continue;
                             default:
                                 fprintf(stderr, "Unknown command: '%.*s'\n", cast(int)len, buff.ptr);
                                 continue;
                         }
+                        if(mread){
+                            immutable(RegisterInfo)* ri = get_register_info(arg);
+                            if(!ri) continue;
+                            uintptr_t val;
+                            uintptr_t*r = cast(uintptr_t*)registers[ri.register];
+                            memcpy(&val, r, mread);
+                            fprintf(stderr, "%s -> 0x%llx\n", ri.name.ptr, val);
+                            debugger_history.add_line(buf);
+                            continue;
+                        }
                     }
                     switch(buf){
                         case "next": case "n":
-                            debugger_history.add_line(buf);
+                            // debugger_history.add_line(buf);
                             return BEGIN_OK;
                         case "c": case "continue":
                             debugger_history.add_line(buf);
@@ -467,6 +514,7 @@ struct Machine {
                             ~"  help, h           print out this info\n"
                             ~"  watch, w reg      add a watch for a register\n"
                             ~"  unwatch, uw reg   remove a watch for a register\n"
+                            ~"  mread, m reg      dereference the uintptr_t* stored in reg\n"
                             ).ptr);
                             continue;
 
