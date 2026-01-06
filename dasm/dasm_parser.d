@@ -351,7 +351,7 @@ struct ParseContext{
             tok = tokenizer.current_token_and_advance;
             while(tok.type == SPACE || tok.type == TAB)
                 tok = tokenizer.current_token_and_advance;
-            if(tok.type == NEWLINE || tok.type == SEMICOLON)
+            if(tok.type == NEWLINE || tok.type == SEMICOLON || tok.type == EOF)
                 break;
             if(tok.type == POUND){
                 tok = tokenizer.skip_comment(tok);
@@ -503,20 +503,6 @@ struct ParseContext{
                 return result;
             }
             case NUMBER:{
-                // Check if this is a float literal
-                /*
-                if(is_float_literal(tok.text)){
-                    FloatResult f = parse_float(tok.text);
-                    if(f.errored){
-                        err_print(tok, "Unable to parse a float from ", Q(tok.text));
-                        return result;
-                    }
-                    // Bit-cast double to uintptr_t
-                    result.immediate = *cast(ulong*)&f.value;
-                    result.kind = IMMEDIATE;
-                    return result;
-                }
-                */
                 IntegerResult!ulong e = parse_unsigned_human(tok.text);
                 if(e.errored){
                     err_print(tok, "Unable to parse a number from ", Q(tok.text));
@@ -860,4 +846,50 @@ ConstantsTable(){
         constants_table["USIZE"] = (uintptr_t).sizeof;
     }
     return &constants_table;
+}
+
+struct SingleInstructionResult {
+    AbstractInstruction inst;
+    ZString errmess;
+    bool success;
+}
+
+// Parse a single dasm instruction from a string.
+// Returns the parsed AbstractInstruction, or an error message on failure.
+// Caller provides allocator for any temporary allocations (arrays, error messages).
+SingleInstructionResult
+parse_single_instruction(Allocator allocator, str text){
+    SingleInstructionResult result;
+    ParseContext ctx;
+    ctx.allocator = allocator;
+    ctx.tokenizer = Tokenizer.from(text);
+    ctx.prog.arrays.bdata.allocator = allocator;
+
+    with(TokenType){
+        Token tok = ctx.tokenizer.current_token_and_advance();
+        while(tok.type == SPACE || tok.type == TAB)
+            tok = ctx.tokenizer.current_token_and_advance;
+
+        if(tok.type == EOF || tok.type == NEWLINE){
+            ctx.err_print(tok, "Empty instruction");
+            result.errmess = ctx.errmess;
+            return result;
+        }
+
+        if(tok.type != IDENTIFIER){
+            ctx.err_print(tok, "Expected instruction name, got ", Q(tok.text));
+            result.errmess = ctx.errmess;
+            return result;
+        }
+
+        result.inst.first_char = tok._text;
+        int err = ctx.decode_instruction(tok, &result.inst);
+        if(err){
+            result.errmess = ctx.errmess;
+            return result;
+        }
+
+        result.success = true;
+        return result;
+    }
 }

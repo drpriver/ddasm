@@ -16,10 +16,13 @@ import dvm.dvm_linked;
 import dvm.dvm_instructions;
 import dvm.dvm_regs;
 import dvm.dvm_args;
+import dvm.dvm_linker : link_single_instruction, SingleInstructionLinkResult;
+import dasm.dasm_parser : parse_single_instruction, SingleInstructionResult;
 enum RunFlags: uint {
     NONE = 0,
     DEBUG = 1 << 0,
     DISASSEMBLE_EACH = 1 << 1,
+    RUN_ONE = 1 << 2,
 }
 
 struct Machine {
@@ -56,12 +59,31 @@ struct Machine {
         call_depth = 0;
         debugger_history.allocator = allocator;
         if(debug_history_file) debugger_history.load_history(debug_history_file);
-        int result = run_interpreter!flags;
         static if(flags & RunFlags.DEBUG){
-            if(result == BEGIN_CONTINUE){
-                registers[RegisterNames.RIP] -= uintptr_t.sizeof;
-                result = run_interpreter!((flags & RunFlags.DISASSEMBLE_EACH)?RunFlags.DISASSEMBLE_EACH:RunFlags.NONE);
+            int result;
+            for(;;){
+                again:;
+                result = run_interpreter!flags;
+                while(result == BEGIN_CONTINUE_DEBUGGING){
+                    result = run_interpreter!(RunFlags.RUN_ONE);
+                    if(result == BEGIN_BAD || result == BEGIN_OK)
+                        break;
+                    result = run_interpreter!(RunFlags.RUN_ONE);
+                    if(result == BEGIN_BAD || result == BEGIN_OK)
+                        break;
+                    goto again;
+                }
+                if(result == BEGIN_CONTINUE){
+                    registers[RegisterNames.RIP] -= uintptr_t.sizeof;
+                    result = run_interpreter!((flags & RunFlags.DISASSEMBLE_EACH)?RunFlags.DISASSEMBLE_EACH:RunFlags.NONE);
+                }
+                break;
             }
+        }
+        else {
+            int result = run_interpreter!flags;
+            if(result == BEGIN_CONTINUE)
+                result = BEGIN_OK;
         }
         if(debug_history_file) debugger_history.dump(debug_history_file);
         debugger_history.cleanup;
@@ -250,13 +272,16 @@ struct Machine {
         BEGIN_BAD = 1,
         BEGIN_CONTINUE = 2,
         BEGIN_END = 3,
+        BEGIN_CONTINUE_DEBUGGING = 4,
     }
 
     void
     print_context(uintptr_t* ip){
         FunctionInfo func = current_program.addr_to_function(ip);
-        assert(func.func);
-        assert(func.func.type == func.func.type.INTERPRETED);
+        if(!func.func || func.func.type != func.func.type.INTERPRETED){
+            // Address not in any known function (e.g., debugger scratch buffer)
+            return;
+        }
         ptrdiff_t current = 0;
         ptrdiff_t i = 0;
         uintptr_t[] insts = func.func.instructions;
@@ -376,6 +401,32 @@ struct Machine {
             }
         }
 
+        // Helper to try parsing and executing a dasm instruction
+        // Returns: 0 = success (set RIP), 1 = parse/link error (printed), -1 = not valid dasm
+        int try_execute_dasm(str buf){
+            auto parse_result = parse_single_instruction(allocator, buf);
+            if(!parse_result.success){
+                if(parse_result.errmess.length)
+                    fprintf(stderr, "%.*s\n", cast(int)parse_result.errmess.length, parse_result.errmess.ptr);
+                return -1;
+            }
+
+            // Link the instruction with return address = current RIP
+            auto link_result = link_single_instruction(allocator, parse_result.inst, current_program, registers[RIP]-uintptr_t.sizeof);
+            if(!link_result.success){
+                fprintf(stderr, "Link error: %.*s\n", cast(int)link_result.errmess.length, link_result.errmess.ptr);
+                return 1;
+            }
+
+            // Allocate scratch buffer (zero-init so out-of-bounds hits ABORT)
+            uintptr_t[] scratch_buf = allocator.zalloc!(uintptr_t)(SingleInstructionLinkResult.MAX_SIZE);
+            memcpy(scratch_buf.ptr, link_result.bytecode.ptr, link_result.length * uintptr_t.sizeof);
+
+            registers[RIP] = cast(uintptr_t)(scratch_buf.ptr);
+            debugger_history.add_line(buf);
+            return 0;
+        }
+
         // pragma(inline, true)
         int
         begin(Instruction inst){
@@ -388,7 +439,7 @@ struct Machine {
                 str text = sb.borrow;
                 if(!Fuzzing)fprintf(stderr, "%.*s\n", cast(int)text.length, text.ptr);
             }}
-            static if(flags & RunFlags.DEBUG){{
+            static if(flags & RunFlags.DEBUG){
                 print_context((cast(uintptr_t*)registers[RIP])-1);
                 foreach(i, w; watches){
                     if(!w) continue;
@@ -447,22 +498,13 @@ struct Machine {
                             case "m2": case "mread2": mread = 2; break;
                             case "m4": case "mread4": mread = 4; break;
                             case "m": case "mread":   mread = 8; break;
-                            case "move":
-                                Split args = arg.split(' ');
-                                arg = args.head;
-                                str arg2 = args.tail.stripped;
-                                if(!arg2.length) continue;
-                                immutable(RegisterInfo)* dst = get_register_info(arg);
-                                immutable(RegisterInfo)* src = get_register_info(arg2);
-                                if(!dst || !src) {
-                                    fprintf(stderr, "Unknown reg names\n");
-                                    continue;
-                                }
-                                registers[dst.register] = registers[src.register];
-                                debugger_history.add_line(buf);
-                                continue;
                             default:
-                                fprintf(stderr, "Unknown command: '%.*s'\n", cast(int)len, buff.ptr);
+                                // Commands with args that aren't recognized - try as dasm
+                                int dasm_result = try_execute_dasm(buf);
+                                if(dasm_result == 0) return BEGIN_CONTINUE_DEBUGGING;  // Execute
+                                if(dasm_result == 1) continue;  // Error, stay in debugger
+                                // dasm_result == -1 means wasn't valid dasm either
+                                fprintf(stderr, "Unknown command: '%.*s'\n", cast(int)buf.length, buf.ptr);
                                 continue;
                         }
                         if(mread){
@@ -519,11 +561,15 @@ struct Machine {
                             continue;
 
                         default:
+                            // Try as dasm instruction
+                            int dasm_result = try_execute_dasm(buf);
+                            if(dasm_result == 0) return BEGIN_CONTINUE_DEBUGGING;  // Execute
+                            if(dasm_result == 1) continue;  // Error, stay in debugger
                             fprintf(stderr, "Unknown command: '%.*s'\n", cast(int)buf.length, buf.ptr);
                             continue;
                     }
                 }
-            }}
+            }
             else
                 return BEGIN_OK;
         }
@@ -1357,6 +1403,8 @@ struct Machine {
                     *dst = cast(uintptr_t)cast(intptr_t)*src;
                 }break;
             }
+            static if(flags & RunFlags.RUN_ONE)
+                return BEGIN_CONTINUE;
         }
     }
     }

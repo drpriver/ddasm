@@ -458,6 +458,107 @@ calculate_function_size(AbstractFunction* func){
     return size;
 }
 
+struct SingleInstructionLinkResult {
+    // opcode + up to 5 args + return jump (MOVE_I RIP addr = 3 words)
+    enum MAX_SIZE = 16;
+    uintptr_t[MAX_SIZE] bytecode;
+    size_t length;
+    ZString errmess;
+    bool success;
+}
+
+// Link a single AbstractInstruction using the symbol tables from an existing LinkedModule.
+// Appends a MOVE_I RIP <return_addr> to jump back after execution.
+// Returns bytecode ready for execution.
+SingleInstructionLinkResult
+link_single_instruction(Allocator allocator, const ref AbstractInstruction inst, LinkedModule* prog, uintptr_t return_addr){
+    import dvm.dvm_regs : RegisterNames;
+    SingleInstructionLinkResult result;
+    size_t idx = 0;
+
+    result.bytecode[idx++] = inst.instruction;
+
+    foreach(const ref Argument arg; inst.args[0..inst.n_args]){
+        if(idx >= result.MAX_SIZE){
+            result.errmess = ZString.literal("Too many arguments");
+            return result;
+        }
+
+        with(ArgumentKind) switch(arg.kind){
+            default:
+            case UNSET:
+                result.errmess = ZString.literal("Invalid argument");
+                return result;
+
+            case STRING:
+                void[] p = allocator.zalloc(arg.text.length+1);
+                import core.stdc.string: memcpy;
+                memcpy(p.ptr, arg.text.ptr, arg.text.length);
+                result.bytecode[idx++] = cast(uintptr_t)p.ptr;
+                break;
+
+            case IMMEDIATE:
+                result.bytecode[idx++] = arg.immediate;
+                break;
+
+            case REGISTER:
+                result.bytecode[idx++] = arg.reg;
+                break;
+
+            case CMPMODE:
+                result.bytecode[idx++] = arg.cmp_mode;
+                break;
+
+            case FUNCTION:
+                if(auto fi = arg.function_name in prog.functions){
+                    result.bytecode[idx++] = cast(uintptr_t)fi.func;
+                } else {
+                    StringBuilder sb = {allocator: allocator};
+                    sb.FORMAT("Unknown function: ", arg.function_name);
+                    result.errmess = sb.zdetach;
+                    return result;
+                }
+                break;
+
+            case VARIABLE:
+                if(auto var = arg.variable in prog.variable_table){
+                    result.bytecode[idx++] = cast(uintptr_t)*var;
+                } else {
+                    StringBuilder sb = {allocator: allocator};
+                    sb.FORMAT("Unknown variable: ", arg.variable);
+                    result.errmess = sb.zdetach;
+                    return result;
+                }
+                break;
+
+            case LABEL:
+                result.errmess = ZString.literal("Labels not supported in single instruction");
+                return result;
+
+            case ARRAY:
+                result.errmess = ZString.literal("Arrays not supported in single instruction");
+                return result;
+
+            case CONSTANT:
+                result.errmess = ZString.literal("Constants not supported in single instruction");
+                return result;
+        }
+    }
+
+    // Append MOVE_I RIP <return_addr> to jump back after execution
+    if(idx + 3 > result.MAX_SIZE){
+        result.errmess = ZString.literal("Instruction too large for return jump");
+        return result;
+    }
+    result.bytecode[idx++] = Instruction.MOVE_I;
+    result.bytecode[idx++] = RegisterNames.RIP;
+    result.bytecode[idx++] = return_addr;
+
+    result.length = idx;
+    result.success = true;
+    return result;
+}
+
 AsmError
 link_module(
     Allocator allocator,
