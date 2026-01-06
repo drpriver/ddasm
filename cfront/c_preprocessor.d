@@ -334,6 +334,8 @@ struct CPreprocessor {
             static immutable str[2] params = ["cond", "p"];
             define_func_macro("__builtin_expect", cast(str[])params[], "(cond)");
         }
+        define_func_macro("__builtin_debug_trap", null, "__dasm{debug}");
+        define_func_macro("__builtin_trap", null, "__dasm{debug}");
 
         // Compiler built-in types
         define_object_macro("__builtin_va_list", "void*");

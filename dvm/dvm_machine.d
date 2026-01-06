@@ -384,7 +384,6 @@ struct Machine {
         BEGIN_CONTINUE = 2,
         BEGIN_END = 3,
         BEGIN_CONTINUE_DEBUGGING = 4,
-        BEGIN_BREAK = 5,  // breakpoint hit in non-debug mode
     }
 
     // Get original instruction at address, checking breakpoints if it's BREAK

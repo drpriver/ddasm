@@ -7,6 +7,7 @@ int main(){
     int data[2] = {3, 4};
     struct Point p2 = {__unpack(data)};
     printf("p2 = %d,%d\n", __unpack(p2));
+    __builtin_debug_trap();
 #endif
     return 0;
 }
