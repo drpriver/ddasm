@@ -431,11 +431,11 @@ int main(void) {
     test_small_struct_pass();
     test_multiple_struct_args();
     test_mixed_scalar_struct();
-    // test_large_struct_pass();
-    // test_small_struct_return();
-    // test_large_struct_return();
-    // test_struct_operations();
-    // test_complex_scenarios();
+    test_large_struct_pass();
+    test_small_struct_return();
+    test_large_struct_return();
+    test_struct_operations();
+    test_complex_scenarios();
 
     printf("\n==============\n");
     printf("Results: %d/%d tests passed\n", tests_passed, tests_run);

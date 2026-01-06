@@ -326,9 +326,9 @@ int struct_return_regs(CType* t){
 
 // Check if type is a Homogeneous Floating-Point Aggregate (HFA)
 // HFA = struct with 1-4 members, all same floating-point type (ARM64 ABI)
+// Note: ARM64 HFAs can be up to 32 bytes (4 doubles), unlike x86-64's 16 byte limit
 bool is_float_hfa(CType* t){
     if(t is null || !t.is_struct_or_union()) return false;
-    if(!fits_in_registers(t)) return false;
     if(t.fields.length == 0 || t.fields.length > 4) return false;
     // Check all fields are same float type (float or double, not mixed)
     CTypeKind first_kind = t.fields[0].type.kind;
@@ -349,6 +349,19 @@ int count_hfa_members(CType* t){
 bool is_double_hfa(CType* t){
     if(t.fields.length == 0) return false;
     return t.fields[0].type.kind == CTypeKind.DOUBLE;
+}
+
+// Get number of DVM register slots an HFA occupies
+// Float HFA: (N * 4 bytes + 7) / 8 = ceil(N/2) slots
+// Double HFA: N * 8 bytes / 8 = N slots
+int hfa_slots(CType* t){
+    if(t.fields.length == 0) return 0;
+    if(is_double_hfa(t)){
+        return cast(int)t.fields.length;  // Each double is 8 bytes = 1 slot
+    } else {
+        // Float: 4 bytes each, packed into 8-byte slots
+        return (cast(int)t.fields.length + 1) / 2;
+    }
 }
 
 
@@ -878,21 +891,25 @@ struct CDasmWriter {
                             float_ret_mask = 0x1;  // float32
                         else
                             float_ret_mask = 0x2;  // double
+                    } else if(func.return_type.is_struct_or_union() && is_float_hfa(func.return_type)){
+                        // HFA return: set a bit for each float/double member (ARM64)
+                        // Note: HFAs can be up to 32 bytes (4 doubles), larger than x86-64's 16 byte limit
+                        int n_members = count_hfa_members(func.return_type);
+                        bool is_double = is_double_hfa(func.return_type);
+                        for(int slot = 0; slot < n_members; slot++){
+                            if(is_double)
+                                float_ret_mask |= (0x2 << (slot * 2));  // double in this slot
+                            else
+                                float_ret_mask |= (0x1 << (slot * 2));  // float32 in this slot
+                        }
                     } else if(func.return_type.is_struct_or_union() && fits_in_registers(func.return_type)){
-                        // Check if this is an HFA return (ARM64: each member in separate FP reg)
-                        if(is_float_hfa(func.return_type)){
-                            // HFA return: set a bit for each float/double member
-                            int n_members = count_hfa_members(func.return_type);
-                            bool is_double = is_double_hfa(func.return_type);
-                            for(int slot = 0; slot < n_members; slot++){
-                                if(is_double)
-                                    float_ret_mask |= (0x2 << (slot * 2));  // double in this slot
-                                else
-                                    float_ret_mask |= (0x1 << (slot * 2));  // float32 in this slot
-                            }
+                        // Non-HFA struct that fits in registers
+                        // ARM64: always use integer registers (x0/x1), leave float_ret_mask = 0
+                        // x86-64: classify each eightword independently per System V ABI
+                        version(AArch64) {
+                            // ARM64: non-HFA structs always return in integer registers
+                            // float_ret_mask stays 0
                         } else {
-                            // Non-HFA struct: classify each eightword
-                            // In System V ABI, each eightword is classified independently
                             int num_ret_regs = struct_return_regs(func.return_type);
                             for(int slot = 0; slot < num_ret_regs; slot++){
                                 // Check what types are in this eightword
@@ -923,38 +940,44 @@ struct CDasmWriter {
                     // Encoding:
                     //   0 = not a struct
                     //   1-4 = HFA with N float members (ARM64: expand into N FP registers)
-                    //   5-6 = HFA with 1-2 double members (ARM64: 4 + count)
+                    //   5-8 = HFA with 1-4 double members (ARM64: 4 + count)
+                    //   9 = hidden return pointer (ARM64: goes in x8, not x0)
                     //   >16 = large struct size (x86_64/ARM64: copy to native stack)
                     ushort[16] struct_arg_sizes;
                     bool has_struct_args = false;
-                    int struct_slot_idx = uses_hidden_ptr ? 1 : 0;
+                    int struct_slot_idx = 0;
+                    if(uses_hidden_ptr){
+                        // ARM64: hidden return pointer goes in x8, mark with special code 9
+                        struct_arg_sizes[0] = 9;
+                        has_struct_args = true;
+                        struct_slot_idx = 1;
+                    }
                     foreach(ref param; func.params){
                         if(struct_slot_idx >= n_params) break;
                         if(param.type && param.type.is_struct_or_union()){
-                            if(fits_in_registers(param.type)){
-                                // Small struct - check if it's an HFA (ARM64 specific)
-                                int num_slots = struct_return_regs(param.type);
-                                if(is_float_hfa(param.type)){
-                                    // HFA: encode member count for trampoline to expand
-                                    int hfa_members = count_hfa_members(param.type);
-                                    if(is_double_hfa(param.type)){
-                                        // Double HFA: encode as 4 + count (5 or 6)
-                                        struct_arg_sizes[struct_slot_idx] = cast(ushort)(4 + hfa_members);
-                                    } else {
-                                        // Float HFA: encode as count (1-4)
-                                        struct_arg_sizes[struct_slot_idx] = cast(ushort)hfa_members;
-                                    }
-                                    has_struct_args = true;
-                                    struct_slot_idx++;
-                                    // HFA takes only 1 DVM slot but uses multiple FP registers
-                                    for(int i = 1; i < num_slots && struct_slot_idx < n_params; i++){
-                                        struct_arg_sizes[struct_slot_idx++] = 0;
-                                    }
+                            // Check for HFA first - ARM64 HFAs can be up to 32 bytes (4 doubles)
+                            if(is_float_hfa(param.type)){
+                                // HFA: encode member count for trampoline to expand
+                                int hfa_members = count_hfa_members(param.type);
+                                int num_slots = hfa_slots(param.type);
+                                if(is_double_hfa(param.type)){
+                                    // Double HFA: encode as 4 + count (5-8)
+                                    struct_arg_sizes[struct_slot_idx] = cast(ushort)(4 + hfa_members);
                                 } else {
-                                    // Non-HFA small struct - no special handling needed
-                                    for(int i = 0; i < num_slots && struct_slot_idx < n_params; i++){
-                                        struct_arg_sizes[struct_slot_idx++] = 0;
-                                    }
+                                    // Float HFA: encode as count (1-4)
+                                    struct_arg_sizes[struct_slot_idx] = cast(ushort)hfa_members;
+                                }
+                                has_struct_args = true;
+                                struct_slot_idx++;
+                                // Skip additional DVM slots for multi-slot HFAs
+                                for(int i = 1; i < num_slots && struct_slot_idx < n_params; i++){
+                                    struct_arg_sizes[struct_slot_idx++] = 0;
+                                }
+                            } else if(fits_in_registers(param.type)){
+                                // Non-HFA small struct - no special handling needed
+                                int num_slots = struct_return_regs(param.type);
+                                for(int i = 0; i < num_slots && struct_slot_idx < n_params; i++){
+                                    struct_arg_sizes[struct_slot_idx++] = 0;
                                 }
                             } else {
                                 // Large struct - needs to be copied to native stack
