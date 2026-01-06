@@ -5174,6 +5174,9 @@ struct CParser {
             else if(id_tok.lexeme.startswith("__builtin_")){
                 return CIdentifier.make_builtin(allocator, id_tok, &TYPE_UNIMPLEMENTED_BUILTIN);
             }
+            else if(id_tok.lexeme.startswith("__atomic_")){
+                return CIdentifier.make_builtin(allocator, id_tok, &TYPE_UNIMPLEMENTED_BUILTIN);
+            }
             else {
                 error(id_tok, "Unknown identifier");
                 return null;

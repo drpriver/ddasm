@@ -83,7 +83,7 @@ def main():
                 [str(ddasm), tmp_path],
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=1
             )
 
             if run_result.returncode == 0:

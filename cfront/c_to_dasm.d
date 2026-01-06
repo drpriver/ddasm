@@ -513,6 +513,19 @@ struct CDasmWriter {
                 token.expansion_line, token.expansion_column);
         }
     }
+    void errorf(A...)(CToken token, A args){
+        StringBuilder sb = {allocator:allocator};
+        scope(exit) sb.cleanup;
+        sb.FORMAT(token.file, ':', token.line, ':',token.column,": Code gen error at '", token.lexeme, "': ");
+        foreach(a; args)
+            sb.write(a);
+        sb.write('\n');
+        if(token.expansion_file.length){
+            sb.FORMAT("  note: expanded from macro defined at ", token.expansion_file, ':', token.expansion_line, ':', token.expansion_column, '\n');
+        }
+        str s = sb.borrow;
+        fprintf(stderr, "%.*s\n", cast(int)s.length, s.ptr);
+    }
 
     // Generate a module alias from library name
     // "libc.so.6" -> "Libc", "libfoo.so" -> "Libfoo", "/path/to/libbar.dylib" -> "Libbar"
@@ -3393,8 +3406,105 @@ struct CDasmWriter {
         CExpr* right = expr.right;
         if(CLiteral* lit = right.as_literal()){
             ConstValue cv = try_eval_constant(right);
+            // TODO: try_eval_const should handle all cases since this is a literal.
             if(!cv.is_const){
-                error(right.token, "Constant folding failed with a literal");
+                str rhs = right.token.lexeme;
+                // FIXME: I think this is just for string literals at this point?
+                switch(expr.op) with (CTokenType){
+                    case PLUS:
+                        sb.writef("    add r% r% %\n", target, lhs, rhs);
+                        break;
+                    case MINUS:
+                        sb.writef("    sub r% r% %\n", target, lhs, rhs);
+                        break;
+                    case STAR:
+                        sb.writef("    mul r% r% %\n", target, lhs, rhs);
+                        break;
+                    case SLASH:
+                        sb.writef("    div r% rjunk r% %\n", target, lhs, rhs);
+                        break;
+                    case PERCENT:
+                        sb.writef("    div rjunk r% r% %\n", target, lhs, rhs);
+                        break;
+                    case AMP:
+                        sb.writef("    and r% r% %\n", target, lhs, rhs);
+                        break;
+                    case PIPE:
+                        sb.writef("    or r% r% %\n", target, lhs, rhs);
+                        break;
+                    case CARET:
+                        sb.writef("    xor r% r% %\n", target, lhs, rhs);
+                        break;
+                    case LESS_LESS:
+                        sb.writef("    shl r% r% %\n", target, lhs, rhs);
+                        break;
+                    case GREATER_GREATER:
+                        sb.writef("    shr r% r% %\n", target, lhs, rhs);
+                        break;
+                    case EQUAL_EQUAL:
+                        sb.writef("    scmp r% %\n", lhs, rhs);
+                        sb.writef("    move r% 0\n", target);
+                        sb.writef("    cmov eq r% 1\n", target);
+                        break;
+                    case BANG_EQUAL:
+                        sb.writef("    scmp r% %\n", lhs, rhs);
+                        sb.writef("    move r% 0\n", target);
+                        sb.writef("    cmov ne r% 1\n", target);
+                        break;
+                    case LESS:
+                        sb.writef("    scmp r% %\n", lhs, rhs);
+                        sb.writef("    move r% 0\n", target);
+                        sb.writef("    cmov lt r% 1\n", target);
+                        break;
+                    case LESS_EQUAL:
+                        sb.writef("    scmp r% %\n", lhs, rhs);
+                        sb.writef("    move r% 0\n", target);
+                        sb.writef("    cmov le r% 1\n", target);
+                        break;
+                    case GREATER:
+                        sb.writef("    scmp r% %\n", lhs, rhs);
+                        sb.writef("    move r% 0\n", target);
+                        sb.writef("    cmov gt r% 1\n", target);
+                        break;
+                    case GREATER_EQUAL:
+                        sb.writef("    scmp r% %\n", lhs, rhs);
+                        sb.writef("    move r% 0\n", target);
+                        sb.writef("    cmov ge r% 1\n", target);
+                        break;
+                    case AMP_AMP:
+                        // Logical AND: result is 1 iff both lhs and rhs are non-zero
+                        // For literal RHS, we know at compile time if rhs is 0
+                        if(rhs == "0"){
+                            // x && 0 is always 0
+                            sb.writef("    move r% 0\n", target);
+                        } else {
+                            // x && non-zero: result is (x != 0)
+                            sb.writef("    cmp r% 0\n", lhs);
+                            sb.writef("    move r% 0\n", target);
+                            sb.writef("    cmov ne r% 1\n", target);
+                        }
+                        break;
+                    case PIPE_PIPE:
+                        // Logical OR: result is 1 iff either lhs or rhs is non-zero
+                        // For literal RHS, we know at compile time if rhs is 0
+                        if(rhs != "0"){
+                            // x || non-zero is always 1
+                            sb.writef("    move r% 1\n", target);
+                        } else {
+                            // x || 0: result is (x != 0)
+                            sb.writef("    cmp r% 0\n", lhs);
+                            sb.writef("    move r% 0\n", target);
+                            sb.writef("    cmov ne r% 1\n", target);
+                        }
+                        break;
+                    default:
+                        error(expr.expr.token, "Unhandled binary operator");
+                        return 1;
+                }
+                return 0;
+            }
+            if(!cv.is_const){
+                errorf(right.token, "Constant folding failed with a literal: ", str_for(right.type.kind));
                 return 1;
             }
             auto rhs = cv.uint_val; // FIXME: type check
@@ -3667,8 +3777,19 @@ struct CDasmWriter {
                         if(str* func_alias = name in extern_funcs){
                             sb.writef("    move r% function %.%\n", target, *func_alias, name);
                         } else {
-                            error(expr.expr.token, "Extern function not found in alias table");
-                            return 1;
+                            if(CFunction** f = name in func_info){
+                                if((*f).is_definition){
+                                    sb.writef("    move r% function %\n", target, name);
+                                }
+                                else {
+                                    error(expr.expr.token, "Extern function not found in alias table");
+                                    return 1;
+                                }
+                            }
+                            else{
+                                error(expr.expr.token, "Extern function not found in alias table");
+                                return 1;
+                            }
                         }
                         return 0;
 
@@ -4340,6 +4461,8 @@ struct CDasmWriter {
                 used_funcs[id.name.lexeme] = true;  // Mark as used for dlimport
                 str* func_alias = id.name.lexeme in extern_funcs;
                 if(func_alias is null){
+                    if(auto func_ptr = id.name.lexeme in func_info)
+                        goto actually_local;
                     error(expr.expr.token, "Extern function not found in alias table");
                     return -1;
                 }
@@ -4349,6 +4472,7 @@ struct CDasmWriter {
                     sb.writef("    call function %.% %\n", *func_alias, id.name.lexeme, total_args);
                 }
             } else {
+                actually_local:
                 // Local function call - verify the function has a definition
                 if(auto func_ptr = id.name.lexeme in func_info){
                     CFunction* func = *func_ptr;

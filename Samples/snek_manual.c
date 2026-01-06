@@ -19,7 +19,7 @@
     extern int SDL_SetRenderDrawBlendMode(void* renderer, int mode);
     extern void SDL_Log(char* fmt, ...);
 
-#pragma library("libc.so.6")
+#pragma library("libc")
     extern int printf(char*, ...);
     extern void* malloc(long sz);
     extern void* calloc(long count, long sz);
@@ -67,6 +67,8 @@ int start(int width, int height){
   gboard = board;
   void* snake = calloc(10*10, 8);
   gsnake = snake;
+
+  void main_loop();
   main_loop();
   free(board);
   free(snake);
@@ -151,6 +153,7 @@ void simulate(long* board, int x, int y){
   if(!apple) place_apple(board);
 }
 
+void render_and_present(int sx, int sy, int dx, int dy);
 void main_loop(){
   long* board = gboard;
   void* event = calloc(0x10, 8);

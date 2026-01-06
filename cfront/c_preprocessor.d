@@ -581,7 +581,8 @@ struct CPreprocessor {
 
         // Expand macros and builtins in argument first
         Barray!PPToken expanded_arg = make_barray!PPToken(allocator);
-        expand_tokens(arg_tokens[], &expanded_arg);
+        HideSet env_hs = HideSet.create(allocator);
+        expand_tokens(arg_tokens[], &expanded_arg, env_hs);
 
         // Find the string literal in expanded argument
         str string_content = "";
@@ -919,7 +920,8 @@ struct CPreprocessor {
                     // Expand to temp buffer, then process for builtins
                     Barray!PPToken expanded = make_barray!PPToken(allocator);
                     i = expand_macro_invocation(input, i, macro_def, hs, &expanded);
-                    expand_tokens(expanded[], output);
+                    // Pass hide set with macro name to prevent re-expansion of hidden macros
+                    expand_tokens(expanded[], output, hs.with_hidden(macro_def.name));
                     continue;
                 }
             }
@@ -1674,7 +1676,8 @@ struct CPreprocessor {
 
                 // Expand macros
                 Barray!PPToken expanded = make_barray!PPToken(allocator);
-                expand_tokens(tokens_to_expand[], &expanded);
+                HideSet pragma_hs = HideSet.create(allocator);
+                expand_tokens(tokens_to_expand[], &expanded, pragma_hs);
 
                 // Build expanded string
                 StringBuilder exp_sb;
@@ -1792,7 +1795,8 @@ struct CPreprocessor {
 
                 // Expand macros
                 Barray!PPToken expanded = make_barray!PPToken(allocator);
-                expand_tokens(msg_tokens[], &expanded);
+                HideSet msg_hs = HideSet.create(allocator);
+                expand_tokens(msg_tokens[], &expanded, msg_hs);
 
                 // Build message from expanded tokens
                 StringBuilder msg_sb;
@@ -2375,7 +2379,8 @@ struct CPreprocessor {
     long evaluate_expression(PPToken[] tokens){
         // First expand macros (except in defined())
         Barray!PPToken expanded = make_barray!PPToken(allocator);
-        expand_tokens(tokens, &expanded, true);
+        HideSet expr_hs = HideSet.create(allocator);
+        expand_tokens(tokens, &expanded, expr_hs, true);
 
         // Then evaluate
         ExprEvaluator eval;
@@ -2386,7 +2391,8 @@ struct CPreprocessor {
     }
 
     // Expand macros and builtins. If for_if=true, also handles defined(), __has_include, etc.
-    void expand_tokens(PPToken[] tokens, Barray!PPToken* output, bool for_if = false){
+    // hs tracks macros currently being expanded to prevent infinite recursion.
+    void expand_tokens(PPToken[] tokens, Barray!PPToken* output, HideSet hs, bool for_if = false){
         size_t i = 0;
         while(i < tokens.length){
             PPToken tok = tokens[i];
@@ -2634,23 +2640,38 @@ struct CPreprocessor {
             if(tok.type == PPTokenType.PP_IDENTIFIER){
                 PPMacroDef macro_def = get_macro(tok);
                 if(!macro_def.is_null && !macro_def.is_function_like){
+                    // Check hide set to prevent infinite recursion
+                    if(hs.is_hidden(tok.lexeme)){
+                        // Macro is hidden, pass through unexpanded
+                        *output ~= tok;
+                        i++;
+                        continue;
+                    }
                     // Expand object-like macro and recursively process
                     i++;
-                    expand_tokens(macro_def.replacement, output, for_if);
+                    HideSet new_hs = hs.with_hidden(macro_def.name);
+                    expand_tokens(macro_def.replacement, output, new_hs, for_if);
                     continue;
                 }
                 // Handle function-like macros
                 if(!macro_def.is_null && macro_def.is_function_like){
-                    // Check for(
+                    // Check hide set to prevent infinite recursion
+                    if(hs.is_hidden(tok.lexeme)){
+                        // Macro is hidden, pass through unexpanded
+                        *output ~= tok;
+                        i++;
+                        continue;
+                    }
+                    // Check for (
                     size_t j = i + 1;
                     while(j < tokens.length && tokens[j].type == PPTokenType.PP_WHITESPACE) j++;
                     if(j < tokens.length && tokens[j].is_punct("(")){
                         // Expand the macro to a temporary buffer
                         Barray!PPToken expanded = make_barray!PPToken(allocator);
-                        HideSet hs = HideSet.create(allocator);
-                        i = expand_macro_invocation(tokens, i, macro_def, hs, &expanded);
-                        // Recursively process the expanded tokens
-                        expand_tokens(expanded[], output, for_if);
+                        HideSet new_hs = hs.with_hidden(macro_def.name);
+                        i = expand_macro_invocation(tokens, i, macro_def, new_hs, &expanded);
+                        // Recursively process the expanded tokens (pass the updated hide set)
+                        expand_tokens(expanded[], output, new_hs, for_if);
                         continue;
                     }
                 }
@@ -3040,8 +3061,9 @@ struct CPreprocessor {
                 if(param_idx >= 0){
                     if(param_idx < args.length){
                         // Pre-expand argument (macros and builtins in args are expanded)
+                        // Pass the hide set to prevent infinite recursion
                         Barray!PPToken expanded_arg = make_barray!PPToken(allocator);
-                        expand_tokens(args[param_idx], &expanded_arg);
+                        expand_tokens(args[param_idx], &expanded_arg, hs);
                         // Output expanded argument
                         foreach(exp_tok; expanded_arg[]){
                             *output ~= exp_tok;
