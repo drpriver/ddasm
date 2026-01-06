@@ -427,10 +427,10 @@ int main(void) {
     printf("ABI Test Suite\n");
     printf("==============\n");
 
-    // test_basic_types();
+    test_basic_types();
     test_small_struct_pass();
-    // test_multiple_struct_args();
-    // test_mixed_scalar_struct();
+    test_multiple_struct_args();
+    test_mixed_scalar_struct();
     // test_large_struct_pass();
     // test_small_struct_return();
     // test_large_struct_return();

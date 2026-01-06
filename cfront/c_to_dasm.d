@@ -324,6 +324,33 @@ int struct_return_regs(CType* t){
     return 0;  // Too big, use hidden pointer
 }
 
+// Check if type is a Homogeneous Floating-Point Aggregate (HFA)
+// HFA = struct with 1-4 members, all same floating-point type (ARM64 ABI)
+bool is_float_hfa(CType* t){
+    if(t is null || !t.is_struct_or_union()) return false;
+    if(!fits_in_registers(t)) return false;
+    if(t.fields.length == 0 || t.fields.length > 4) return false;
+    // Check all fields are same float type (float or double, not mixed)
+    CTypeKind first_kind = t.fields[0].type.kind;
+    if(first_kind != CTypeKind.FLOAT && first_kind != CTypeKind.DOUBLE) return false;
+    foreach(ref field; t.fields){
+        if(field.type is null) return false;
+        if(field.type.kind != first_kind) return false;
+    }
+    return true;
+}
+
+// Get number of float/double members in an HFA
+int count_hfa_members(CType* t){
+    return cast(int)t.fields.length;
+}
+
+// Check if HFA contains doubles (vs floats)
+bool is_double_hfa(CType* t){
+    if(t.fields.length == 0) return false;
+    return t.fields[0].type.kind == CTypeKind.DOUBLE;
+}
+
 
 
 // Get the read instruction for a given type size and signedness
@@ -788,38 +815,49 @@ struct CDasmWriter {
 
                     // Compute float arg mask (2 bits per param: 00=int, 01=float32, 10=double)
                     // Account for struct params taking multiple slots
-                    // For structs containing only floats, mark those slots as float32
+                    // ARM64 vs x86-64 differences:
+                    //   - ARM64: only HFAs use FP registers, non-HFA structs use integer registers
+                    //   - x86-64: per-eightword classification (float-only eightwords use XMM)
                     uint float_arg_mask = 0;
                     int slot_idx = uses_hidden_ptr ? 1 : 0;
                     foreach(ref param; func.params){
                         if(slot_idx >= 8) break;
                         if(param.type && param.type.is_struct_or_union() && fits_in_registers(param.type)){
-                            // Classify each eightword (8-byte chunk) of the struct
-                            // per System V ABI: each eightword is classified independently
                             int num_slots = struct_return_regs(param.type);
-                            for(int slot = 0; slot < num_slots && slot_idx + slot < 8; slot++){
-                                size_t slot_start = slot * 8;
-                                size_t slot_end = slot_start + 8;
-                                bool slot_has_float = false;
-                                bool slot_has_int = false;
-                                foreach(ref field; param.type.fields){
-                                    if(field.type is null) continue;
-                                    size_t field_end = field.offset + field.type.size_of();
-                                    // Check if field overlaps with this slot
-                                    if(field.offset < slot_end && field_end > slot_start){
-                                        if(field.type.is_float())
-                                            slot_has_float = true;
-                                        else
-                                            slot_has_int = true;
+                            // On ARM64, HFAs are handled via struct_arg_sizes, and non-HFA
+                            // structs use integer registers (don't set float bits).
+                            // On x86-64, we classify each eightword independently.
+                            version(AArch64) {
+                                // ARM64: HFA float args are handled by trampoline via struct_arg_sizes
+                                // Non-HFA structs use integer registers, so leave float_arg_mask = 0
+                                slot_idx += num_slots;
+                            } else {
+                                // x86-64: Classify each eightword (8-byte chunk) of the struct
+                                // per System V ABI: each eightword is classified independently
+                                for(int slot = 0; slot < num_slots && slot_idx + slot < 8; slot++){
+                                    size_t slot_start = slot * 8;
+                                    size_t slot_end = slot_start + 8;
+                                    bool slot_has_float = false;
+                                    bool slot_has_int = false;
+                                    foreach(ref field; param.type.fields){
+                                        if(field.type is null) continue;
+                                        size_t field_end = field.offset + field.type.size_of();
+                                        // Check if field overlaps with this slot
+                                        if(field.offset < slot_end && field_end > slot_start){
+                                            if(field.type.is_float())
+                                                slot_has_float = true;
+                                            else
+                                                slot_has_int = true;
+                                        }
                                     }
+                                    // If slot has only floats (no ints), use XMM
+                                    if(slot_has_float && !slot_has_int){
+                                        float_arg_mask |= (0b01 << ((slot_idx + slot) * 2));
+                                    }
+                                    // Otherwise leave as integer (mask stays 0 for this slot)
                                 }
-                                // If slot has only floats (no ints), use XMM
-                                if(slot_has_float && !slot_has_int){
-                                    float_arg_mask |= (0b01 << ((slot_idx + slot) * 2));
-                                }
-                                // Otherwise leave as integer (mask stays 0 for this slot)
+                                slot_idx += num_slots;
                             }
-                            slot_idx += num_slots;
                         } else if(param.type && param.type.is_float()){
                             if(param.type.kind == CTypeKind.FLOAT)
                                 float_arg_mask |= (0b01 << (slot_idx * 2));  // float32
@@ -833,6 +871,7 @@ struct CDasmWriter {
 
                     // Compute float return mask (0x0=int, 0x1=float32, 0x2=double)
                     // For structs with only floats, they're returned in XMM registers
+                    // For ARM64 HFAs, each float member uses a separate FP register
                     uint float_ret_mask = 0;
                     if(func.return_type.is_float()){
                         if(func.return_type.kind == CTypeKind.FLOAT)
@@ -840,35 +879,52 @@ struct CDasmWriter {
                         else
                             float_ret_mask = 0x2;  // double
                     } else if(func.return_type.is_struct_or_union() && fits_in_registers(func.return_type)){
-                        // Classify each eightword (8-byte chunk) of the struct
-                        // In System V ABI, each eightword is classified independently
-                        int num_ret_regs = struct_return_regs(func.return_type);
-                        for(int slot = 0; slot < num_ret_regs; slot++){
-                            // Check what types are in this eightword
-                            size_t slot_start = slot * 8;
-                            size_t slot_end = slot_start + 8;
-                            bool slot_has_float = false;
-                            bool slot_has_int = false;
-                            foreach(ref field; func.return_type.fields){
-                                size_t field_end = field.offset + field.type.size_of();
-                                // Check if field overlaps with this slot
-                                if(field.offset < slot_end && field_end > slot_start){
-                                    if(field.type.is_float())
-                                        slot_has_float = true;
-                                    else
-                                        slot_has_int = true;
+                        // Check if this is an HFA return (ARM64: each member in separate FP reg)
+                        if(is_float_hfa(func.return_type)){
+                            // HFA return: set a bit for each float/double member
+                            int n_members = count_hfa_members(func.return_type);
+                            bool is_double = is_double_hfa(func.return_type);
+                            for(int slot = 0; slot < n_members; slot++){
+                                if(is_double)
+                                    float_ret_mask |= (0x2 << (slot * 2));  // double in this slot
+                                else
+                                    float_ret_mask |= (0x1 << (slot * 2));  // float32 in this slot
+                            }
+                        } else {
+                            // Non-HFA struct: classify each eightword
+                            // In System V ABI, each eightword is classified independently
+                            int num_ret_regs = struct_return_regs(func.return_type);
+                            for(int slot = 0; slot < num_ret_regs; slot++){
+                                // Check what types are in this eightword
+                                size_t slot_start = slot * 8;
+                                size_t slot_end = slot_start + 8;
+                                bool slot_has_float = false;
+                                bool slot_has_int = false;
+                                foreach(ref field; func.return_type.fields){
+                                    size_t field_end = field.offset + field.type.size_of();
+                                    // Check if field overlaps with this slot
+                                    if(field.offset < slot_end && field_end > slot_start){
+                                        if(field.type.is_float())
+                                            slot_has_float = true;
+                                        else
+                                            slot_has_int = true;
+                                    }
                                 }
+                                // If slot has only floats (no ints), use XMM
+                                if(slot_has_float && !slot_has_int){
+                                    float_ret_mask |= (0x1 << (slot * 2));  // float32 in this slot
+                                }
+                                // Otherwise use integer register (mask stays 0 for this slot)
                             }
-                            // If slot has only floats (no ints), use XMM
-                            if(slot_has_float && !slot_has_int){
-                                float_ret_mask |= (0x1 << (slot * 2));  // float32 in this slot
-                            }
-                            // Otherwise use integer register (mask stays 0 for this slot)
                         }
                     }
 
-                    // Compute struct_arg_sizes for large structs (System V x86_64: >16 bytes)
-                    // For each register slot, store the size if it's a large struct, 0 otherwise
+                    // Compute struct_arg_sizes for struct args
+                    // Encoding:
+                    //   0 = not a struct
+                    //   1-4 = HFA with N float members (ARM64: expand into N FP registers)
+                    //   5-6 = HFA with 1-2 double members (ARM64: 4 + count)
+                    //   >16 = large struct size (x86_64/ARM64: copy to native stack)
                     ushort[16] struct_arg_sizes;
                     bool has_struct_args = false;
                     int struct_slot_idx = uses_hidden_ptr ? 1 : 0;
@@ -876,10 +932,29 @@ struct CDasmWriter {
                         if(struct_slot_idx >= n_params) break;
                         if(param.type && param.type.is_struct_or_union()){
                             if(fits_in_registers(param.type)){
-                                // Small struct - takes 1-2 slots, no special handling
+                                // Small struct - check if it's an HFA (ARM64 specific)
                                 int num_slots = struct_return_regs(param.type);
-                                for(int i = 0; i < num_slots && struct_slot_idx < n_params; i++){
-                                    struct_arg_sizes[struct_slot_idx++] = 0;
+                                if(is_float_hfa(param.type)){
+                                    // HFA: encode member count for trampoline to expand
+                                    int hfa_members = count_hfa_members(param.type);
+                                    if(is_double_hfa(param.type)){
+                                        // Double HFA: encode as 4 + count (5 or 6)
+                                        struct_arg_sizes[struct_slot_idx] = cast(ushort)(4 + hfa_members);
+                                    } else {
+                                        // Float HFA: encode as count (1-4)
+                                        struct_arg_sizes[struct_slot_idx] = cast(ushort)hfa_members;
+                                    }
+                                    has_struct_args = true;
+                                    struct_slot_idx++;
+                                    // HFA takes only 1 DVM slot but uses multiple FP registers
+                                    for(int i = 1; i < num_slots && struct_slot_idx < n_params; i++){
+                                        struct_arg_sizes[struct_slot_idx++] = 0;
+                                    }
+                                } else {
+                                    // Non-HFA small struct - no special handling needed
+                                    for(int i = 0; i < num_slots && struct_slot_idx < n_params; i++){
+                                        struct_arg_sizes[struct_slot_idx++] = 0;
+                                    }
                                 }
                             } else {
                                 // Large struct - needs to be copied to native stack

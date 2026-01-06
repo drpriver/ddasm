@@ -640,6 +640,48 @@ else version(AArch64) {
         size_t n_stack = 0;
 
         for (size_t i = 0; i < n_args && i < 32; i++) {
+            // Check if this arg is an HFA (struct_arg_sizes 1-6 indicates HFA)
+            // Encoding: 1-4 = float HFA with N members, 5-6 = double HFA with N-4 members
+            ushort hfa_code = (struct_arg_sizes !is null) ? struct_arg_sizes[i] : 0;
+
+            if (hfa_code >= 1 && hfa_code <= 4) {
+                // Float HFA - expand packed 32-bit floats into separate FP registers
+                // args[i] contains 1-2 floats packed into 64 bits
+                // For 3-4 member HFAs, args[i] has first 2 floats, args[i+1] has rest
+                if (hfa_code <= 2) {
+                    // 1-2 member HFA: all floats in args[i]
+                    uint* floats = cast(uint*)&args[i];
+                    for (size_t j = 0; j < hfa_code && n_float < 8; j++) {
+                        float_args[n_float++] = floats[j];
+                    }
+                } else {
+                    // 3-4 member HFA: first 2 floats in args[i], rest in args[i+1]
+                    uint* floats1 = cast(uint*)&args[i];
+                    float_args[n_float++] = floats1[0];  // First float
+                    float_args[n_float++] = floats1[1];  // Second float
+                    if (i + 1 < n_args) {
+                        uint* floats2 = cast(uint*)&args[i + 1];
+                        float_args[n_float++] = floats2[0];  // Third float
+                        if (hfa_code == 4 && n_float < 8) {
+                            float_args[n_float++] = floats2[1];  // Fourth float
+                        }
+                        i++;  // Skip the second DVM slot since we already consumed it
+                    }
+                }
+                continue;
+            }
+
+            if (hfa_code == 5 || hfa_code == 6) {
+                // Double HFA - expand packed 64-bit doubles into separate FP registers
+                int n_doubles = hfa_code - 4;
+                ulong* doubles = cast(ulong*)&args[i];
+                for (size_t j = 0; j < n_doubles && n_float < 8; j++) {
+                    float_args[n_float++] = doubles[j];
+                }
+                continue;
+            }
+
+            // Original logic for non-HFA arguments
             ArgType t = get_arg_type(arg_types, i);
             if (is_float_type(t)) {
                 if (n_float < 8) {
@@ -662,9 +704,40 @@ else version(AArch64) {
         // x9 = func_ptr, x10 = stack_args, x11 = n_stack, x12 = stack_bytes
         // x19 = saved SP (callee-saved)
         bool float_ret = (ret_types & 0x3) != 0;
+        bool float_ret2 = ((ret_types >> 2) & 0x3) != 0;  // Second return slot is also float
+        bool is_float32_ret = (ret_types & 0x3) == 1;
 
-        if (float_ret) {
-            // Float return: move d0 to x0 after call
+        if (float_ret && float_ret2 && is_float32_ret) {
+            // HFA return with 2+ float32 members: pack s0 and s1 into x0
+            // s0 goes in low 32 bits, s1 goes in high 32 bits
+            return __asm!uintptr_t(
+                "mov x19, sp\n" ~
+                "sub sp, sp, x12\n" ~
+                "mov x13, sp\n" ~
+                "mov x14, x10\n" ~
+                "mov x15, x11\n" ~
+                "cbz x15, 2f\n" ~
+                "1:\n" ~
+                "ldr x16, [x14], #8\n" ~
+                "str x16, [x13], #8\n" ~
+                "subs x15, x15, #1\n" ~
+                "b.ne 1b\n" ~
+                "2:\n" ~
+                "blr x9\n" ~
+                // Pack s0 and s1 into x0: x0 = s0 | (s1 << 32)
+                "fmov w0, s0\n" ~          // Move s0 to w0 (low 32 bits of x0)
+                "fmov w1, s1\n" ~          // Move s1 to w1
+                "orr x0, x0, x1, lsl #32\n" ~ // Combine: x0 = w0 | (w1 << 32)
+                "mov sp, x19",
+                "={x0},{x0},{x1},{x2},{x3},{x4},{x5},{x6},{x7},{d0},{d1},{d2},{d3},{d4},{d5},{d6},{d7},{x9},{x10},{x11},{x12},~{x13},~{x14},~{x15},~{x16},~{x19},~{x30},~{d0},~{d1},~{memory}",
+                int_args[0], int_args[1], int_args[2], int_args[3],
+                int_args[4], int_args[5], int_args[6], int_args[7],
+                float_args[0], float_args[1], float_args[2], float_args[3],
+                float_args[4], float_args[5], float_args[6], float_args[7],
+                func_ptr, stack_args.ptr, n_stack, stack_bytes
+            );
+        } else if (float_ret) {
+            // Single float return: move d0 to x0 after call
             return __asm!uintptr_t(
                 "mov x19, sp\n" ~
                 "sub sp, sp, x12\n" ~
