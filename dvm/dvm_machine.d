@@ -8,6 +8,7 @@ import core.stdc.string: memcpy, memset;
 import dlib.allocator;
 import dlib.get_input;
 import dlib.box;
+import dlib.table;
 import dlib.str_util: split, stripped, Split;
 import dlib.stringbuilder;
 
@@ -42,6 +43,10 @@ struct Machine {
     bool debugging;
     LineHistory debugger_history;
     bool[RegisterNames.max+1] watches;
+    // Breakpoints: address -> original instruction
+    Table!(uintptr_t, Instruction) breakpoints;
+    // Memory watchpoints: address -> last known value
+    Table!(uintptr_t, uintptr_t) mem_watchpoints;
 
     int
     run(RunFlags flags = RunFlags.NONE)(LinkedModule* prog, size_t stack_size, const char* debug_history_file = null){
@@ -59,6 +64,8 @@ struct Machine {
         registers[RegisterNames.RBP] = cast(uintptr_t)stack.data.ptr;
         call_depth = 0;
         debugger_history.allocator = allocator;
+        breakpoints.data.allocator = allocator;
+        mem_watchpoints.data.allocator = allocator;
         if(debug_history_file) debugger_history.load_history(debug_history_file);
         static if(flags & RunFlags.DEBUG){
             int result;
@@ -334,7 +341,7 @@ struct Machine {
         uintptr_t* ip = cast(uintptr_t*)registers[RegisterNames.RIP];
         ip += off;
         for(int i = 0; i < 4; i++){
-            ip += disassemble_one_instruction(current_program, &sb, ip);
+            ip += disassemble_one_instruction(current_program, &sb, ip, get_real_instruction(ip));
             sb.write("\n     ");
         }
         text = sb.borrow;
@@ -361,7 +368,8 @@ struct Machine {
         sb.FORMAT("function ", func.name, "\n");
         while(insts.length){
             sb.FORMAT(' ', insts.ptr==ip?"-> ":"   ");
-            int num = disassemble_one_instruction(current_program, &sb, insts.ptr);
+            Instruction real_inst = get_real_instruction(insts.ptr);
+            int num = disassemble_one_instruction(current_program, &sb, insts.ptr, real_inst);
             sb.write('\n');
             insts = insts[num.. $];
             i++;
@@ -376,6 +384,18 @@ struct Machine {
         BEGIN_CONTINUE = 2,
         BEGIN_END = 3,
         BEGIN_CONTINUE_DEBUGGING = 4,
+        BEGIN_BREAK = 5,  // breakpoint hit in non-debug mode
+    }
+
+    // Get original instruction at address, checking breakpoints if it's BREAK
+    Instruction get_real_instruction(uintptr_t* addr){
+        Instruction inst = cast(Instruction)*addr;
+        if(inst == Instruction.BREAK){
+            if(auto orig = cast(uintptr_t)addr in breakpoints){
+                return *orig;
+            }
+        }
+        return inst;
     }
 
     void
@@ -389,7 +409,8 @@ struct Machine {
         ptrdiff_t i = 0;
         uintptr_t[] insts = func.func.instructions;
         while(insts.length){
-            size_t size = instruction_size(cast(Instruction)insts[0]);
+            Instruction real_inst = get_real_instruction(insts.ptr);
+            size_t size = instruction_size(real_inst);
             if(insts.ptr == ip)
                 current = i;
             insts = insts[size .. $];
@@ -405,12 +426,13 @@ struct Machine {
             sb.write("    ...\n");
         }
         while(insts.length){
+            Instruction real_inst = get_real_instruction(insts.ptr);
             if(i >= current -5 && i <= current+5){
                 sb.FORMAT(' ', insts.ptr==ip?"-> ":"   ");
-                disassemble_one_instruction(current_program, &sb, insts.ptr);
+                disassemble_one_instruction(current_program, &sb, insts.ptr, real_inst);
                 sb.write('\n');
             }
-            size_t size = instruction_size(cast(Instruction)insts[0]);
+            size_t size = instruction_size(real_inst);
             insts = insts[size .. $];
             i++;
         }
@@ -538,7 +560,7 @@ struct Machine {
                 ip--;
                 StringBuilder sb = {allocator:MALLOCATOR};
                 scope(exit) sb.cleanup;
-                disassemble_one_instruction(current_program, &sb, ip);
+                disassemble_one_instruction(current_program, &sb, ip, get_real_instruction(ip));
                 str text = sb.borrow;
                 if(!Fuzzing)fprintf(stderr, "%.*s\n", cast(int)text.length, text.ptr);
             }}
@@ -548,6 +570,15 @@ struct Machine {
                     if(!w) continue;
                     immutable(RegisterInfo)* ri = get_register_info(i);
                     fprintf(stderr, "%s = %#zx\n", ri.name.ptr, registers[i]);
+                }
+                // Check memory watchpoints
+                foreach(ref it; mem_watchpoints.items){
+                    uintptr_t current_val = *cast(uintptr_t*)it.key;
+                    if(current_val != it.value){
+                        fprintf(stderr, "Watchpoint hit: 0x%zx changed from 0x%zx to 0x%zx\n",
+                                it.key, it.value, current_val);
+                        it.value = current_val;
+                    }
                 }
                 char[1024] buff = void;
                 for(;;){
@@ -585,10 +616,137 @@ struct Machine {
                     size_t mread = 0;
                     if(arg.length){
                         switch(cmd){
+                            case "x": case "examine":{
+                                // Memory examine: x <addr|reg> [count]
+                                import dlib.parse_numbers: parse_unsigned_human;
+                                auto parts = arg.split(' ');
+                                uintptr_t addr;
+                                // Try as register first
+                                if(immutable(RegisterInfo)* ri = get_register_info(parts.head)){
+                                    addr = registers[ri.register];
+                                } else {
+                                    auto r = parse_unsigned_human(parts.head);
+                                    if(r.errored){
+                                        fprintf(stderr, "Invalid address or register: %.*s\n", cast(int)parts.head.length, parts.head.ptr);
+                                        continue;
+                                    }
+                                    addr = cast(uintptr_t)r.value;
+                                }
+                                int count = 8;
+                                if(parts.tail.length){
+                                    auto r = parse_unsigned_human(parts.tail.stripped);
+                                    if(!r.errored) count = cast(int)r.value;
+                                }
+                                // Display memory
+                                uintptr_t* ptr = cast(uintptr_t*)addr;
+                                for(int i = 0; i < count; i++){
+                                    if(i % 4 == 0){
+                                        if(i > 0) fprintf(stderr, "\n");
+                                        fprintf(stderr, "0x%zx: ", addr + i * uintptr_t.sizeof);
+                                    }
+                                    print_resolved(null, ptr[i], 0, false);
+                                    fprintf(stderr, "  ");
+                                }
+                                fprintf(stderr, "\n");
+                                debugger_history.add_line(buf);
+                            }continue;
                             case "w": case "watch":{
-                                immutable(RegisterInfo)* ri = get_register_info(arg);
-                                if(!ri) continue;
-                                watches[ri.register] = true;
+                                import dlib.parse_numbers: parse_unsigned_human;
+                                // Try as register first
+                                if(immutable(RegisterInfo)* ri = get_register_info(arg)){
+                                    watches[ri.register] = true;
+                                    fprintf(stderr, "Watching register %.*s\n", cast(int)ri.name.length, ri.name.ptr);
+                                } else {
+                                    // Try as memory address
+                                    auto r = parse_unsigned_human(arg);
+                                    if(r.errored){
+                                        fprintf(stderr, "Invalid register or address: %.*s\n", cast(int)arg.length, arg.ptr);
+                                        continue;
+                                    }
+                                    uintptr_t addr = cast(uintptr_t)r.value;
+                                    uintptr_t current_val = *cast(uintptr_t*)addr;
+                                    mem_watchpoints[addr] = current_val;
+                                    fprintf(stderr, "Watching memory at 0x%zx (current value: 0x%zx)\n", addr, current_val);
+                                }
+                                debugger_history.add_line(buf);
+                            }continue;
+                            case "b": case "break": case "breakpoint":{
+                                // Set breakpoint at function or address
+                                import dlib.parse_numbers: parse_unsigned_human;
+                                uintptr_t addr;
+                                bool addr_valid = false;
+
+                                // Try as function name first
+                                if(auto fi = arg in current_program.functions){
+                                    if(fi.func.type != FunctionType.INTERPRETED){
+                                        fprintf(stderr, "Cannot set breakpoint on native function: %.*s\n", cast(int)arg.length, arg.ptr);
+                                        continue;
+                                    }
+                                    addr = cast(uintptr_t)fi.func.instructions_;
+                                    addr_valid = true;
+                                } else {
+                                    // Try as address
+                                    auto r = parse_unsigned_human(arg);
+                                    if(r.errored){
+                                        fprintf(stderr, "Unknown function: %.*s\n", cast(int)arg.length, arg.ptr);
+                                        continue;
+                                    }
+                                    addr = cast(uintptr_t)r.value;
+                                    // Find containing function and verify it's an instruction boundary
+                                    FunctionInfo fi = current_program.addr_to_function(cast(uintptr_t*)addr);
+                                    if(!fi.func || fi.func.type != FunctionType.INTERPRETED){
+                                        fprintf(stderr, "Address 0x%zx not in any interpreted function\n", addr);
+                                        continue;
+                                    }
+                                    // Walk instructions to verify boundary
+                                    uintptr_t* ip = fi.func.instructions_;
+                                    uintptr_t* end = ip + fi.func.length;
+                                    while(ip < end){
+                                        if(cast(uintptr_t)ip == addr){
+                                            addr_valid = true;
+                                            break;
+                                        }
+                                        ip += instruction_size(get_real_instruction(ip));
+                                    }
+                                    if(!addr_valid){
+                                        fprintf(stderr, "Address 0x%zx is not at an instruction boundary\n", addr);
+                                        continue;
+                                    }
+                                }
+
+                                if(addr_valid){
+                                    if(addr in breakpoints){
+                                        fprintf(stderr, "Breakpoint already set at 0x%zx\n", addr);
+                                    } else {
+                                        Instruction orig = *cast(Instruction*)addr;
+                                        breakpoints[addr] = orig;
+                                        *cast(Instruction*)addr = Instruction.BREAK;
+                                        fprintf(stderr, "Breakpoint set at 0x%zx\n", addr);
+                                    }
+                                }
+                                debugger_history.add_line(buf);
+                            }continue;
+                            case "delete": case "del":{
+                                // Delete breakpoint by address or function name
+                                import dlib.parse_numbers: parse_uint64;
+                                uintptr_t addr;
+                                if(auto fi = arg in current_program.functions){
+                                    addr = cast(uintptr_t)fi.func.instructions_;
+                                } else {
+                                    auto r = parse_uint64(arg);
+                                    if(r.errored){
+                                        fprintf(stderr, "Unknown function or invalid address: %.*s\n", cast(int)arg.length, arg.ptr);
+                                        continue;
+                                    }
+                                    addr = cast(uintptr_t)r.value;
+                                }
+                                if(auto orig = addr in breakpoints){
+                                    *cast(Instruction*)addr = *orig;
+                                    // Can't actually remove from table, but instruction is restored
+                                    fprintf(stderr, "Breakpoint disabled at 0x%zx\n", addr);
+                                } else {
+                                    fprintf(stderr, "No breakpoint at 0x%zx\n", addr);
+                                }
                                 debugger_history.add_line(buf);
                             }continue;
                             case "uw": case "unwatch":{
@@ -673,7 +831,20 @@ struct Machine {
                             backtrace;
                             continue;
                         case "b": case "break": case "breakpoint":
-                            fprintf(stderr, "Sorry, adding breakpoints isn't implemented yet.\n");
+                            // List breakpoints
+                            if(breakpoints.count == 0){
+                                fprintf(stderr, "No breakpoints set.\n");
+                            } else {
+                                fprintf(stderr, "Breakpoints:\n");
+                                foreach(ref it; breakpoints.items){
+                                    FunctionInfo fi = current_program.addr_to_function(cast(uintptr_t*)it.key);
+                                    if(fi.name.length){
+                                        fprintf(stderr, "  0x%zx (%.*s)\n", it.key, cast(int)fi.name.length, fi.name.ptr);
+                                    } else {
+                                        fprintf(stderr, "  0x%zx\n", it.key);
+                                    }
+                                }
+                            }
                             continue;
                         case "s": case "stack":
                             debugger_history.add_line(buf);
@@ -698,6 +869,10 @@ struct Machine {
                             ~"  quit, q           halt execution\n"
                             ~"  list, l           print disassembly of entire function\n"
                             ~"  dump, d           print contents of registers\n"
+                            ~"  break, b <func>   set breakpoint at function\n"
+                            ~"  break, b <addr>   set breakpoint at address\n"
+                            ~"  break, b          list all breakpoints\n"
+                            ~"  delete <func|addr> remove breakpoint\n"
                             ~"  stack, s          print top 10 stack values (from rsp)\n"
                             ~"  stack all, sa     print entire stack\n"
                             ~"  stack N           print stack slot N\n"
@@ -709,7 +884,9 @@ struct Machine {
                             ~"  backtrace, bt     print stacktrace\n"
                             ~"  where             alias of backtrace\n"
                             ~"  help, h           print out this info\n"
-                            ~"  watch, w reg      add a watch for a register\n"
+                            ~"  x <addr> [n]      examine n words of memory at addr\n"
+                            ~"  watch, w <reg>    add a watch for a register\n"
+                            ~"  watch, w <addr>   add a watchpoint for memory address\n"
                             ~"  unwatch, uw reg   remove a watch for a register\n"
                             ~"  mread, m reg      dereference the uintptr_t* stored in reg\n"
                             ).ptr);
@@ -736,6 +913,22 @@ struct Machine {
                     if(int b = begin(HALT)) return b;
                     halted = true;
                     return 0;
+                case BREAK:{
+                    // Hit a breakpoint - restore original instruction and rewind
+                    uintptr_t addr = registers[RIP] - uintptr_t.sizeof;
+                    if(auto orig = addr in breakpoints){
+                        *cast(Instruction*)addr = *orig;  // restore original
+                    } else {
+                        // User-written BREAK instruction - replace with NOP to continue
+                        *cast(Instruction*)addr = NOP;
+                    }
+                    registers[RIP] = addr;  // rewind to re-execute
+                    fprintf(stderr, "Breakpoint hit at 0x%zx\n", addr);
+                    print_context(cast(uintptr_t*)addr);
+                    int result = debugger();
+                    if(paused || badend || result || halted)
+                        return result;
+                }break;
                 default:
                 case ABORT:
                     if(int b = begin(ABORT)) return b;
@@ -1566,8 +1759,8 @@ struct Machine {
 }
 
 int
-disassemble_one_instruction(SB)(LinkedModule* prog, SB* sb, uintptr_t* ip){
-    uintptr_t inst = *ip;
+disassemble_one_instruction(SB)(LinkedModule* prog, SB* sb, uintptr_t* ip, uintptr_t override_inst = Instruction.max + 1){
+    uintptr_t inst = (override_inst <= Instruction.max) ? override_inst : *ip;
     if(inst > Instruction.max){
         sb.write("UNK");
         sb.hex("0x", inst);

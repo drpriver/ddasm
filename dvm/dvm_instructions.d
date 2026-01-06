@@ -101,8 +101,8 @@ enum Instruction: uintptr_t {
     ITOD,  // integer to double
     ITOF,  // integer to float
     DTOI,  // double to integer
-    DTOF,  // double to float 
-    FTOD,  // float to double 
+    DTOF,  // double to float
+    FTOD,  // float to double
     FTOI,  // float to integer
     NOT,
     NEG,
@@ -117,6 +117,7 @@ enum Instruction: uintptr_t {
     SREAD1,
     SREAD2,
     SREAD4,
+    BREAK,
 }
 
 struct InstructionInfo {
@@ -238,6 +239,7 @@ immutable InstructionInfo[Instruction.max+1] INSTRUCTION_INFOS = [
     InstructionInfo(Instruction.SREAD1,           "SREAD1",           "sread1", [AK.REGISTER, AK.REGISTER]),
     InstructionInfo(Instruction.SREAD2,           "SREAD2",           "sread2", [AK.REGISTER, AK.REGISTER]),
     InstructionInfo(Instruction.SREAD4,           "SREAD4",           "sread4", [AK.REGISTER, AK.REGISTER]),
+    InstructionInfo(Instruction.BREAK,            "BREAK",            "break"),
 ];
 
 Table!(string, Barray!(InstructionInfo))
