@@ -81,7 +81,7 @@ version(OSX) {
     ];
 }
 
-int compile_c_to_dasm(const(ubyte)[] source, Box!(char[])* progtext, str source_file = "", str[] include_paths = [], str[] framework_paths = [], CompileFlags flags = CompileFlags.init) {
+int compile_c_to_dasm(const(ubyte)[] source, Box!(char[])* progtext, str source_file = "", str[] include_paths = [], str[] framework_paths = [], CompileFlags flags = CompileFlags.init, str[] force_includes = []) {
     ArenaAllocator arena = ArenaAllocator(MALLOCATOR);
     scope(exit) arena.free_all();
 
@@ -106,6 +106,7 @@ int compile_c_to_dasm(const(ubyte)[] source, Box!(char[])* progtext, str source_
     preprocessor.current_file = source_file;
     preprocessor.include_paths = include_paths;
     preprocessor.framework_paths = framework_paths;
+    preprocessor.force_includes = force_includes;
     preprocessor.initialize();
     err = preprocessor.process(pp_tokens[], &processed);
     if (err) return 1;

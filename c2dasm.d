@@ -33,6 +33,9 @@ int main(int argc, char** argv) {
     Barray!str framework_paths;
     framework_paths.bdata.allocator = MALLOCATOR;
     scope(exit) framework_paths.cleanup();
+    Barray!str force_includes;
+    force_includes.bdata.allocator = MALLOCATOR;
+    scope(exit) force_includes.cleanup();
 
     with (dlib.argparse) with (ArgParseFlags) with (ArgToParseFlags) {
         import core.stdc.stdio : fprintf, stdout, stderr;
@@ -44,11 +47,17 @@ int main(int argc, char** argv) {
                 dest: ARGDEST(&sourcefile),
             ),
         ];
-        ArgToParse[7] _kw_args = [
+        ArgToParse[8] _kw_args = [
             ArgToParse(
                 name: "-I",
                 help: "Add directory to include search path. Can be specified multiple times.",
                 dest: ArgUser((str path) { include_paths ~= path; return 0; }, "path"),
+                num: NumRequired(0, int.max),
+            ),
+            ArgToParse(
+                name: "-include",
+                help: "Include file(s) before processing source.",
+                dest: ArgUser((str path) { force_includes ~= path; return 0; }, "file"),
                 num: NumRequired(0, int.max),
             ),
             ArgToParse(
@@ -186,7 +195,7 @@ int main(int argc, char** argv) {
         print_ast: print_ast,
         debug_types: debug_types,
     };
-    int err = cfront.cfront.compile_c_to_dasm(bscript.data, &progtext, sourcefile[], include_paths[], framework_paths[], flags);
+    int err = cfront.cfront.compile_c_to_dasm(bscript.data, &progtext, sourcefile[], include_paths[], framework_paths[], flags, force_includes[]);
     if (err) return err;
     // Don't print progtext for flags that don't produce code
     if (!syntax_only && !pp_only && !print_ast)

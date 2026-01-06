@@ -33,6 +33,7 @@ struct CPreprocessor {
     Table!(str, str) include_guards;  // filename -> guard macro name
     str[] include_paths;
     str[] framework_paths;  // -F paths for framework lookup
+    str[] force_includes;  // -include files to process before main source
     Barray!str pushed_include_paths;  // paths pushed via #pragma include_path
     str current_file;
     str base_file;  // The root file being compiled (for __BASE_FILE__)
@@ -862,6 +863,15 @@ struct CPreprocessor {
 
     // Main entry point: process PPTokens
     int process(PPToken[] input, Barray!PPToken* output){
+        // Process forced includes first (like -include flag)
+        // Clear immediately to prevent re-processing in recursive calls
+        str[] pending_includes = force_includes;
+        force_includes = [];
+        foreach(inc_file; pending_includes){
+            process_force_include(inc_file, output);
+            if(error_occurred) return 1;
+        }
+
         size_t i = 0;
 
         while(i < input.length){
@@ -1338,6 +1348,71 @@ struct CPreprocessor {
                 return;
             }
         }
+    }
+
+    // Process a forced include file (like -include flag)
+    void process_force_include(str filename, Barray!PPToken* output){
+        // Resolve as non-system include
+        str full_path = resolve_include(filename, false);
+        if(full_path.length == 0){
+            fprintf(stderr, "-include: error: '%.*s' file not found\n",
+                cast(int)filename.length, filename.ptr);
+            error_occurred = true;
+            return;
+        }
+
+        // Read file
+        StringBuilder path_buf;
+        path_buf.allocator = allocator;
+        path_buf.write(full_path);
+        path_buf.nul_terminate();
+
+        FileResult fr = read_file(path_buf.borrow().ptr, allocator, FileFlags.NUL_TERMINATE | FileFlags.ZERO_PAD_TO_16);
+        if(fr.errored){
+            fprintf(stderr, "-include: error reading '%.*s'\n",
+                cast(int)filename.length, filename.ptr);
+            error_occurred = true;
+            return;
+        }
+
+        // Tokenize included file
+        const(ubyte)[] file_data = cast(const(ubyte)[])fr.value.data;
+        size_t actual_len = 0;
+        while(actual_len < file_data.length && file_data[actual_len] != 0){
+            actual_len++;
+        }
+
+        Barray!PPToken include_tokens = make_barray!PPToken(allocator);
+        int err = pp_tokenize(file_data[0 .. actual_len], full_path, &include_tokens, allocator);
+        if(err){
+            error_occurred = true;
+            return;
+        }
+
+        // Remove EOF token from included file (if present)
+        if(include_tokens.count > 0 && include_tokens[include_tokens.count - 1].type == PPTokenType.PP_EOF){
+            include_tokens.count--;
+        }
+
+        // Detect and record include guard pattern
+        str guard = detect_include_guard(include_tokens[]);
+        if(guard.length > 0){
+            include_guards[full_path] = guard;
+        }
+
+        // Save current file and push include stack
+        str saved_file = current_file;
+        current_file = full_path;
+        PPIncludeFrame frame;
+        frame.filename = full_path;
+        include_stack ~= frame;
+
+        // Process included tokens recursively
+        process(include_tokens[], output);
+
+        // Restore current file and pop include stack
+        include_stack.count--;
+        current_file = saved_file;
     }
 
     // Handle #include

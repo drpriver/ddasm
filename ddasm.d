@@ -67,6 +67,9 @@ int main(int argc, char** argv){
     Barray!str lib_paths;
     lib_paths.bdata.allocator = MALLOCATOR;
     scope(exit) lib_paths.cleanup();
+    Barray!str force_includes;
+    force_includes.bdata.allocator = MALLOCATOR;
+    scope(exit) force_includes.cleanup();
 
     with(ArgParseFlags) with(ArgToParseFlags) {
     ArgToParse[1] pos_args = [
@@ -77,7 +80,7 @@ int main(int argc, char** argv){
             dest: ARGDEST(&sourcefile),
         },
     ];
-    ArgToParse[13] _kw_args = [
+    ArgToParse[14] _kw_args = [
         {
             name: "-I",
             help: "Add directory to include search path (for C files). Can be specified multiple times.",
@@ -142,6 +145,12 @@ int main(int argc, char** argv){
             name: "--parse-code-only",
             help: "Parse DASM but don't link or run",
             dest: ARGDEST(&parse_only),
+        },
+        {
+            name: "-include",
+            help: "Include file(s) before processing source (for C files).",
+            dest: ArgUser((str path) { force_includes ~= path; return 0; }, "file"),
+            num: NumRequired(0, int.max),
         },
         {
             name: "-F",
@@ -272,7 +281,8 @@ int main(int argc, char** argv){
         framework_paths.extend(DEFAULT_FRAMEWORK_PATHS);
         Box!(char[]) dasmtext = {allocator:MALLOCATOR};
         ubyte[] data = btext.as!(ubyte[]).data;
-        int err = cfront.cfront.compile_c_to_dasm(data, &dasmtext, sourcefile[], include_paths[], framework_paths[]);
+        import cfront.cfront : CompileFlags;
+        int err = cfront.cfront.compile_c_to_dasm(data, &dasmtext, sourcefile[], include_paths[], framework_paths[], CompileFlags.init, force_includes[]);
         if(err) return err;
         // If codegen_only, print DASM text and exit
         if(codegen_only){

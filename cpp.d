@@ -26,6 +26,9 @@ extern(C) int main(int argc, char** argv) {
     Barray!str framework_paths;
     framework_paths.bdata.allocator = MALLOCATOR;
     scope(exit) framework_paths.cleanup();
+    Barray!str force_includes;
+    force_includes.bdata.allocator = MALLOCATOR;
+    scope(exit) force_includes.cleanup();
 
     with (dlib.argparse) {
         ArgToParse[1] pos_args = [
@@ -35,11 +38,17 @@ extern(C) int main(int argc, char** argv) {
                 dest: ARGDEST(&sourcefile),
             ),
         ];
-        ArgToParse[2] _kw_args = [
+        ArgToParse[3] _kw_args = [
             ArgToParse(
                 name: "-I",
                 help: "Add directory to include search path. Can be specified multiple times.",
                 dest: ArgUser((str path) { include_paths ~= path; return 0; }, "path"),
+                num: NumRequired(0, int.max),
+            ),
+            ArgToParse(
+                name: "-include",
+                help: "Include file(s) before processing source.",
+                dest: ArgUser((str path) { force_includes ~= path; return 0; }, "file"),
                 num: NumRequired(0, int.max),
             ),
             ArgToParse(
@@ -130,6 +139,7 @@ extern(C) int main(int argc, char** argv) {
     pp.current_file = sourcefile[];
     pp.include_paths = include_paths[];
     pp.framework_paths = framework_paths[];
+    pp.force_includes = force_includes[];
     pp.initialize();
 
     Barray!PPToken output = make_barray!PPToken(alloc);
