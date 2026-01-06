@@ -100,6 +100,7 @@ enum CTokenType : uint {
     FLOAT32X = 642,
     FLOAT64X = 643,
     TYPEOF = 644,
+    CONSTEXPR = 645,
 
     // Control flow keywords
     IF = 700,
@@ -384,6 +385,7 @@ struct PPToCConverter {
                 if(name == "_Float128") return CTokenType.FLOAT128;
                 if(name == "_Float32x") return CTokenType.FLOAT32X;
                 if(name == "_Float64x") return CTokenType.FLOAT64X;
+                if(name == "constexpr") return CTokenType.CONSTEXPR;
                 break;
             }
             case 10:{

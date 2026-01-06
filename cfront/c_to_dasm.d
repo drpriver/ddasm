@@ -3392,42 +3392,24 @@ struct CDasmWriter {
         // Check for literal RHS optimization
         CExpr* right = expr.right;
         if(CLiteral* lit = right.as_literal()){
-            str rhs = lit.value.lexeme;
-
-            // Convert char literals to numeric value
-            // FIXME: This is disgusting, we should have an "optimize" function.
-            __gshared char[16] char_lit_buf;
-            if(lit.value.type == CTokenType.CHAR_LITERAL){
-                import core.stdc.stdio : snprintf;
-                int len = snprintf(char_lit_buf.ptr, 16, "%d", parse_char_literal(rhs));
-                rhs = cast(str)char_lit_buf[0 .. len];
+            ConstValue cv = try_eval_constant(right);
+            if(!cv.is_const){
+                error(right.token, "Constant folding failed with a literal");
+                return 1;
             }
+            auto rhs = cv.uint_val; // FIXME: type check
 
             switch(expr.op) with (CTokenType){
                 case PLUS:
                     if(left_elem_size > 1){
-                        // Pointer + integer: scale integer by element size at compile time
-                        import dlib.parse_numbers : parse_unsigned_human;
-                        auto parsed = parse_unsigned_human(rhs);
-                        if(!parsed.errored){
-                            ulong scaled = parsed.value * left_elem_size;
-                            sb.writef("    add r% r% %\n", target, lhs, scaled);
-                            break;
-                        }
+                        rhs *= left_elem_size;
                     }
                     sb.writef("    add r% r% %\n", target, lhs, rhs);
                     break;
                 case MINUS:
                     // Literals can't be pointers, so this is ptr - int
                     if(left_elem_size > 1){
-                        // Pointer - integer: scale integer by element size at compile time
-                        import dlib.parse_numbers : parse_unsigned_human;
-                        auto parsed = parse_unsigned_human(rhs);
-                        if(!parsed.errored){
-                            ulong scaled = parsed.value * left_elem_size;
-                            sb.writef("    sub r% r% %\n", target, lhs, scaled);
-                            break;
-                        }
+                        rhs *= left_elem_size;
                     }
                     sb.writef("    sub r% r% %\n", target, lhs, rhs);
                     break;
@@ -3488,7 +3470,7 @@ struct CDasmWriter {
                 case AMP_AMP:
                     // Logical AND: result is 1 iff both lhs and rhs are non-zero
                     // For literal RHS, we know at compile time if rhs is 0
-                    if(rhs == "0"){
+                    if(rhs == 0){
                         // x && 0 is always 0
                         sb.writef("    move r% 0\n", target);
                     } else {
@@ -3501,7 +3483,7 @@ struct CDasmWriter {
                 case PIPE_PIPE:
                     // Logical OR: result is 1 iff either lhs or rhs is non-zero
                     // For literal RHS, we know at compile time if rhs is 0
-                    if(rhs != "0"){
+                    if(rhs != 0){
                         // x || non-zero is always 1
                         sb.writef("    move r% 1\n", target);
                     } else {

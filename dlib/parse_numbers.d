@@ -156,8 +156,6 @@ parse_psize(const char[] s){ with(ParseNumberError){
 }}
 IntegerResult!ulong
 parse_strnum(str s){ with(ParseNumberError){
-    import core.stdc.stdio;
-    // printf("%s:%d: s = '%.*s;\n", __FUNCTION__.ptr, __LINE__, cast(int)s.length, s.ptr);
     if(s.length < 3)
         return IntegerResult!ulong(0LU, UNEXPECTED_END);
     if(s[0] != '0')
@@ -176,7 +174,7 @@ parse_strnum(str s){ with(ParseNumberError){
 }}
 IntegerResult!ulong
 parse_unsigned_human(const char[] s){ with(ParseNumberError){
-    auto result = parse_hex(s);
+    IntegerResult!ulong result = parse_hex(s);
     if(!result.errored)
         return result;
     result = parse_uint64(s);

@@ -157,8 +157,9 @@ ConstValue eval_literal(CLiteral* lit) {
 
     if (lit.value.type == CTokenType.NUMBER || lit.value.type == CTokenType.HEX) {
         bool is_unsigned = is_unsigned_literal(lexeme);
+        while(lexeme.length && ((lexeme[$-1] | 0x20) == 'u' || (lexeme[$-1] | 0x20) == 'l'))
+            lexeme = lexeme[0..$-1];
         auto parsed = parse_unsigned_human(lexeme);
-        if (parsed.errored) return ConstValue.not_const();
 
         if (is_unsigned) {
             return ConstValue.from_uint(parsed.value);
@@ -464,9 +465,11 @@ bool is_unsigned_literal(str lex) {
     if (last == 'u' || last == 'U') return true;
     if (lex.length >= 2) {
         char prev = lex[$ - 2];
-        // Check for ul, uL, Ul, UL, lu, lU, Lu, LU
-        if ((last == 'l' || last == 'L') && (prev == 'u' || prev == 'U')) return true;
-        if ((last == 'u' || last == 'U') && (prev == 'l' || prev == 'L')) return true;
+        if(prev == 'u' || prev == 'U') return true;
+    }
+    if (lex.length >= 3) {
+        char prev = lex[$ - 3];
+        if(prev == 'u' || prev == 'U') return true;
     }
     return false;
 }

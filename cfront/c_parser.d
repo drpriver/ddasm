@@ -46,6 +46,7 @@ struct DeclSpecifiers {
         AUTO        = 1 << 3,
         REGISTER    = 1 << 4,
         THREAD_LOCAL = 1 << 5,
+        CONSTEXPR   = 1 << 6,
     }
     StorageClass storage = StorageClass.NONE;
 
@@ -348,13 +349,14 @@ struct CParser {
     //     typedef | extern | static | _Thread_local | auto | register
     bool parse_storage_class_specifier(DeclSpecifiers* specs){
         alias SC = DeclSpecifiers.StorageClass;
-        if(match(CTokenType.TYPEDEF))  { specs.storage |= SC.TYPEDEF; return true; }
-        if(match(CTokenType.EXTERN))   { specs.storage |= SC.EXTERN; return true; }
-        if(match(CTokenType.STATIC))   { specs.storage |= SC.STATIC; return true; }
-        if(match(CTokenType.AUTO))     { specs.storage |= SC.AUTO; return true; }
-        if(match(CTokenType.REGISTER)) { specs.storage |= SC.REGISTER; return true; }
-        if(match_id("_Thread_local"))  { specs.storage |= SC.THREAD_LOCAL; return true; }
-        if(match_id("__auto_type"))    { specs.storage |= SC.AUTO; return true; }  // GCC extension
+        if(match(CTokenType.TYPEDEF))   { specs.storage |= SC.TYPEDEF; return true; }
+        if(match(CTokenType.EXTERN))    { specs.storage |= SC.EXTERN; return true; }
+        if(match(CTokenType.STATIC))    { specs.storage |= SC.STATIC; return true; }
+        if(match(CTokenType.AUTO))      { specs.storage |= SC.AUTO; return true; }
+        if(match(CTokenType.REGISTER))  { specs.storage |= SC.REGISTER; return true; }
+        if(match(CTokenType.CONSTEXPR)) { specs.storage |= SC.CONSTEXPR; return true; }
+        if(match_id("_Thread_local"))   { specs.storage |= SC.THREAD_LOCAL; return true; }
+        if(match_id("__auto_type"))     { specs.storage |= SC.AUTO; return true; }  // GCC extension
         return false;
     }
 
@@ -3235,8 +3237,8 @@ struct CParser {
         }
 
         // Check for variable declaration (starts with type or storage class)
-        // Also handle auto/__auto_type for type inference
-        if(check(CTokenType.STATIC) || check(CTokenType.AUTO) || is_type_specifier(peek())){
+        // Also handle auto/__auto_type/constexpr for type inference
+        if(check(CTokenType.STATIC) || check(CTokenType.AUTO) || check(CTokenType.CONSTEXPR) || is_type_specifier(peek())){
             return parse_var_decl();
         }
         if(check(CTokenType.IDENTIFIER) && peek().lexeme == "__auto_type"){
@@ -3990,18 +3992,20 @@ struct CParser {
 
         bool is_static = (specs.storage & SC.STATIC) != 0;
         bool saw_auto = (specs.storage & SC.AUTO) != 0;
+        bool saw_constexpr = (specs.storage & SC.CONSTEXPR) != 0;
         CType* base_type = specs.base_type;
 
-        // Type inference: auto/const/static without type specifier
+        // Type inference: auto/const/static/constexpr without type specifier
         // - auto x = 3;           → infer type
         // - static auto x = 3;    → static + infer type
         // - const x = "hello";    → infer const type (extension)
         // - static x = 3;         → static + infer type (extension)
+        // - constexpr x = 3;      → constexpr (implies const) + infer type
         bool infer_type = false;
-        bool infer_const = specs.is_const;
+        bool infer_const = specs.is_const || saw_constexpr;
 
         if(base_type is null){
-            if(saw_auto || specs.is_const || is_static){
+            if(saw_auto || specs.is_const || is_static || saw_constexpr){
                 infer_type = true;
             } else {
                 error("Expected type specifier");
