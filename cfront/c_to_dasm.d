@@ -5801,6 +5801,54 @@ struct CDasmWriter {
             return gen_subscript_address(sub, target);
         }
 
+        // Ternary expression returning struct - evaluate into temp and return address
+        if(CTernary* tern = e.as_ternary()){
+            CType* result_type = e.type;
+            if(result_type && result_type.is_struct_or_union()){
+                size_t size = result_type.size_of();
+                size_t num_slots = (size + 7) / 8;
+
+                // Allocate temp slot for result
+                int temp_slot = stack_offset;
+                stack_offset += cast(int)num_slots;
+
+                int else_label = labelallocator.allocate();
+                int after_label = labelallocator.allocate();
+
+                // Generate condition
+                int before = regallocator.alloced;
+                int cond_reg = regallocator.allocate();
+                int err = gen_expression(tern.condition, cond_reg);
+                if(err) return err;
+
+                sb.writef("    cmp r% 0\n", cond_reg);
+                sb.writef("    jump eq label L%\n", else_label);
+
+                // True branch - get address and copy to temp
+                int src_reg = regallocator.allocate();
+                err = gen_struct_address(tern.if_true, src_reg);
+                if(err) return err;
+                sb.writef("    add r% rbp %\n", target, P(temp_slot));
+                sb.writef("    memcpy r% r% %\n", target, src_reg, size);
+                sb.writef("    move rip label L%\n", after_label);
+
+                // False branch - get address and copy to temp
+                sb.writef("  label L%\n", else_label);
+                err = gen_struct_address(tern.if_false, src_reg);
+                if(err) return err;
+                sb.writef("    add r% rbp %\n", target, P(temp_slot));
+                sb.writef("    memcpy r% r% %\n", target, src_reg, size);
+
+                sb.writef("  label L%\n", after_label);
+                regallocator.reset_to(before);
+
+                // Return address of temp
+                if(target != TARGET_IS_NOTHING)
+                    sb.writef("    add r% rbp %\n", target, P(temp_slot));
+                return 0;
+            }
+        }
+
         error(e.token, "Cannot pass this expression as struct/union by value");
         return 1;
     }
