@@ -20,14 +20,7 @@ NC = '\033[0m'  # No Color
 def main():
     script_dir = Path(__file__).parent.resolve()
     project_dir = script_dir.parent
-    c2dasm = project_dir / 'Bin' / 'c2dasm'
     ddasm = project_dir / 'Bin' / 'ddasm'
-
-    # Check if c2dasm exists
-    if not c2dasm.exists() or not os.access(c2dasm, os.X_OK):
-        print(f"{RED}Error: c2dasm not found at {c2dasm}{NC}")
-        print("Run 'make c2dasm' first")
-        sys.exit(1)
 
     # Check if ddasm exists
     if not ddasm.exists() or not os.access(ddasm, os.X_OK):
@@ -56,52 +49,24 @@ def main():
                 print(f"{YELLOW}SKIP{NC}: {filename}")
                 skip_count += 1
                 continue
-
         # Step 1: Compile C to DASM
-        compile_result = subprocess.run(
-            [str(c2dasm), str(test_file)],
+        result = subprocess.run(
+            [str(ddasm), str(test_file)],
             capture_output=True,
             text=True
         )
 
-        if compile_result.returncode != 0:
+        if result.returncode == 0:
+            print(f"{GREEN}PASS{NC}: {filename}")
+            pass_count += 1
+        else:
             print(f"{RED}FAIL{NC}: {filename} (compile error)")
-            error_output = compile_result.stderr or compile_result.stdout
+            error_output = result.stderr or result.stdout
             error_lines = error_output.strip().split('\n')[:5]
             for line in error_lines:
                 print(f"      {line}")
             fail_count += 1
             continue
-
-        # Step 2: Run the compiled DASM
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.dasm', delete=False) as tmp:
-            tmp.write(compile_result.stdout)
-            tmp_path = tmp.name
-
-        try:
-            run_result = subprocess.run(
-                [str(ddasm), tmp_path],
-                capture_output=True,
-                text=True,
-                timeout=1
-            )
-
-            if run_result.returncode == 0:
-                print(f"{GREEN}PASS{NC}: {filename}")
-                pass_count += 1
-            else:
-                print(f"{RED}FAIL{NC}: {filename} (runtime error, exit code {run_result.returncode})")
-                error_output = run_result.stderr or run_result.stdout
-                if error_output:
-                    error_lines = error_output.strip().split('\n')[:5]
-                    for line in error_lines:
-                        print(f"      {line}")
-                fail_count += 1
-        except subprocess.TimeoutExpired:
-            print(f"{RED}FAIL{NC}: {filename} (timeout)")
-            fail_count += 1
-        finally:
-            os.unlink(tmp_path)
 
     # Run DASM tests
     print()
@@ -161,11 +126,9 @@ def main():
 
     print()
     print("=========================")
-    print(f"Results: {GREEN}{pass_count} passed{NC}, {RED}{fail_count} failed{NC}, {YELLOW}{skip_count} skipped{NC}")
+    print(f"Results: {GREEN}{pass_count} passed{NC}, {RED if fail_count else ''}{fail_count} failed{NC}, {YELLOW}{skip_count} skipped{NC}")
 
-    if fail_count > 0:
-        sys.exit(1)
-    sys.exit(0)
+    sys.exit(bool(fail_count))
 
 
 if __name__ == '__main__':

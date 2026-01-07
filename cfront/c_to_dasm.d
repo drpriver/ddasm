@@ -2258,7 +2258,7 @@ struct CDasmWriter {
 
                             size_t field_size = field_type.size_of();
 
-                            // Check if field value is a nested init list (for nested struct)
+                            // Check if field value is a nested init list (for nested struct or array)
                             if(CInitList* nested_init = elem.value.as_init_list()){
                                 if(field_type.kind == CTypeKind.STRUCT){
                                     // Initialize nested struct field
@@ -2308,8 +2308,60 @@ struct CDasmWriter {
                                         sb.writef("    % r% r%\n", write_instr_for_size(nested_size), addr_reg, val_reg);
                                         nested_field_idx++;
                                     }
+                                } else if(field_type.is_array()){
+                                    // Initialize array field with nested init list
+                                    CType* elem_type = field_type.pointed_to;
+                                    size_t elem_size = elem_type ? elem_type.size_of() : 1;
+                                    size_t arr_size = field_type.array_size;
+                                    size_t num_nested = nested_init.elements.length;
+                                    if(num_nested > arr_size) num_nested = arr_size;
+
+                                    for(size_t j = 0; j < num_nested; j++){
+                                        auto nested_elem = nested_init.elements[j];
+                                        size_t elem_offset = offset + j * elem_size;
+
+                                        // Check if array element is itself a nested init list (for struct elements)
+                                        if(CInitList* elem_init = nested_elem.value.as_init_list()){
+                                            if(elem_type.is_struct()){
+                                                auto elem_fields = elem_type.fields;
+                                                size_t num_fields = elem_init.elements.length;
+                                                if(num_fields > elem_fields.length) num_fields = elem_fields.length;
+                                                for(size_t fi = 0; fi < num_fields; fi++){
+                                                    auto field_elem = elem_init.elements[fi];
+                                                    size_t field_off = elem_offset + elem_fields[fi].offset;
+                                                    size_t field_sz = elem_fields[fi].type.size_of();
+                                                    int field_slot = slot + cast(int)(field_off / 8);
+
+                                                    int err = gen_expression(field_elem.value, val_reg);
+                                                    if(err) return err;
+                                                    gen_implicit_conversion(val_reg, field_elem.value, elem_fields[fi].type);
+
+                                                    sb.writef("    add r% rbp %\n", addr_reg, P(field_slot));
+                                                    if(field_off % 8 != 0){
+                                                        sb.writef("    add r% r% %\n", addr_reg, addr_reg, field_off % 8);
+                                                    }
+                                                    sb.writef("    % r% r%\n", write_instr_for_size(field_sz), addr_reg, val_reg);
+                                                }
+                                            } else {
+                                                error(nested_elem.value.token, "Nested initializer for non-struct array element");
+                                                return 1;
+                                            }
+                                        } else {
+                                            // Scalar array element
+                                            int elem_slot = slot + cast(int)(elem_offset / 8);
+                                            int err = gen_expression(nested_elem.value, val_reg);
+                                            if(err) return err;
+                                            gen_implicit_conversion(val_reg, nested_elem.value, elem_type);
+
+                                            sb.writef("    add r% rbp %\n", addr_reg, P(elem_slot));
+                                            if(elem_offset % 8 != 0){
+                                                sb.writef("    add r% r% %\n", addr_reg, addr_reg, elem_offset % 8);
+                                            }
+                                            sb.writef("    % r% r%\n", write_instr_for_size(elem_size), addr_reg, val_reg);
+                                        }
+                                    }
                                 } else {
-                                    error(elem.value.token, "Nested initializer for non-struct field");
+                                    error(elem.value.token, "Nested initializer for non-aggregate field");
                                     return 1;
                                 }
                             } else if(field_type.kind == CTypeKind.STRUCT && needs_memcpy(field_size)){
