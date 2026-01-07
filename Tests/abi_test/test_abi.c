@@ -476,6 +476,16 @@ void test_args(void){
             FAIL("got %d,%d,%d\n", e.x, e.y, e.z);
         }
     }
+    {
+        TEST("Passing a lot of mixed args (ints and floats, unpacked)");
+        Vec3i e = vec3i_4_max_unpacked(1, 2, 3, 6, 5, -4, 12, 0, 1, 0, 0, 0);
+        if(e.x== 12.f && e.y==5.f && e.z== 3.f){
+            PASS();
+        }
+        else {
+            FAIL("got %f,%f,%f\n", e.x, e.y, e.z);
+        }
+    }
 }
 
 // ============================================================================

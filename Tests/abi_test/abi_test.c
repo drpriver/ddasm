@@ -332,3 +332,20 @@ Vec3i vec3i_4_max_unpacked(int ax, int ay, int az, int bx, int by, int bz, int c
     if(d.z > a.z) a.z = d.z;
     return a;
 }
+Vec3 weird_max_unpacked(int ax, float ay, double az, float bx, int by, float bz, float cx, int cy, float cz, int dx, float dy, float dz){
+    Vec3 a = {ax, ay, az};
+    Vec3 b = {bx, by, bz};
+    Vec3 c = {cx, cy, cz};
+    Vec3 d = {dx, dy, dz};
+    Vec3 result = a;
+    if(b.x > a.x) a.x = b.x;
+    if(c.x > a.x) a.x = c.x;
+    if(d.x > a.x) a.x = d.x;
+    if(b.y > a.y) a.y = b.y;
+    if(c.y > a.y) a.y = c.y;
+    if(d.y > a.y) a.y = d.y;
+    if(b.z > a.z) a.z = b.z;
+    if(c.z > a.z) a.z = c.z;
+    if(d.z > a.z) a.z = d.z;
+    return a;
+}

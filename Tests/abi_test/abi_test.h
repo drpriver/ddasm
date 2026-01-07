@@ -151,5 +151,6 @@ Vec3 vec3_4_max(Vec3 a, Vec3 b, Vec3 c, Vec3 d);
 Vec3d vec3d_4_max(Vec3d a, Vec3d b, Vec3d c, Vec3d d);
 Vec3i vec3i_4_max(Vec3i a, Vec3i b, Vec3i c, Vec3i d);
 Vec3i vec3i_4_max_unpacked(int ax, int ay, int az, int bx, int by, int bz, int cx, int cy, int cz, int dx, int dy, int dz);
+Vec3 weird_max_unpacked(int ax, float ay, double az, float bx, int by, float bz, float cx, int cy, float cz, int dx, float dy, float dz);
 
 #endif // ABI_TEST_H
