@@ -53,7 +53,8 @@ def main():
         result = subprocess.run(
             [str(ddasm), str(test_file)],
             capture_output=True,
-            text=True
+            text=True,
+            timeout=1,
         )
 
         if result.returncode == 0:

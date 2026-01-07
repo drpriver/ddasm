@@ -2149,9 +2149,16 @@ struct CDasmWriter {
     // cursor: current position in elements, updated as elements are consumed
     // subobj_idx: for resuming after designator (pass 0 normally)
     // Returns error code (0 = success)
+    static int _debug_depth = 0;
     int gen_init_from_list(CType* target_type, int base_slot, size_t byte_offset,
                            CInitElement[] elements, ref size_t cursor,
                            int addr_reg, int val_reg, CToken tok, size_t subobj_idx = 0) {
+        _debug_depth++;
+        if (_debug_depth > 100) {
+            error(tok, "INFINITE LOOP DETECTED in init list processing");
+            return 1;
+        }
+        scope(exit) _debug_depth--;
         if (target_type is null) return 0;
 
         // Handle scalar types
@@ -2197,7 +2204,13 @@ struct CDasmWriter {
         if (target_type.is_struct_or_union()) {
             auto fields = target_type.fields;
 
+            int _loop_count = 0;
             while (cursor < elements.length) {
+                _loop_count++;
+                if (_loop_count > 10000) {
+                    error(tok, "INFINITE WHILE LOOP in struct init");
+                    return 1;
+                }
                 auto elem = elements[cursor];
 
                 // For positional elements, check if we've exhausted fields
@@ -2266,16 +2279,68 @@ struct CDasmWriter {
                                                         nested.elements, nested_cursor,
                                                         addr_reg, val_reg, elem.value.token);
                             if (err) return err;
-                        } else if (desig_type.is_struct_or_union() || desig_type.is_array()) {
-                            // Scalar initializing aggregate - flood fill
+                            cursor++;
+                            subobj_idx++;
+                            continue;
+                        } else if (desig_type.is_struct_or_union()) {
+                            // Non-brace initializer for struct field
+                            CType* val_type = elem.value.type;
+                            if (val_type !is null && val_type.is_struct_or_union() &&
+                                types_compatible(val_type, desig_type)) {
+                                // Struct-to-struct copy
+                                size_t field_size = desig_type.size_of();
+                                int target_slot = base_slot + cast(int)(desig_offset / 8);
+                                sb.writef("    add r% rbp %\n", addr_reg, P(target_slot));
+                                if (desig_offset % 8 != 0) {
+                                    sb.writef("    add r% r% %\n", addr_reg, addr_reg, desig_offset % 8);
+                                }
+
+                                if (needs_memcpy(field_size)) {
+                                    int src_reg = val_reg;
+                                    int err = gen_struct_address(elem.value, src_reg);
+                                    if (err) return err;
+                                    sb.writef("    memcpy r% r% %\n", addr_reg, src_reg, field_size);
+                                } else {
+                                    int err = gen_expression(elem.value, val_reg);
+                                    if (err) return err;
+                                    sb.writef("    % r% r%\n", write_instr_for_size(field_size), addr_reg, val_reg);
+                                }
+                                cursor++;
+                                subobj_idx++;
+                                continue;
+                            } else {
+                                // Flood fill - recurse with same elements array
+                                size_t old_cursor = cursor;
+                                int err = gen_init_from_list(desig_type, base_slot, desig_offset,
+                                                            elements, cursor,
+                                                            addr_reg, val_reg, tok);
+                                if (err) return err;
+                                // If cursor didn't advance, element has designator for parent level - stop
+                                if (cursor == old_cursor) {
+                                    // Fall through to scalar handling
+                                } else {
+                                    subobj_idx++;
+                                    continue;
+                                }
+                            }
+                        } else if (desig_type.is_array()) {
+                            // Non-brace initializer for array - flood fill
+                            size_t old_cursor = cursor;
                             int err = gen_init_from_list(desig_type, base_slot, desig_offset,
                                                         elements, cursor,
                                                         addr_reg, val_reg, tok);
                             if (err) return err;
-                            subobj_idx++;
-                            continue;  // cursor already advanced by recursion
-                        } else {
-                            // Scalar at designated location
+                            // If cursor didn't advance, element wasn't consumed by flood fill
+                            // (e.g., string literal for char array) - skip to normal handling below
+                            if (cursor == old_cursor) {
+                                // Fall through to handle as scalar/special case
+                            } else {
+                                subobj_idx++;
+                                continue;
+                            }
+                        }
+                        // Scalar at designated location (or string literal for char array, or fallthrough)
+                        {
                             CExpr* value = elem.value;
                             while (CInitList* wrap = value.as_init_list()) {
                                 if (wrap.elements.length == 0) break;
@@ -2344,12 +2409,14 @@ struct CDasmWriter {
                         subobj_idx++;
                     } else {
                         // Flood fill - recurse with same elements array
+                        size_t old_cursor = cursor;
                         int err = gen_init_from_list(field_type, base_slot, field_offset,
                                                     elements, cursor,
                                                     addr_reg, val_reg, tok);
                         if (err) return err;
+                        // If cursor didn't advance, element has designator for parent level - stop
+                        if (cursor == old_cursor) break;
                         subobj_idx++;
-                        // cursor already advanced by recursion
                     }
                 } else {
                     // Scalar field, scalar value
@@ -2392,7 +2459,13 @@ struct CDasmWriter {
             size_t elem_size = elem_type ? elem_type.size_of() : 1;
             size_t arr_size = target_type.array_size;
 
+            int _loop_count = 0;
             while (cursor < elements.length) {
+                _loop_count++;
+                if (_loop_count > 10000) {
+                    error(tok, "INFINITE WHILE LOOP in array init");
+                    return 1;
+                }
                 auto elem = elements[cursor];
 
                 // For positional elements, check if we've exhausted array
@@ -2522,10 +2595,13 @@ struct CDasmWriter {
                         subobj_idx++;
                     } else {
                         // Flood fill - recurse with same elements array
+                        size_t old_cursor = cursor;
                         int err = gen_init_from_list(elem_type, base_slot, elem_offset,
                                                     elements, cursor,
                                                     addr_reg, val_reg, tok);
                         if (err) return err;
+                        // If cursor didn't advance, element has designator for parent level - stop
+                        if (cursor == old_cursor) break;
                         subobj_idx++;
                     }
                 } else {

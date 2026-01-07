@@ -314,6 +314,56 @@ void test_scalar_init_aos(void){
     assert(m[2].p.x == 0);
 }
 
+int GetRandomValue(int a, int b){
+    return (a+b)/2;
+}
+
+typedef struct Vector2 {
+    float x;                // Vector x component
+    float y;                // Vector y component
+} Vector2;
+typedef struct Rectangle {
+    float x;                // Rectangle top-left corner position x
+    float y;                // Rectangle top-left corner position y
+    float width;            // Rectangle width
+    float height;           // Rectangle height
+} Rectangle;
+typedef struct Color {
+    unsigned char r;        // Color red value
+    unsigned char g;        // Color green value
+    unsigned char b;        // Color blue value
+    unsigned char a;        // Color alpha value
+} Color;
+#define MAX_TEXT_LENGTH      100
+typedef struct TextParticle {
+    char text[MAX_TEXT_LENGTH];
+    Rectangle rect;    // Boundary
+    Vector2 vel;       // Velocity
+    Vector2 ppos;      // Previous position
+    float padding;
+    float borderWidth;
+    float friction;   
+    float elasticity;
+    Color color;
+    bool grabbed;
+} TextParticle;
+
+void test_strings_management(void){
+    Color color = {0};
+    int x = 1, y = 2;
+    TextParticle tp = {
+        .text = "",
+        .rect = { x, y, 30, 30 },
+        .vel = { (float)GetRandomValue(-200, 200), (float)GetRandomValue(-200, 200) },
+        .ppos = { 0 },
+        .padding = 5.0f,
+        .borderWidth = 5.0f,
+        .friction = 0.99f,
+        .elasticity = 0.9f,
+        .color = color,
+        .grabbed = false
+    };
+}
 int main(void) {
     int result = 0;
     test_designated_struct();
@@ -349,5 +399,6 @@ int main(void) {
     test_flat_nested_init();
     test_excess_elements();
     test_scalar_init_aos();
+    test_strings_management();
     return 0;
 }
