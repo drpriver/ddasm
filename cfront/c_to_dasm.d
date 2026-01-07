@@ -2144,6 +2144,424 @@ struct CDasmWriter {
         return 0;
     }
 
+    // Unified recursive initializer - implements C 6.7.9 semantics
+    // Initializes target_type at base_slot + byte_offset from init_list elements
+    // cursor: current position in elements, updated as elements are consumed
+    // subobj_idx: for resuming after designator (pass 0 normally)
+    // Returns error code (0 = success)
+    int gen_init_from_list(CType* target_type, int base_slot, size_t byte_offset,
+                           CInitElement[] elements, ref size_t cursor,
+                           int addr_reg, int val_reg, CToken tok, size_t subobj_idx = 0) {
+        if (target_type is null) return 0;
+
+        // Handle scalar types
+        if (!target_type.is_struct_or_union() && !target_type.is_array()) {
+            if (cursor >= elements.length) return 0;  // Nothing to consume
+
+            auto elem = elements[cursor];
+
+            // Handle designators on scalar - error
+            if (elem.designators.length > 0) {
+                // Don't consume - designator is for outer aggregate
+                return 0;
+            }
+
+            // Unwrap braces on scalar (C allows int x = {42})
+            CExpr* value = elem.value;
+            while (CInitList* nested = value.as_init_list()) {
+                if (nested.elements.length == 0) {
+                    // {} means zero, already handled by memzero
+                    cursor++;
+                    return 0;
+                }
+                value = nested.elements[0].value;
+            }
+
+            int err = gen_expression(value, val_reg);
+            if (err) return err;
+            gen_implicit_conversion(val_reg, value, target_type);
+
+            // Write value
+            int target_slot = base_slot + cast(int)(byte_offset / 8);
+            sb.writef("    add r% rbp %\n", addr_reg, P(target_slot));
+            if (byte_offset % 8 != 0) {
+                sb.writef("    add r% r% %\n", addr_reg, addr_reg, byte_offset % 8);
+            }
+            sb.writef("    % r% r%\n", write_instr_for_size(target_type.size_of()), addr_reg, val_reg);
+
+            cursor++;
+            return 0;
+        }
+
+        // Handle struct/union types
+        if (target_type.is_struct_or_union()) {
+            auto fields = target_type.fields;
+
+            while (cursor < elements.length) {
+                auto elem = elements[cursor];
+
+                // For positional elements, check if we've exhausted fields
+                if (elem.designators.length == 0 && subobj_idx >= fields.length)
+                    break;
+
+                // Handle designators
+                if (elem.designators.length > 0) {
+                    auto desig = elem.designators[0];
+
+                    if (desig.kind == CDesignatorKind.FIELD) {
+                        // Find field
+                        bool found = false;
+                        for (size_t fi = 0; fi < fields.length; fi++) {
+                            if (fields[fi].name == desig.field_name) {
+                                subobj_idx = fi;
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (!found) {
+                            error(desig.token, "Unknown field in designator");
+                            return 1;
+                        }
+
+                        // Compute full offset/type through chain
+                        size_t desig_offset = byte_offset + fields[subobj_idx].offset;
+                        CType* desig_type = fields[subobj_idx].type;
+
+                        for (size_t di = 1; di < elem.designators.length; di++) {
+                            auto d = elem.designators[di];
+                            if (d.kind == CDesignatorKind.FIELD) {
+                                if (!desig_type.is_struct_or_union()) {
+                                    error(d.token, "Field designator on non-struct");
+                                    return 1;
+                                }
+                                auto sub_fields = desig_type.fields;
+                                bool f = false;
+                                foreach (ref sf; sub_fields) {
+                                    if (sf.name == d.field_name) {
+                                        desig_offset += sf.offset;
+                                        desig_type = sf.type;
+                                        f = true;
+                                        break;
+                                    }
+                                }
+                                if (!f) {
+                                    error(d.token, "Unknown field");
+                                    return 1;
+                                }
+                            } else {  // INDEX
+                                if (!desig_type.is_array()) {
+                                    error(d.token, "Index designator on non-array");
+                                    return 1;
+                                }
+                                desig_offset += d.index_value * desig_type.pointed_to.size_of();
+                                desig_type = desig_type.pointed_to;
+                            }
+                        }
+
+                        // Initialize at designated location
+                        if (CInitList* nested = elem.value.as_init_list()) {
+                            // Braced initializer for designated location
+                            size_t nested_cursor = 0;
+                            int err = gen_init_from_list(desig_type, base_slot, desig_offset,
+                                                        nested.elements, nested_cursor,
+                                                        addr_reg, val_reg, elem.value.token);
+                            if (err) return err;
+                        } else if (desig_type.is_struct_or_union() || desig_type.is_array()) {
+                            // Scalar initializing aggregate - flood fill
+                            int err = gen_init_from_list(desig_type, base_slot, desig_offset,
+                                                        elements, cursor,
+                                                        addr_reg, val_reg, tok);
+                            if (err) return err;
+                            subobj_idx++;
+                            continue;  // cursor already advanced by recursion
+                        } else {
+                            // Scalar at designated location
+                            CExpr* value = elem.value;
+                            while (CInitList* wrap = value.as_init_list()) {
+                                if (wrap.elements.length == 0) break;
+                                value = wrap.elements[0].value;
+                            }
+                            int err = gen_expression(value, val_reg);
+                            if (err) return err;
+                            gen_implicit_conversion(val_reg, value, desig_type);
+
+                            int target_slot = base_slot + cast(int)(desig_offset / 8);
+                            sb.writef("    add r% rbp %\n", addr_reg, P(target_slot));
+                            if (desig_offset % 8 != 0) {
+                                sb.writef("    add r% r% %\n", addr_reg, addr_reg, desig_offset % 8);
+                            }
+                            sb.writef("    % r% r%\n", write_instr_for_size(desig_type.size_of()), addr_reg, val_reg);
+                        }
+
+                        cursor++;
+                        subobj_idx++;
+                        continue;
+                    } else {
+                        // Index designator on struct - not allowed at this level
+                        // But might be chained, so just return and let parent handle
+                        return 0;
+                    }
+                }
+
+                // No designator - positional
+                CType* field_type = fields[subobj_idx].type;
+                size_t field_offset = byte_offset + fields[subobj_idx].offset;
+
+                if (CInitList* nested = elem.value.as_init_list()) {
+                    // Braced initializer for this field
+                    size_t nested_cursor = 0;
+                    int err = gen_init_from_list(field_type, base_slot, field_offset,
+                                                nested.elements, nested_cursor,
+                                                addr_reg, val_reg, elem.value.token);
+                    if (err) return err;
+                    cursor++;
+                    subobj_idx++;
+                } else if (field_type.is_struct_or_union() || field_type.is_array()) {
+                    // Non-brace initializer for aggregate field
+                    // Check if it's a matching aggregate value (struct copy)
+                    CType* val_type = elem.value.type;
+                    if (val_type !is null && val_type.is_struct_or_union() &&
+                        types_compatible(val_type, field_type)) {
+                        // Struct-to-struct copy
+                        size_t field_size = field_type.size_of();
+                        int target_slot = base_slot + cast(int)(field_offset / 8);
+                        sb.writef("    add r% rbp %\n", addr_reg, P(target_slot));
+                        if (field_offset % 8 != 0) {
+                            sb.writef("    add r% r% %\n", addr_reg, addr_reg, field_offset % 8);
+                        }
+
+                        if (needs_memcpy(field_size)) {
+                            int src_reg = val_reg;
+                            int err = gen_struct_address(elem.value, src_reg);
+                            if (err) return err;
+                            sb.writef("    memcpy r% r% %\n", addr_reg, src_reg, field_size);
+                        } else {
+                            int err = gen_expression(elem.value, val_reg);
+                            if (err) return err;
+                            sb.writef("    % r% r%\n", write_instr_for_size(field_size), addr_reg, val_reg);
+                        }
+                        cursor++;
+                        subobj_idx++;
+                    } else {
+                        // Flood fill - recurse with same elements array
+                        int err = gen_init_from_list(field_type, base_slot, field_offset,
+                                                    elements, cursor,
+                                                    addr_reg, val_reg, tok);
+                        if (err) return err;
+                        subobj_idx++;
+                        // cursor already advanced by recursion
+                    }
+                } else {
+                    // Scalar field, scalar value
+                    CExpr* value = elem.value;
+                    // Unwrap extra braces
+                    while (CInitList* wrap = value.as_init_list()) {
+                        if (wrap.elements.length == 0) {
+                            cursor++;
+                            subobj_idx++;
+                            break;
+                        }
+                        value = wrap.elements[0].value;
+                    }
+                    if (value.as_init_list() !is null) {
+                        // Empty braces - skip (already zeroed)
+                        continue;
+                    }
+
+                    int err = gen_expression(value, val_reg);
+                    if (err) return err;
+                    gen_implicit_conversion(val_reg, value, field_type);
+
+                    int target_slot = base_slot + cast(int)(field_offset / 8);
+                    sb.writef("    add r% rbp %\n", addr_reg, P(target_slot));
+                    if (field_offset % 8 != 0) {
+                        sb.writef("    add r% r% %\n", addr_reg, addr_reg, field_offset % 8);
+                    }
+                    sb.writef("    % r% r%\n", write_instr_for_size(field_type.size_of()), addr_reg, val_reg);
+
+                    cursor++;
+                    subobj_idx++;
+                }
+            }
+            return 0;
+        }
+
+        // Handle array types
+        if (target_type.is_array()) {
+            CType* elem_type = target_type.pointed_to;
+            size_t elem_size = elem_type ? elem_type.size_of() : 1;
+            size_t arr_size = target_type.array_size;
+
+            while (cursor < elements.length) {
+                auto elem = elements[cursor];
+
+                // For positional elements, check if we've exhausted array
+                if (elem.designators.length == 0 && subobj_idx >= arr_size)
+                    break;
+
+                // Handle designators
+                if (elem.designators.length > 0) {
+                    auto desig = elem.designators[0];
+
+                    if (desig.kind == CDesignatorKind.INDEX) {
+                        subobj_idx = cast(size_t)desig.index_value;
+
+                        // Compute full offset/type through chain
+                        size_t desig_offset = byte_offset + subobj_idx * elem_size;
+                        CType* desig_type = elem_type;
+
+                        for (size_t di = 1; di < elem.designators.length; di++) {
+                            auto d = elem.designators[di];
+                            if (d.kind == CDesignatorKind.INDEX) {
+                                if (!desig_type.is_array()) {
+                                    error(d.token, "Index designator on non-array");
+                                    return 1;
+                                }
+                                desig_offset += d.index_value * desig_type.pointed_to.size_of();
+                                desig_type = desig_type.pointed_to;
+                            } else {  // FIELD
+                                if (!desig_type.is_struct_or_union()) {
+                                    error(d.token, "Field designator on non-struct");
+                                    return 1;
+                                }
+                                auto sub_fields = desig_type.fields;
+                                bool f = false;
+                                foreach (ref sf; sub_fields) {
+                                    if (sf.name == d.field_name) {
+                                        desig_offset += sf.offset;
+                                        desig_type = sf.type;
+                                        f = true;
+                                        break;
+                                    }
+                                }
+                                if (!f) {
+                                    error(d.token, "Unknown field");
+                                    return 1;
+                                }
+                            }
+                        }
+
+                        // Initialize at designated location
+                        if (CInitList* nested = elem.value.as_init_list()) {
+                            size_t nested_cursor = 0;
+                            int err = gen_init_from_list(desig_type, base_slot, desig_offset,
+                                                        nested.elements, nested_cursor,
+                                                        addr_reg, val_reg, elem.value.token);
+                            if (err) return err;
+                        } else if (desig_type.is_struct_or_union() || desig_type.is_array()) {
+                            // Scalar initializing aggregate - flood fill
+                            int err = gen_init_from_list(desig_type, base_slot, desig_offset,
+                                                        elements, cursor,
+                                                        addr_reg, val_reg, tok);
+                            if (err) return err;
+                            subobj_idx++;
+                            continue;
+                        } else {
+                            // Scalar at designated location
+                            CExpr* value = elem.value;
+                            while (CInitList* wrap = value.as_init_list()) {
+                                if (wrap.elements.length == 0) break;
+                                value = wrap.elements[0].value;
+                            }
+                            int err = gen_expression(value, val_reg);
+                            if (err) return err;
+                            gen_implicit_conversion(val_reg, value, desig_type);
+
+                            int target_slot = base_slot + cast(int)(desig_offset / 8);
+                            sb.writef("    add r% rbp %\n", addr_reg, P(target_slot));
+                            if (desig_offset % 8 != 0) {
+                                sb.writef("    add r% r% %\n", addr_reg, addr_reg, desig_offset % 8);
+                            }
+                            sb.writef("    % r% r%\n", write_instr_for_size(desig_type.size_of()), addr_reg, val_reg);
+                        }
+
+                        cursor++;
+                        subobj_idx++;
+                        continue;
+                    } else {
+                        // Field designator on array - not allowed at this level
+                        return 0;
+                    }
+                }
+
+                // No designator - positional
+                size_t elem_offset = byte_offset + subobj_idx * elem_size;
+
+                if (CInitList* nested = elem.value.as_init_list()) {
+                    // Braced initializer for this element
+                    size_t nested_cursor = 0;
+                    int err = gen_init_from_list(elem_type, base_slot, elem_offset,
+                                                nested.elements, nested_cursor,
+                                                addr_reg, val_reg, elem.value.token);
+                    if (err) return err;
+                    cursor++;
+                    subobj_idx++;
+                } else if (elem_type.is_struct_or_union() || elem_type.is_array()) {
+                    // Non-brace initializer for aggregate element
+                    CType* val_type = elem.value.type;
+                    if (val_type !is null && val_type.is_struct_or_union() &&
+                        types_compatible(val_type, elem_type)) {
+                        // Struct-to-struct copy
+                        int target_slot = base_slot + cast(int)(elem_offset / 8);
+                        sb.writef("    add r% rbp %\n", addr_reg, P(target_slot));
+                        if (elem_offset % 8 != 0) {
+                            sb.writef("    add r% r% %\n", addr_reg, addr_reg, elem_offset % 8);
+                        }
+
+                        if (needs_memcpy(elem_size)) {
+                            int src_reg = val_reg;
+                            int err = gen_struct_address(elem.value, src_reg);
+                            if (err) return err;
+                            sb.writef("    memcpy r% r% %\n", addr_reg, src_reg, elem_size);
+                        } else {
+                            int err = gen_expression(elem.value, val_reg);
+                            if (err) return err;
+                            sb.writef("    % r% r%\n", write_instr_for_size(elem_size), addr_reg, val_reg);
+                        }
+                        cursor++;
+                        subobj_idx++;
+                    } else {
+                        // Flood fill - recurse with same elements array
+                        int err = gen_init_from_list(elem_type, base_slot, elem_offset,
+                                                    elements, cursor,
+                                                    addr_reg, val_reg, tok);
+                        if (err) return err;
+                        subobj_idx++;
+                    }
+                } else {
+                    // Scalar element
+                    CExpr* value = elem.value;
+                    while (CInitList* wrap = value.as_init_list()) {
+                        if (wrap.elements.length == 0) {
+                            cursor++;
+                            subobj_idx++;
+                            break;
+                        }
+                        value = wrap.elements[0].value;
+                    }
+                    if (value.as_init_list() !is null) continue;
+
+                    int err = gen_expression(value, val_reg);
+                    if (err) return err;
+                    gen_implicit_conversion(val_reg, value, elem_type);
+
+                    int target_slot = base_slot + cast(int)(elem_offset / 8);
+                    sb.writef("    add r% rbp %\n", addr_reg, P(target_slot));
+                    if (elem_offset % 8 != 0) {
+                        sb.writef("    add r% r% %\n", addr_reg, addr_reg, elem_offset % 8);
+                    }
+                    sb.writef("    % r% r%\n", write_instr_for_size(elem_size), addr_reg, val_reg);
+
+                    cursor++;
+                    subobj_idx++;
+                }
+            }
+            return 0;
+        }
+
+        return 0;
+    }
+
     int gen_var_decl(CVarDecl* stmt){
         str name = stmt.name.lexeme;
 
@@ -2179,245 +2597,12 @@ struct CDasmWriter {
                         addr_reg = regallocator.allocate();
                         int val_reg = regallocator.allocate();
 
-                        // Get struct field info
-                        auto fields = stmt.var_type.fields;
-                        size_t num_elems = init_list.elements.length;
-                        // Only limit when there are no designators (pure positional)
-                        // With designators, multiple elements can target sub-fields of same field
-                        bool has_designators = false;
-                        foreach(e; init_list.elements){
-                            if(e.designators.length > 0){
-                                has_designators = true;
-                                break;
-                            }
-                        }
-                        if(!has_designators && num_elems > fields.length) num_elems = fields.length;
-
-                        size_t field_idx = 0;
-                        for(size_t i = 0; i < num_elems; i++){
-                            auto elem = init_list.elements[i];
-
-                            size_t offset;
-                            CType* field_type;
-                            bool is_chained = false;
-
-                            // Handle designators
-                            if(elem.designators.length > 0){
-                                // Traverse all designators to compute final offset and type
-                                offset = 0;
-                                CType* current_type = stmt.var_type;
-
-                                foreach(di, desig; elem.designators){
-                                    if(desig.kind == CDesignatorKind.FIELD){
-                                        if(current_type.kind != CTypeKind.STRUCT){
-                                            error(desig.token, "Field designator on non-struct type");
-                                            return 1;
-                                        }
-                                        auto cur_fields = current_type.fields;
-                                        bool found = false;
-                                        foreach(f; cur_fields){
-                                            if(f.name == desig.field_name){
-                                                offset += f.offset;
-                                                current_type = f.type;
-                                                // Update field_idx for continuation (only for first designator)
-                                                if(di == 0){
-                                                    for(size_t fi = 0; fi < fields.length; fi++){
-                                                        if(fields[fi].name == desig.field_name){
-                                                            field_idx = fi + 1;
-                                                            break;
-                                                        }
-                                                    }
-                                                }
-                                                found = true;
-                                                break;
-                                            }
-                                        }
-                                        if(!found){
-                                            error(desig.token, "Unknown field in designator");
-                                            return 1;
-                                        }
-                                    } else { // INDEX
-                                        if(!current_type.is_array()){
-                                            error(desig.token, "Index designator on non-array type");
-                                            return 1;
-                                        }
-                                        offset += desig.index_value * current_type.pointed_to.size_of();
-                                        current_type = current_type.pointed_to;
-                                    }
-                                }
-
-                                field_type = current_type;
-                                is_chained = elem.designators.length > 1;
-                            } else {
-                                // Positional: use field_idx
-                                if(field_idx >= fields.length) break;
-                                offset = fields[field_idx].offset;
-                                field_type = fields[field_idx].type;
-                                field_idx++;
-                            }
-
-                            size_t field_size = field_type.size_of();
-
-                            // Check if field value is a nested init list (for nested struct or array)
-                            if(CInitList* nested_init = elem.value.as_init_list()){
-                                if(field_type.kind == CTypeKind.STRUCT){
-                                    // Initialize nested struct field
-                                    auto nested_fields = field_type.fields;
-                                    size_t num_nested = nested_init.elements.length;
-                                    if(num_nested > nested_fields.length) num_nested = nested_fields.length;
-
-                                    size_t nested_field_idx = 0;
-                                    for(size_t j = 0; j < num_nested; j++){
-                                        auto nested_elem = nested_init.elements[j];
-
-                                        // Handle field designators in nested init
-                                        if(nested_elem.designators.length > 0){
-                                            if(nested_elem.designators[0].kind != CDesignatorKind.FIELD){
-                                                error(nested_elem.designators[0].token, "Expected field designator");
-                                                return 1;
-                                            }
-                                            str fname = nested_elem.designators[0].field_name;
-                                            bool found = false;
-                                            for(size_t fi = 0; fi < nested_fields.length; fi++){
-                                                if(nested_fields[fi].name == fname){
-                                                    nested_field_idx = fi;
-                                                    found = true;
-                                                    break;
-                                                }
-                                            }
-                                            if(!found){
-                                                error(nested_elem.designators[0].token, "Unknown field");
-                                                return 1;
-                                            }
-                                        }
-
-                                        if(nested_field_idx >= nested_fields.length) break;
-
-                                        int err = gen_expression(nested_elem.value, val_reg);
-                                        if(err) return err;
-                                        // Add implicit conversion from expression type to field type
-                                        gen_implicit_conversion(val_reg, nested_elem.value, nested_fields[nested_field_idx].type);
-
-                                        size_t nested_offset = offset + nested_fields[nested_field_idx].offset;
-                                        size_t nested_size = nested_fields[nested_field_idx].type.size_of();
-                                        int nested_slot = slot + cast(int)(nested_offset / 8);
-                                        sb.writef("    add r% rbp %\n", addr_reg, P(nested_slot));
-                                        if(nested_offset % 8 != 0){
-                                            sb.writef("    add r% r% %\n", addr_reg, addr_reg, nested_offset % 8);
-                                        }
-                                        sb.writef("    % r% r%\n", write_instr_for_size(nested_size), addr_reg, val_reg);
-                                        nested_field_idx++;
-                                    }
-                                } else if(field_type.is_array()){
-                                    // Initialize array field with nested init list
-                                    CType* elem_type = field_type.pointed_to;
-                                    size_t elem_size = elem_type ? elem_type.size_of() : 1;
-                                    size_t arr_size = field_type.array_size;
-                                    size_t num_nested = nested_init.elements.length;
-                                    if(num_nested > arr_size) num_nested = arr_size;
-
-                                    for(size_t j = 0; j < num_nested; j++){
-                                        auto nested_elem = nested_init.elements[j];
-                                        size_t elem_offset = offset + j * elem_size;
-
-                                        // Check if array element is itself a nested init list (for struct elements)
-                                        if(CInitList* elem_init = nested_elem.value.as_init_list()){
-                                            if(elem_type.is_struct()){
-                                                auto elem_fields = elem_type.fields;
-                                                size_t num_fields = elem_init.elements.length;
-                                                if(num_fields > elem_fields.length) num_fields = elem_fields.length;
-                                                for(size_t fi = 0; fi < num_fields; fi++){
-                                                    auto field_elem = elem_init.elements[fi];
-                                                    size_t field_off = elem_offset + elem_fields[fi].offset;
-                                                    size_t field_sz = elem_fields[fi].type.size_of();
-                                                    int field_slot = slot + cast(int)(field_off / 8);
-
-                                                    int err = gen_expression(field_elem.value, val_reg);
-                                                    if(err) return err;
-                                                    gen_implicit_conversion(val_reg, field_elem.value, elem_fields[fi].type);
-
-                                                    sb.writef("    add r% rbp %\n", addr_reg, P(field_slot));
-                                                    if(field_off % 8 != 0){
-                                                        sb.writef("    add r% r% %\n", addr_reg, addr_reg, field_off % 8);
-                                                    }
-                                                    sb.writef("    % r% r%\n", write_instr_for_size(field_sz), addr_reg, val_reg);
-                                                }
-                                            } else {
-                                                error(nested_elem.value.token, "Nested initializer for non-struct array element");
-                                                return 1;
-                                            }
-                                        } else {
-                                            // Scalar array element
-                                            int elem_slot = slot + cast(int)(elem_offset / 8);
-                                            int err = gen_expression(nested_elem.value, val_reg);
-                                            if(err) return err;
-                                            gen_implicit_conversion(val_reg, nested_elem.value, elem_type);
-
-                                            sb.writef("    add r% rbp %\n", addr_reg, P(elem_slot));
-                                            if(elem_offset % 8 != 0){
-                                                sb.writef("    add r% r% %\n", addr_reg, addr_reg, elem_offset % 8);
-                                            }
-                                            sb.writef("    % r% r%\n", write_instr_for_size(elem_size), addr_reg, val_reg);
-                                        }
-                                    }
-                                } else {
-                                    error(elem.value.token, "Nested initializer for non-aggregate field");
-                                    return 1;
-                                }
-                            } else if(field_type.kind == CTypeKind.STRUCT && needs_memcpy(field_size)){
-                                // Large struct field - need memcpy from another struct,
-                                // OR handle scalar initialization (C allows scalar to init first subobject)
-                                CExpr* val_expr = elem.value.ungroup();
-                                int field_slot = slot + cast(int)(offset / 8);
-                                sb.writef("    add r% rbp %\n", addr_reg, P(field_slot));
-                                if(offset % 8 != 0){
-                                    sb.writef("    add r% r% %\n", addr_reg, addr_reg, offset % 8);
-                                }
-
-                                // Check if value is a struct expression (has address) or scalar
-                                bool is_struct_value = val_expr.type !is null && val_expr.type.is_struct_or_union();
-
-                                if(is_struct_value){
-                                    // Copy from another struct
-                                    int src_reg = val_reg;
-                                    int err = gen_struct_address(val_expr, src_reg);
-                                    if(err) return err;
-                                    sb.writef("    memcpy r% r% %\n", addr_reg, src_reg, field_size);
-                                } else {
-                                    // Scalar initializing struct: zero struct, then init first subobject
-                                    // In C, {0} zeros everything; {N} sets first scalar to N, zeros rest
-                                    sb.writef("    memzero r% %\n", addr_reg, field_size);
-                                    // Find first scalar subfield and initialize it
-                                    CType* first_scalar = field_type;
-                                    size_t first_offset = 0;
-                                    while(first_scalar.kind == CTypeKind.STRUCT && first_scalar.fields.length > 0){
-                                        first_offset += first_scalar.fields[0].offset;
-                                        first_scalar = first_scalar.fields[0].type;
-                                    }
-                                    if(first_scalar.kind != CTypeKind.STRUCT){
-                                        // Generate value and write to first scalar field
-                                        int err = gen_expression(val_expr, val_reg);
-                                        if(err) return err;
-                                        if(first_offset > 0){
-                                            sb.writef("    add r% r% %\n", addr_reg, addr_reg, first_offset);
-                                        }
-                                        sb.writef("    % r% r%\n", write_instr_for_size(first_scalar.size_of()), addr_reg, val_reg);
-                                    }
-                                }
-                            } else {
-                                // Scalar field (or small struct <= 8 bytes)
-                                int err = gen_expression(elem.value, val_reg);
-                                if(err) return err;
-                                // Add implicit conversion from expression type to field type
-                                gen_implicit_conversion(val_reg, elem.value, field_type);
-                                int field_slot = slot + cast(int)(offset / 8);
-                                sb.writef("    add r% rbp %\n", addr_reg, P(field_slot));
-                                if(offset % 8 != 0){
-                                    sb.writef("    add r% r% %\n", addr_reg, addr_reg, offset % 8);
-                                }
-                                sb.writef("    % r% r%\n", write_instr_for_size(field_size), addr_reg, val_reg);
-                            }
-                        }
+                        // Use unified init function
+                        size_t cursor = 0;
+                        int err = gen_init_from_list(stmt.var_type, slot, 0,
+                                                    init_list.elements, cursor,
+                                                    addr_reg, val_reg, stmt.name);
+                        if (err) return err;
 
                         regallocator.reset_to(before);
                     } else {
@@ -2446,75 +2631,15 @@ struct CDasmWriter {
                 size_t num_slots = stmt.var_type.stack_slots();  // actual slots needed
                 stack_offset += cast(int)num_slots;
 
-                // Helper to recursively initialize nested arrays
-                int gen_nested_array_init(CInitList* init_list, CType* arr_type, int base_slot, size_t base_offset,
-                                         int addr_reg, int val_reg){
-                    if(!arr_type.is_array()) return 1;
-                    CType* elem_type = arr_type.pointed_to;
-                    size_t elem_size = elem_type ? elem_type.size_of() : 1;
-                    size_t arr_size_ = arr_type.array_size;
-                    size_t num_elems = init_list.elements.length;
-                    if(num_elems > arr_size_) num_elems = arr_size_;
-
-                    for(size_t i = 0; i < num_elems; i++){
-                        auto elem = init_list.elements[i];
-                        size_t elem_offset = base_offset + i * elem_size;
-
-                        if(CInitList* nested = elem.value.as_init_list()){
-                            if(elem_type.is_array()){
-                                // Recurse for deeper nesting
-                                int err = gen_nested_array_init(nested, elem_type, base_slot, elem_offset, addr_reg, val_reg);
-                                if(err) return err;
-                            } else if(elem_type.is_struct()){
-                                // Handle struct initialization
-                                auto fields = elem_type.fields;
-                                size_t num_fields = nested.elements.length;
-                                if(num_fields > fields.length) num_fields = fields.length;
-                                for(size_t fi = 0; fi < num_fields; fi++){
-                                    auto field_elem = nested.elements[fi];
-                                    size_t field_offset = elem_offset + fields[fi].offset;
-                                    size_t field_size = fields[fi].type.size_of();
-                                    int field_slot = base_slot + cast(int)(field_offset / 8);
-
-                                    int err = gen_expression(field_elem.value, val_reg);
-                                    if(err) return err;
-
-                                    sb.writef("    add r% rbp %\n", addr_reg, P(field_slot));
-                                    if(field_offset % 8 != 0){
-                                        sb.writef("    add r% r% %\n", addr_reg, addr_reg, field_offset % 8);
-                                    }
-                                    sb.writef("    % r% r%\n", write_instr_for_size(field_size), addr_reg, val_reg);
-                                }
-                            } else {
-                                error(elem.value.token, "Nested initializer for non-array/non-struct element");
-                                return 1;
-                            }
-                        } else {
-                            // Scalar value
-                            int elem_slot = base_slot + cast(int)(elem_offset / 8);
-                            int err = gen_expression(elem.value, val_reg);
-                            if(err) return err;
-
-                            sb.writef("    add r% rbp %\n", addr_reg, P(elem_slot));
-                            if(elem_offset % 8 != 0){
-                                sb.writef("    add r% r% %\n", addr_reg, addr_reg, elem_offset % 8);
-                            }
-                            sb.writef("    % r% r%\n", write_instr_for_size(elem_size), addr_reg, val_reg);
-                        }
-                    }
-                    return 0;
-                }
-
                 // Handle array initializer
                 if(stmt.initializer !is null){
                     if(CLiteral* lit = stmt.initializer.as_literal()){
                         if(lit.value.type == CTokenType.STRING){
                             // String literal initializer for char array
-                            // Compute string length (excluding quotes, accounting for escapes)
                             str lex = lit.value.lexeme;
                             size_t str_len = 0;
                             for(size_t i = 1; i < lex.length - 1; i++){
-                                if(lex[i] == '\\' && i + 1 < lex.length - 1) i++;  // Skip escape
+                                if(lex[i] == '\\' && i + 1 < lex.length - 1) i++;
                                 str_len++;
                             }
                             str_len++;  // Include null terminator
@@ -2525,13 +2650,9 @@ struct CDasmWriter {
                             int dst_reg = regallocator.allocate();
                             int src_reg = regallocator.allocate();
 
-                            // dst = address of array on stack
                             sb.writef("    add r% rbp %\n", dst_reg, P(slot));
-                            // Zero-initialize the array first (for when string is shorter than array)
                             sb.writef("    memzero r% %\n", dst_reg, arr_size);
-                            // src = string literal address
                             sb.writef("    move r% %\n", src_reg, lex);
-                            // memcpy dst src size
                             sb.writef("    memcpy r% r% %\n", dst_reg, src_reg, copy_size);
 
                             regallocator.reset_to(before);
@@ -2540,189 +2661,21 @@ struct CDasmWriter {
                             return 1;
                         }
                     } else if(CInitList* init_list = stmt.initializer.as_init_list()){
-                        // Brace-enclosed initializer list for array
+                        // Brace-enclosed initializer list for array - use unified init function
                         int before = regallocator.alloced;
                         int addr_reg = regallocator.allocate();
                         int val_reg = regallocator.allocate();
 
-                        // Get address of array on stack
-                        sb.writef("    add r% rbp %\n", addr_reg, P(slot));
                         // Zero-initialize the array first
+                        sb.writef("    add r% rbp %\n", addr_reg, P(slot));
                         sb.writef("    memzero r% %\n", addr_reg, arr_size * stmt.var_type.element_size());
 
-                        // Get element size
-                        size_t elem_size = stmt.var_type.element_size();
-
-                        // Write each element
-                        size_t num_elems = init_list.elements.length;
-
-                        size_t current_idx = 0;
-                        for(size_t i = 0; i < num_elems; i++){
-                            auto elem = init_list.elements[i];
-
-                            size_t offset;
-                            CType* target_type;
-                            bool is_chained = false;
-
-                            // Handle designators
-                            if(elem.designators.length > 0){
-                                // Traverse all designators to compute final offset and type
-                                offset = 0;
-                                CType* current_type = stmt.var_type;
-
-                                foreach(di, desig; elem.designators){
-                                    if(desig.kind == CDesignatorKind.INDEX){
-                                        if(!current_type.is_array()){
-                                            error(desig.token, "Index designator on non-array type");
-                                            return 1;
-                                        }
-                                        size_t idx = cast(size_t)desig.index_value;
-                                        offset += idx * current_type.pointed_to.size_of();
-                                        current_type = current_type.pointed_to;
-                                        // Update current_idx for continuation (only for first designator)
-                                        if(di == 0){
-                                            current_idx = idx + 1;
-                                        }
-                                    } else { // FIELD
-                                        if(current_type.kind != CTypeKind.STRUCT){
-                                            error(desig.token, "Field designator on non-struct type");
-                                            return 1;
-                                        }
-                                        auto cur_fields = current_type.fields;
-                                        bool found = false;
-                                        foreach(f; cur_fields){
-                                            if(f.name == desig.field_name){
-                                                offset += f.offset;
-                                                current_type = f.type;
-                                                found = true;
-                                                break;
-                                            }
-                                        }
-                                        if(!found){
-                                            error(desig.token, "Unknown field in designator");
-                                            return 1;
-                                        }
-                                    }
-                                }
-
-                                target_type = current_type;
-                                is_chained = elem.designators.length > 1;
-                            } else {
-                                // Positional: use current_idx
-                                if(current_idx >= arr_size) break;
-                                offset = current_idx * elem_size;
-                                target_type = stmt.var_type.pointed_to;
-                                current_idx++;
-                            }
-
-                            int target_slot = slot + cast(int)(offset / 8);
-                            size_t target_size = target_type.size_of();
-
-                            // For chained designators, initialize directly at target
-                            if(is_chained){
-                                if(target_type.kind == CTypeKind.STRUCT && needs_memcpy(target_size)){
-                                    int src_reg = val_reg;
-                                    int err = gen_struct_address(elem.value, src_reg);
-                                    if(err) return err;
-                                    sb.writef("    add r% rbp %\n", addr_reg, P(target_slot));
-                                    if(offset % 8 != 0){
-                                        sb.writef("    add r% r% %\n", addr_reg, addr_reg, offset % 8);
-                                    }
-                                    sb.writef("    memcpy r% r% %\n", addr_reg, src_reg, target_size);
-                                } else {
-                                    int err = gen_expression(elem.value, val_reg);
-                                    if(err) return err;
-                                    sb.writef("    add r% rbp %\n", addr_reg, P(target_slot));
-                                    if(offset % 8 != 0){
-                                        sb.writef("    add r% r% %\n", addr_reg, addr_reg, offset % 8);
-                                    }
-                                    sb.writef("    % r% r%\n", write_instr_for_size(target_size), addr_reg, val_reg);
-                                }
-                                continue;
-                            }
-
-                            // Check if element is a nested init list (for array of structs)
-                            if(CInitList* nested_init = elem.value.as_init_list()){
-                                CType* elem_type = stmt.var_type.pointed_to;
-                                if(elem_type.kind == CTypeKind.STRUCT){
-                                    // Initialize nested struct at this array position
-                                    auto fields = elem_type.fields;
-                                    size_t num_nested = nested_init.elements.length;
-                                    if(num_nested > fields.length) num_nested = fields.length;
-
-                                    size_t field_idx = 0;
-                                    for(size_t j = 0; j < num_nested; j++){
-                                        auto nested_elem = nested_init.elements[j];
-
-                                        // Handle field designators in nested init
-                                        if(nested_elem.designators.length > 0){
-                                            if(nested_elem.designators[0].kind != CDesignatorKind.FIELD){
-                                                error(nested_elem.designators[0].token, "Expected field designator");
-                                                return 1;
-                                            }
-                                            str field_name = nested_elem.designators[0].field_name;
-                                            bool found = false;
-                                            for(size_t fi = 0; fi < fields.length; fi++){
-                                                if(fields[fi].name == field_name){
-                                                    field_idx = fi;
-                                                    found = true;
-                                                    break;
-                                                }
-                                            }
-                                            if(!found){
-                                                error(nested_elem.designators[0].token, "Unknown field");
-                                                return 1;
-                                            }
-                                        }
-
-                                        if(field_idx >= fields.length) break;
-
-                                        int err = gen_expression(nested_elem.value, val_reg);
-                                        if(err) return err;
-
-                                        size_t field_offset = offset + fields[field_idx].offset;
-                                        size_t field_size = fields[field_idx].type.size_of();
-                                        int field_slot = slot + cast(int)(field_offset / 8);
-                                        sb.writef("    add r% rbp %\n", addr_reg, P(field_slot));
-                                        if(field_offset % 8 != 0){
-                                            sb.writef("    add r% r% %\n", addr_reg, addr_reg, field_offset % 8);
-                                        }
-                                        sb.writef("    % r% r%\n", write_instr_for_size(field_size), addr_reg, val_reg);
-                                        field_idx++;
-                                    }
-                                } else if(elem_type.is_array()){
-                                    // Initialize nested array (for multi-dimensional arrays)
-                                    // Recursively flatten and write scalar values
-                                    int err = gen_nested_array_init(nested_init, elem_type, slot, offset, addr_reg, val_reg);
-                                    if(err) return err;
-                                } else {
-                                    error(elem.value.token, "Nested initializer for non-struct/non-array element");
-                                    return 1;
-                                }
-                            } else {
-                                if(target_type.kind == CTypeKind.STRUCT && needs_memcpy(target_size)){
-                                    // Large struct element - need memcpy
-                                    int src_reg = val_reg;
-                                    int err = gen_struct_address(elem.value, src_reg);
-                                    if(err) return err;
-                                    sb.writef("    add r% rbp %\n", addr_reg, P(target_slot));
-                                    if(offset % 8 != 0){
-                                        sb.writef("    add r% r% %\n", addr_reg, addr_reg, offset % 8);
-                                    }
-                                    sb.writef("    memcpy r% r% %\n", addr_reg, src_reg, target_size);
-                                } else {
-                                    // Scalar element (or small struct <= 8 bytes)
-                                    int err = gen_expression(elem.value, val_reg);
-                                    if(err) return err;
-                                    sb.writef("    add r% rbp %\n", addr_reg, P(target_slot));
-                                    if(offset % 8 != 0){
-                                        sb.writef("    add r% r% %\n", addr_reg, addr_reg, offset % 8);
-                                    }
-                                    sb.writef("    % r% r%\n", write_instr_for_size(target_size), addr_reg, val_reg);
-                                }
-                            }
-                            // Note: current_idx is already updated in the designator/positional handling above
-                        }
+                        // Use unified init function
+                        size_t cursor = 0;
+                        int err = gen_init_from_list(stmt.var_type, slot, 0,
+                                                    init_list.elements, cursor,
+                                                    addr_reg, val_reg, stmt.name);
+                        if (err) return err;
 
                         regallocator.reset_to(before);
                     } else {

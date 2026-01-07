@@ -306,6 +306,13 @@ void test_excess_elements(void){
     assert(p.x == 1);
     assert(p.y == 2);
 }
+void test_scalar_init_aos(void){
+    enum {MAX=3};
+    struct Outer m[MAX] = { 0 };
+    assert(m[0].p.x == 0);
+    assert(m[1].p.x == 0);
+    assert(m[2].p.x == 0);
+}
 
 int main(void) {
     int result = 0;
@@ -340,5 +347,7 @@ int main(void) {
     test_single_zero_init();
     test_array_size_from_init();
     test_flat_nested_init();
+    test_excess_elements();
+    test_scalar_init_aos();
     return 0;
 }

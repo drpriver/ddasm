@@ -52,6 +52,8 @@ abi-tests: func-abi-tests struct-abi-tests
 
 .PHONY: tests
 tests: static-tests abi-tests
+	@echo ""
+	@echo "All tests pass!"
 
 
 .DEFAULT_GOAL:= all
