@@ -355,6 +355,7 @@ struct Machine {
         }
         text = sb.borrow;
         if(!Fuzzing)fprintf(stderr, "Dis: %.*s\n", cast(int)text.length, text.ptr);
+        print_stack_range(0, -1, false);
     }
 
     void
