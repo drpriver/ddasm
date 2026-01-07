@@ -824,7 +824,7 @@ struct CDasmWriter {
                             total_slots++;
                         }
                     }
-                    auto n_params = total_slots > 8 ? 8 : total_slots;
+                    auto n_params = total_slots;  // Don't cap - trampoline needs full count for stack args
 
                     // Compute float arg mask (2 bits per param: 00=int, 01=float32, 10=double)
                     // Account for struct params taking multiple slots
@@ -946,6 +946,7 @@ struct CDasmWriter {
                     ushort[16] struct_arg_sizes;
                     bool has_struct_args = false;
                     int struct_slot_idx = 0;
+                    int max_struct_slots = n_params < 16 ? n_params : 16;  // Cap at array size
                     if(uses_hidden_ptr){
                         // ARM64: hidden return pointer goes in x8, mark with special code 9
                         struct_arg_sizes[0] = 9;
@@ -953,13 +954,12 @@ struct CDasmWriter {
                         struct_slot_idx = 1;
                     }
                     foreach(ref param; func.params){
-                        if(struct_slot_idx >= n_params) break;
+                        if(struct_slot_idx >= max_struct_slots) break;
                         if(param.type && param.type.is_struct_or_union()){
                             // Check for HFA first - ARM64 HFAs can be up to 32 bytes (4 doubles)
                             if(is_float_hfa(param.type)){
                                 // HFA: encode member count for trampoline to expand
                                 int hfa_members = count_hfa_members(param.type);
-                                int num_slots = hfa_slots(param.type);
                                 if(is_double_hfa(param.type)){
                                     // Double HFA: encode as 4 + count (5-8)
                                     struct_arg_sizes[struct_slot_idx] = cast(ushort)(4 + hfa_members);
@@ -970,13 +970,18 @@ struct CDasmWriter {
                                 has_struct_args = true;
                                 struct_slot_idx++;
                                 // Skip additional DVM slots for multi-slot HFAs
-                                for(int i = 1; i < num_slots && struct_slot_idx < n_params; i++){
-                                    struct_arg_sizes[struct_slot_idx++] = 0;
+                                // Note: if HFA doesn't fit in registers (>16 bytes), DVM passes by pointer (1 slot)
+                                // Only skip slots for HFAs that fit in registers
+                                if(fits_in_registers(param.type)){
+                                    int num_slots = hfa_slots(param.type);
+                                    for(int i = 1; i < num_slots && struct_slot_idx < max_struct_slots; i++){
+                                        struct_arg_sizes[struct_slot_idx++] = 0;
+                                    }
                                 }
                             } else if(fits_in_registers(param.type)){
                                 // Non-HFA small struct - no special handling needed
                                 int num_slots = struct_return_regs(param.type);
-                                for(int i = 0; i < num_slots && struct_slot_idx < n_params; i++){
+                                for(int i = 0; i < num_slots && struct_slot_idx < max_struct_slots; i++){
                                     struct_arg_sizes[struct_slot_idx++] = 0;
                                 }
                             } else {
@@ -999,7 +1004,7 @@ struct CDasmWriter {
                     }
                     if(has_struct_args){
                         sb.write(" struct_args [");
-                        for(int i = 0; i < n_params; i++){
+                        for(int i = 0; i < max_struct_slots; i++){
                             if(i > 0) sb.write(" ");
                             sb.writef("%", struct_arg_sizes[i]);
                         }
@@ -4400,6 +4405,8 @@ struct CDasmWriter {
         }
 
         // Non-varargs: evaluate arguments in order with push/pop preservation
+        // IMPORTANT: Process register args first (with save/restore), then stack args
+        // This prevents stack args from interfering with the register save/restore sequence
         if(!callee_is_varargs)
         foreach(i, arg; expr.args){
             CType* arg_type = arg.type;
@@ -4411,34 +4418,8 @@ struct CDasmWriter {
             bool spans_to_stack = !is_vararg && (slot < N_REG_ARGS && slot + num_slots > N_REG_ARGS);
 
             if(is_stack_arg){
-                // Stack argument: evaluate to temp and push
-                if(arg_type && arg_type.is_struct_or_union()){
-                    if(fits_in_registers(arg_type)){
-                        // Small struct on stack: push each word
-                        int addr_reg = regallocator.allocate();
-                        int err = gen_struct_address(arg, addr_reg);
-                        if(err) return err;
-                        size_t struct_size = arg_type.size_of();
-                        sb.writef("    read r0 r%\n", addr_reg);
-                        sb.write("    push r0\n");
-                        if(struct_size > 8){
-                            sb.writef("    add r% r% 8\n", addr_reg, addr_reg);
-                            sb.writef("    read r0 r%\n", addr_reg);
-                            sb.write("    push r0\n");
-                        }
-                        regallocator.reset_to(regallocator.alloced - 1);
-                    } else {
-                        // Large struct: push address
-                        int err = gen_struct_address(arg, 0);
-                        if(err) return err;
-                        sb.write("    push r0\n");
-                    }
-                } else {
-                    int err = gen_expression(arg, 0);
-                    if(err) return err;
-                    sb.write("    push r0\n");
-                }
-                // Stack args stay on stack (no pop)
+                // Skip stack args for now - process them after register args are finalized
+                continue;
             } else if(spans_to_stack){
                 // Arg starts in registers but spills to stack (e.g., 2-word struct at slot 7)
                 // First part goes to register, second part to stack
@@ -4519,6 +4500,7 @@ struct CDasmWriter {
 
         // For large struct returns, pass destination address in rarg1
         // We use rsp as the temp location (it points past the allocated frame)
+        // Must be allocated BEFORE register saves and stack args
         int struct_slots_needed = 0;
         if(callee_uses_hidden_ptr){
             struct_slots_needed = cast(int)callee_func_type.return_type.stack_slots();
@@ -4526,6 +4508,68 @@ struct CDasmWriter {
             sb.writef("    add rsp rsp %\n", P(struct_slots_needed));
             // Pass address of temp space as rarg1 (rsp - slots = start of temp area)
             sb.writef("    sub rarg1 rsp %\n", P(struct_slots_needed));
+        }
+
+        // Check if this is a direct call (for deciding when to save registers)
+        CIdentifier* id_check = expr.callee.as_identifier();
+        bool is_direct_call_early = id_check !is null &&
+            (id_check.ref_kind == IdentifierRefKind.FUNCTION ||
+             id_check.ref_kind == IdentifierRefKind.EXTERN_FUNC);
+
+        // For DIRECT calls: Save live registers BEFORE pushing stack args
+        // This way: return_buffer, saved_regs, stack_args [top] - VM can read stack args from RSP
+        // For INDIRECT calls: Register saves happen later (after evaluating callee expression)
+        if(!callee_is_varargs && is_direct_call_early){
+            // Save low reglocals first (they get clobbered by callee's temps)
+            for(int i = 0; i < n_low_reglocals; i++){
+                sb.writef("    push r%\n", low_reglocals_to_save[i]);
+            }
+            // Save R8+ scratch regs
+            for(int i = N_REG_ARGS; i < before; i++){
+                sb.writef("    push r%\n", i);
+            }
+        }
+
+        // Now process stack args (those beyond N_REG_ARGS) - must be done AFTER register args are finalized
+        // Stack args pushed LAST so they're at top of RSP for VM to read
+        if(!callee_is_varargs)
+        foreach(i, arg; expr.args){
+            CType* arg_type = arg.type;
+            int slot = get_arg_slot(i);
+            bool is_stack_arg = (slot >= N_REG_ARGS);
+            if(!is_stack_arg) continue;  // Skip register args, already processed
+
+            // Stack argument: evaluate to temp and push
+            // Allocate temp register (must not conflict with r0-r7 which hold register args)
+            int temp_reg = regallocator.allocate();
+            if(arg_type && arg_type.is_struct_or_union()){
+                if(fits_in_registers(arg_type)){
+                    // Small struct on stack: push each word
+                    int err = gen_struct_address(arg, temp_reg);
+                    if(err) return err;
+                    size_t struct_size = arg_type.size_of();
+                    int val_reg = regallocator.allocate();
+                    sb.writef("    read r% r%\n", val_reg, temp_reg);
+                    sb.writef("    push r%\n", val_reg);
+                    if(struct_size > 8){
+                        sb.writef("    add r% r% 8\n", temp_reg, temp_reg);
+                        sb.writef("    read r% r%\n", val_reg, temp_reg);
+                        sb.writef("    push r%\n", val_reg);
+                    }
+                    regallocator.reset_to(regallocator.alloced - 2);
+                } else {
+                    // Large struct: push address
+                    int err = gen_struct_address(arg, temp_reg);
+                    if(err) return err;
+                    sb.writef("    push r%\n", temp_reg);
+                    regallocator.reset_to(regallocator.alloced - 1);
+                }
+            } else {
+                int err = gen_expression(arg, temp_reg);
+                if(err) return err;
+                sb.writef("    push r%\n", temp_reg);
+                regallocator.reset_to(regallocator.alloced - 1);
+            }
         }
 
         int total_args = total_slots;  // Accounts for multi-register struct params
@@ -4538,20 +4582,7 @@ struct CDasmWriter {
              id.ref_kind == IdentifierRefKind.EXTERN_FUNC);
 
         if(is_direct_call){
-            // Save registers before call:
-            // 1. Reglocals in R0-R7 (from max_call_slots optimization)
-            // 2. Scratch registers R8+ that were in use
-            // For varargs calls, we already saved R8+ before pushing varargs
-            if(!callee_is_varargs){
-                // Save low reglocals first (they get clobbered by callee's temps)
-                for(int i = 0; i < n_low_reglocals; i++){
-                    sb.writef("    push r%\n", low_reglocals_to_save[i]);
-                }
-                // Save R8+ scratch regs
-                for(int i = N_REG_ARGS; i < before; i++){
-                    sb.writef("    push r%\n", i);
-                }
-            }
+            // (Return buffer and register saves already done above)
 
             // Direct call - use qualified name for extern functions
             // For varargs with float args, emit float mask as third argument
@@ -4594,23 +4625,14 @@ struct CDasmWriter {
                 }
             }
 
-            // Restore registers (for non-varargs; varargs restores after stack cleanup)
-            if(!callee_is_varargs){
-                // Restore R8+ scratch regs (reverse order)
-                for(int i = before - 1; i >= N_REG_ARGS; i--){
-                    sb.writef("    pop r%\n", i);
-                }
-                // Restore low reglocals (reverse order)
-                for(int i = n_low_reglocals - 1; i >= 0; i--){
-                    sb.writef("    pop r%\n", low_reglocals_to_save[i]);
-                }
-            }
+            // (Register restore happens after stack arg cleanup below)
         } else {
             // Indirect call through register
             int func_reg = regallocator.allocate();
             int err = gen_expression(expr.callee, func_reg);
             if(err) return err;
 
+            // Save live registers before call (AFTER evaluating callee, so func_reg is set)
             if(!callee_is_varargs){
                 for(int i = 0; i < n_low_reglocals; i++){
                     sb.writef("    push r%\n", low_reglocals_to_save[i]);
@@ -4625,25 +4647,27 @@ struct CDasmWriter {
             } else {
                 sb.writef("    call r% %\n", func_reg, total_args);
             }
+        }
 
-            if(!callee_is_varargs){
-                for(int i = before - 1; i >= N_REG_ARGS; i--){
-                    sb.writef("    pop r%\n", i);
-                }
-                for(int i = n_low_reglocals - 1; i >= 0; i--){
-                    sb.writef("    pop r%\n", low_reglocals_to_save[i]);
-                }
+        // Restore saved registers FIRST (they're on top of stack, pushed after stack args)
+        if(!callee_is_varargs){
+            // Restore R8+ scratch regs (reverse order)
+            for(int i = before - 1; i >= N_REG_ARGS; i--){
+                sb.writef("    pop r%\n", i);
+            }
+            // Restore low reglocals (reverse order)
+            for(int i = n_low_reglocals - 1; i >= 0; i--){
+                sb.writef("    pop r%\n", low_reglocals_to_save[i]);
             }
         }
 
-        // Caller cleanup: pop stack args
+        // Caller cleanup: pop stack args (they're below saved registers on stack)
         if(n_stack_args > 0){
             sb.writef("    sub rsp rsp %\n", P(n_stack_args));
         }
 
-        // For varargs calls, restore R8+ registers AFTER stack cleanup
-        // (they were saved before varargs were pushed)
-        // Also restore low reglocals
+        // For varargs calls, restore R8+ registers
+        // (they were saved before varargs were pushed, so cleanup first)
         if(callee_is_varargs){
             for(int i = before - 1; i >= N_REG_ARGS; i--){
                 sb.writef("    pop r%\n", i);

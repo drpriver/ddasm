@@ -1,6 +1,7 @@
 #include "abi_test.h"
 #include <string.h>
 #include <math.h>
+#include <stdio.h>
 
 // ============================================================================
 // Small struct pass by value
@@ -270,4 +271,64 @@ _Bool IsKeyDown(int key){
     if(key == 87) return key;
     return 0;
     return key == 87;
+}
+
+Vec3 vec3_4_max(Vec3 a, Vec3 b, Vec3 c, Vec3 d){
+    Vec3 result = a;
+    if(b.x > a.x) a.x = b.x;
+    if(c.x > a.x) a.x = c.x;
+    if(d.x > a.x) a.x = d.x;
+    if(b.y > a.y) a.y = b.y;
+    if(c.y > a.y) a.y = c.y;
+    if(d.y > a.y) a.y = d.y;
+    if(b.z > a.z) a.z = b.z;
+    if(c.z > a.z) a.z = c.z;
+    if(d.z > a.z) a.z = d.z;
+    return a;
+}
+
+Vec3d vec3d_4_max(Vec3d a, Vec3d b, Vec3d c, Vec3d d){
+    Vec3d result = a;
+    if(b.x > a.x) a.x = b.x;
+    if(c.x > a.x) a.x = c.x;
+    if(d.x > a.x) a.x = d.x;
+    if(b.y > a.y) a.y = b.y;
+    if(c.y > a.y) a.y = c.y;
+    if(d.y > a.y) a.y = d.y;
+    if(b.z > a.z) a.z = b.z;
+    if(c.z > a.z) a.z = c.z;
+    if(d.z > a.z) a.z = d.z;
+    return a;
+}
+
+Vec3i vec3i_4_max(Vec3i a, Vec3i b, Vec3i c, Vec3i d){
+    Vec3i result = a;
+    if(b.x > a.x) a.x = b.x;
+    if(c.x > a.x) a.x = c.x;
+    if(d.x > a.x) a.x = d.x;
+    if(b.y > a.y) a.y = b.y;
+    if(c.y > a.y) a.y = c.y;
+    if(d.y > a.y) a.y = d.y;
+    if(b.z > a.z) a.z = b.z;
+    if(c.z > a.z) a.z = c.z;
+    if(d.z > a.z) a.z = d.z;
+    return a;
+}
+
+Vec3i vec3i_4_max_unpacked(int ax, int ay, int az, int bx, int by, int bz, int cx, int cy, int cz, int dx, int dy, int dz){
+    Vec3i a = {ax, ay, az};
+    Vec3i b = {bx, by, bz};
+    Vec3i c = {cx, cy, cz};
+    Vec3i d = {dx, dy, dz};
+    Vec3i result = a;
+    if(b.x > a.x) a.x = b.x;
+    if(c.x > a.x) a.x = c.x;
+    if(d.x > a.x) a.x = d.x;
+    if(b.y > a.y) a.y = b.y;
+    if(c.y > a.y) a.y = c.y;
+    if(d.y > a.y) a.y = d.y;
+    if(b.z > a.z) a.z = b.z;
+    if(c.z > a.z) a.z = c.z;
+    if(d.z > a.z) a.z = d.z;
+    return a;
 }

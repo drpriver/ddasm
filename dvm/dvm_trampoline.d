@@ -18,7 +18,8 @@ version(AArch64) {
     uintptr_t call_native_trampoline(
         void* func_ptr,
         uintptr_t* args,
-        size_t n_args
+        size_t n_args,
+        uintptr_t* ret2 = null  // Optional: capture x1 for 2-slot struct returns
     ) {
         // Copy args to local storage for stable asm access
         uintptr_t[16] local_args = void;
@@ -45,29 +46,49 @@ version(AArch64) {
 
         // x9 = func_ptr, x10 = stack_args, x11 = n_stack_args, x12 = stack_bytes
         // x19 used to save original SP (callee-saved)
-        return __asm!uintptr_t(
-            // Save original SP in callee-saved register
-            "mov x19, sp\n" ~
-            // Allocate stack space
-            "sub sp, sp, x12\n" ~
-            // Copy stack args
-            "mov x13, sp\n" ~            // x13 = dest
-            "mov x14, x10\n" ~           // x14 = source
-            "mov x15, x11\n" ~           // x15 = counter
-            "cbz x15, 2f\n" ~            // skip if no stack args
-            "1:\n" ~
-            "ldr x16, [x14], #8\n" ~     // load arg, advance src
-            "str x16, [x13], #8\n" ~     // store to stack, advance dest
-            "subs x15, x15, #1\n" ~
-            "b.ne 1b\n" ~
-            "2:\n" ~
-            // Call the function
-            "blr x9\n" ~
-            // Restore stack
-            "mov sp, x19",
-            "={x0},{x0},{x1},{x2},{x3},{x4},{x5},{x6},{x7},{x9},{x10},{x11},{x12},~{x13},~{x14},~{x15},~{x16},~{x19},~{x30},~{memory}",
-            a0, a1, a2, a3, a4, a5, a6, a7, func_ptr, stack_args, n_stack_args, stack_bytes
-        );
+        if (ret2 !is null) {
+            // Capture both x0 and x1 for 2-slot struct returns
+            // Note: x17 is IP1 (caller-saved), so we save ret2 to x20 (callee-saved) before the call
+            return __asm!uintptr_t(
+                "mov x19, sp\n" ~
+                "mov x20, x17\n" ~   // Save ret2 ptr to callee-saved x20 (x17 may be clobbered by call)
+                "sub sp, sp, x12\n" ~
+                "mov x13, sp\n" ~
+                "mov x14, x10\n" ~
+                "mov x15, x11\n" ~
+                "cbz x15, 2f\n" ~
+                "1:\n" ~
+                "ldr x16, [x14], #8\n" ~
+                "str x16, [x13], #8\n" ~
+                "subs x15, x15, #1\n" ~
+                "b.ne 1b\n" ~
+                "2:\n" ~
+                "blr x9\n" ~
+                "str x1, [x20]\n" ~  // Store x1 to *ret2 (using saved ptr in x20)
+                "mov sp, x19",
+                "={x0},{x0},{x1},{x2},{x3},{x4},{x5},{x6},{x7},{x9},{x10},{x11},{x12},{x17},~{x13},~{x14},~{x15},~{x16},~{x19},~{x20},~{x30},~{memory}",
+                a0, a1, a2, a3, a4, a5, a6, a7, func_ptr, stack_args, n_stack_args, stack_bytes, ret2
+            );
+        } else {
+            return __asm!uintptr_t(
+                "mov x19, sp\n" ~
+                "sub sp, sp, x12\n" ~
+                "mov x13, sp\n" ~
+                "mov x14, x10\n" ~
+                "mov x15, x11\n" ~
+                "cbz x15, 2f\n" ~
+                "1:\n" ~
+                "ldr x16, [x14], #8\n" ~
+                "str x16, [x13], #8\n" ~
+                "subs x15, x15, #1\n" ~
+                "b.ne 1b\n" ~
+                "2:\n" ~
+                "blr x9\n" ~
+                "mov sp, x19",
+                "={x0},{x0},{x1},{x2},{x3},{x4},{x5},{x6},{x7},{x9},{x10},{x11},{x12},~{x13},~{x14},~{x15},~{x16},~{x19},~{x30},~{memory}",
+                a0, a1, a2, a3, a4, a5, a6, a7, func_ptr, stack_args, n_stack_args, stack_bytes
+            );
+        }
     }
 }
 else version(X86_64) {
@@ -630,15 +651,16 @@ else version(AArch64) {
         uintptr_t* ret2, ushort* struct_arg_sizes,
     ) {
         // Separate args into integer and float categories
-        uintptr_t[8] int_args = 0;
-        uintptr_t[8] float_args = 0;
+        uintptr_t[8] int_args = void;
+        uintptr_t[8] float_args = void;
         size_t n_int = 0;
         size_t n_float = 0;
         uintptr_t hidden_ret_ptr = 0;  // ARM64: large struct return pointer goes in x8
 
         // Stack args (when registers overflow)
-        uintptr_t[32] stack_args = void;
+        uintptr_t[32] stack_args = 0;
         size_t n_stack = 0;
+        size_t float_stack_offset = 0;  // Track 4-byte float offset within stack_args
 
         for (size_t i = 0; i < n_args && i < 32; i++) {
             // Check struct_arg_sizes for special handling
@@ -653,26 +675,48 @@ else version(AArch64) {
 
             if (hfa_code >= 1 && hfa_code <= 4) {
                 // Float HFA - expand packed 32-bit floats into separate FP registers
-                // args[i] contains 1-2 floats packed into 64 bits
-                // For 3-4 member HFAs, args[i] has first 2 floats, args[i+1] has rest
+                // AAPCS64: If HFA doesn't fit entirely in remaining FP regs, ENTIRE HFA goes on stack
+                bool fits_in_regs = (n_float + hfa_code) <= 8;
+
                 if (hfa_code <= 2) {
                     // 1-2 member HFA: all floats in args[i]
                     uint* floats = cast(uint*)&args[i];
-                    for (size_t j = 0; j < hfa_code && n_float < 8; j++) {
-                        float_args[n_float++] = floats[j];
+                    if (fits_in_regs) {
+                        for (size_t j = 0; j < hfa_code; j++)
+                            float_args[n_float++] = floats[j];
+                    } else if (n_stack < 32) {
+                        // Pack floats into 8-byte stack slots (AAPCS64 natural layout)
+                        stack_args[n_stack++] = args[i];  // Already packed: 2 floats in 8 bytes
                     }
                 } else {
                     // 3-4 member HFA: first 2 floats in args[i], rest in args[i+1]
                     uint* floats1 = cast(uint*)&args[i];
-                    float_args[n_float++] = floats1[0];  // First float
-                    float_args[n_float++] = floats1[1];  // Second float
-                    if (i + 1 < n_args) {
-                        uint* floats2 = cast(uint*)&args[i + 1];
-                        float_args[n_float++] = floats2[0];  // Third float
-                        if (hfa_code == 4 && n_float < 8) {
-                            float_args[n_float++] = floats2[1];  // Fourth float
+                    if (fits_in_regs) {
+                        float_args[n_float++] = floats1[0];
+                        float_args[n_float++] = floats1[1];
+                        if (i + 1 < n_args) {
+                            uint* floats2 = cast(uint*)&args[i + 1];
+                            float_args[n_float++] = floats2[0];
+                            if (hfa_code == 4)
+                                float_args[n_float++] = floats2[1];
+                            i++;  // Skip the second DVM slot
                         }
-                        i++;  // Skip the second DVM slot since we already consumed it
+                    } else {
+                        // Float HFA goes on stack - pack at 4-byte boundaries
+                        // Use float_stack_offset to track position within stack_args
+                        uint* src_f = cast(uint*)&args[i];
+                        uint* stack_floats = cast(uint*)stack_args.ptr;
+                        stack_floats[float_stack_offset++] = src_f[0];
+                        stack_floats[float_stack_offset++] = src_f[1];
+                        if (hfa_code >= 3 && i + 1 < n_args) {
+                            uint* src_f2 = cast(uint*)&args[i + 1];
+                            stack_floats[float_stack_offset++] = src_f2[0];
+                            if (hfa_code == 4)
+                                stack_floats[float_stack_offset++] = src_f2[1];
+                            i++;  // Skip the second DVM slot
+                        }
+                        // Update n_stack to reflect 8-byte slots used
+                        n_stack = (float_stack_offset + 1) / 2;
                     }
                 }
                 continue;
@@ -680,21 +724,29 @@ else version(AArch64) {
 
             if (hfa_code >= 5 && hfa_code <= 8) {
                 // Double HFA - n_doubles doubles to place in FP registers
+                // AAPCS64: If HFA doesn't fit entirely in remaining FP regs, ENTIRE HFA goes on stack
                 int n_doubles = hfa_code - 4;  // 5->1, 6->2, 7->3, 8->4
+                bool fits_in_regs = (n_float + n_doubles) <= 8;
                 // For HFAs > 16 bytes (3-4 doubles), DVM passes a pointer in one arg
                 // For HFAs <= 16 bytes (1-2 doubles), DVM passes values in args directly
                 if (n_doubles > 2) {
                     // Large double HFA: args[i] is a pointer to the struct
                     ulong* ptr = cast(ulong*)args[i];
-                    for (int j = 0; j < n_doubles && n_float < 8; j++) {
-                        float_args[n_float++] = ptr[j];
+                    for (int j = 0; j < n_doubles; j++) {
+                        if (fits_in_regs)
+                            float_args[n_float++] = ptr[j];
+                        else if (n_stack < 32)
+                            stack_args[n_stack++] = ptr[j];  // Entire HFA on stack
                     }
                     // No extra slots to skip - it was just one pointer arg
                 } else {
                     // Small double HFA: doubles are in args[i], args[i+1]
-                    for (int j = 0; j < n_doubles && n_float < 8; j++) {
+                    for (int j = 0; j < n_doubles; j++) {
                         if (i + j < n_args) {
-                            float_args[n_float++] = args[i + j];
+                            if (fits_in_regs)
+                                float_args[n_float++] = args[i + j];
+                            else if (n_stack < 32)
+                                stack_args[n_stack++] = args[i + j];  // Entire HFA on stack
                         }
                     }
                     // Skip the extra DVM slots we consumed

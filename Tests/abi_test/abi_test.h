@@ -22,6 +22,10 @@ typedef struct {
     float x, y, z;
 } Vec3;
 
+typedef struct {
+    int x, y, z;
+} Vec3i;
+
 // 16 bytes - four floats, fits in two XMM registers
 typedef struct {
     float x, y, z, w;
@@ -141,5 +145,11 @@ typedef Vec2 (*Vec2Transform)(Vec2 v);
 Vec2 apply_transform(Vec2 v, Vec2Transform fn);
 
 _Bool IsKeyDown(int);
+
+// Lots of args
+Vec3 vec3_4_max(Vec3 a, Vec3 b, Vec3 c, Vec3 d);
+Vec3d vec3d_4_max(Vec3d a, Vec3d b, Vec3d c, Vec3d d);
+Vec3i vec3i_4_max(Vec3i a, Vec3i b, Vec3i c, Vec3i d);
+Vec3i vec3i_4_max_unpacked(int ax, int ay, int az, int bx, int by, int bz, int cx, int cy, int cz, int dx, int dy, int dz);
 
 #endif // ABI_TEST_H

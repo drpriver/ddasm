@@ -167,11 +167,20 @@ struct Machine {
 
     int
     call_native(Function* func){with(RegisterNames){
-        // Gather arguments from DVM registers
+        // Gather arguments from DVM registers and stack
         uintptr_t[16] args = void;
         size_t n_args = func.n_args;
+        // Register args (0-7)
         for (size_t i = 0; i < n_args && i < N_REG_ARGS; i++) {
             args[i] = registers[RARG1 + i];
+        }
+        // Stack args (8+): DVM stack grows UP, so args are at RSP - n_stack_args*8
+        if (n_args > N_REG_ARGS) {
+            size_t n_stack_args = n_args - N_REG_ARGS;
+            uintptr_t* stack_base = cast(uintptr_t*)(registers[RSP] - n_stack_args * uintptr_t.sizeof);
+            for (size_t i = N_REG_ARGS; i < n_args && i < 16; i++) {
+                args[i] = stack_base[i - N_REG_ARGS];
+            }
         }
 
         uintptr_t result;
@@ -191,10 +200,13 @@ struct Machine {
                 func.struct_arg_sizes_
             );
         } else {
+            // Use basic trampoline for functions with no float args/returns
+            uintptr_t* ret2_ptr = (func.n_ret > 1) ? &result2 : null;
             result = call_native_trampoline(
                 cast(void*)func.native_function_,
                 args.ptr,
-                n_args
+                n_args,
+                ret2_ptr
             );
         }
 

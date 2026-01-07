@@ -419,6 +419,65 @@ void test_complex_scenarios(void) {
     }
 }
 
+void test_args(void){
+    {
+        TEST("Passing a lot of args (float)");
+        Vec3 a = {1, 2, 3};
+        Vec3 b = {6, 5, -4};
+        Vec3 c = {12, 0, 1};
+        Vec3 d = {0, 0, 0};
+        Vec3 e = vec3_4_max(a, b, c, d);
+        if(float_eq(e.x, 12.f) && float_eq(e.y, 5.f) && float_eq(e.z, 3.f)){
+            PASS();
+        }
+        else {
+            FAIL("got %f,%f,%f\n", (double)e.x, (double)e.y, (double)e.z);
+        }
+    }
+    {
+        TEST("Passing a lot of args (double)");
+        Vec3d a = {1, 2, 3};
+        Vec3d b = {6, 5, -4};
+        Vec3d c = {12, 0, 1};
+        Vec3d d = {0, 0, 0};
+        Vec3d e = vec3d_4_max(a, b, c, d);
+        if(double_eq(e.x, 12.) && double_eq(e.y, 5.) && double_eq(e.z, 3.)){
+            PASS();
+        }
+        else {
+            FAIL("got %f,%f,%f\n", e.x, e.y, e.z);
+        }
+    }
+    {
+        TEST("Passing a lot of args (int)");
+        Vec3i a = {1, 2, 3};
+        Vec3i b = {6, 5, -4};
+        Vec3i c = {12, 0, 1};
+        Vec3i d = {0, 0, 0};
+        Vec3i e = vec3i_4_max(a, b, c, d);
+        if(e.x== 12 && e.y==5 && e.z== 3){
+            PASS();
+        }
+        else {
+            FAIL("got %d,%d,%d\n", e.x, e.y, e.z);
+        }
+    }
+    {
+        TEST("Passing a lot of args (int, unpacked)");
+        Vec3i a = {1, 2, 3};
+        Vec3i b = {6, 5, -4};
+        Vec3i c = {12, 0, 1};
+        Vec3i d = {0, 0, 0};
+        Vec3i e = vec3i_4_max_unpacked(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z, d.x, d.y, d.z);
+        if(e.x== 12 && e.y==5 && e.z== 3){
+            PASS();
+        }
+        else {
+            FAIL("got %d,%d,%d\n", e.x, e.y, e.z);
+        }
+    }
+}
+
 // ============================================================================
 // Main
 // ============================================================================
@@ -436,6 +495,7 @@ int main(void) {
     test_large_struct_return();
     test_struct_operations();
     test_complex_scenarios();
+    test_args();
 
     printf("\n==============\n");
     printf("Results: %d/%d tests passed\n", tests_passed, tests_run);
