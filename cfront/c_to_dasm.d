@@ -5715,6 +5715,11 @@ struct CDasmWriter {
             }
         }
 
+        // Array subscript - address of arr[i]
+        if(CSubscript* sub = e.as_subscript()){
+            return gen_subscript_address(sub, target);
+        }
+
         error(e.token, "Cannot pass this expression as struct/union by value");
         return 1;
     }
