@@ -52,15 +52,15 @@ Use scratch registers for local variables that need to persist across function c
 
 ```
 function example 2
-    ; Copy args to scratch registers if needed across calls
+    # Copy args to scratch registers if needed across calls
     move rs0 rarg1
     move rs1 rarg2
 
-    ; Make a call - rs0, rs1 survive (for native calls)
+    # Make a call - rs0, rs1 survive (for native calls)
     move rarg1 "hello"
     call function io.puts
 
-    ; rs0, rs1 still have our values
+    # rs0, rs1 still have our values
     move rarg1 rs0
     call function io.puts
     ret
@@ -77,15 +77,15 @@ end
 4. **After call returns**: Pop stack arguments (caller cleanup)
 
 ```
-; Example: 10-argument call with N_REG_ARGS=8
+# Example: 10-argument call with N_REG_ARGS=8
 move rarg1 <arg1>
 move rarg2 <arg2>
 ...
 move rarg8 <arg8>
-push <arg9>           ; Stack arg
-push <arg10>          ; Stack arg
+push <arg9>           # Stack arg
+push <arg10>          # Stack arg
 call function foo 10
-sub rsp rsp 16        ; Caller cleanup (2 stack args * 8 bytes)
+sub rsp rsp 16        # Caller cleanup (2 stack args * 8 bytes)
 ```
 
 ### Callee Responsibilities
@@ -201,6 +201,162 @@ Native functions are called using platform-specific trampolines that marshal DVM
 - **ARM64**: First 8 args in x0-x7
 
 For varargs native calls, the trampoline handles the platform-specific requirements (e.g., ARM64 macOS requires varargs on stack).
+
+## Native Function Declarations (dlimport)
+
+Native functions are declared in `dlimport` blocks with optional type encoding for proper ABI handling:
+
+```
+dlimport LibName
+  path "libname.dylib"
+  function func_name <n_args> <n_ret> [varargs] [<arg_types> [<ret_types>]] [struct_args [...]]
+end
+```
+
+### Basic Declaration
+
+```
+function printf 1 1 varargs     # 1 fixed arg, 1 return, varargs
+function strlen 1 1             # 1 arg, 1 return (both integers)
+function exit 1 0               # 1 arg, no return
+```
+
+### Type Masks (arg_types and ret_types)
+
+Type masks encode whether each argument/return slot is an integer, float, or double. Each slot uses 2 bits:
+
+| Code | Type | Description |
+|------|------|-------------|
+| 00 | INT | Integer or pointer (default) |
+| 01 | FLOAT32 | 32-bit float |
+| 10 | FLOAT64 | 64-bit double |
+| 11 | (reserved) | |
+
+Bits are packed from LSB: slot 0 uses bits 0-1, slot 1 uses bits 2-3, etc.
+
+**Examples:**
+```
+# float sinf(float x)
+function sinf 1 1 0x01 0x01     # arg0=float(01), ret=float(01)
+
+# double sin(double x)
+function sin 1 1 0x02 0x02      # arg0=double(10), ret=double(10)
+
+# float dot(float x, float y, float z, float a, float b, float c)
+function dot 6 1 0x555 0x01     # 6 floats (010101010101 = 0x555), ret=float
+
+# double mixed(int a, float b, double c)
+# Slot 0: int (00), Slot 1: float (01), Slot 2: double (10)
+# Mask = 0b100100 = 0x24
+function mixed 3 1 0x24 0x02
+```
+
+**Computing type masks:**
+```
+mask = 0
+for i in 0..n_args:
+    if arg[i] is float:  mask |= (0x01 << (i * 2))
+    if arg[i] is double: mask |= (0x02 << (i * 2))
+```
+
+### struct_args Array
+
+The `struct_args` array provides additional information about struct arguments for proper native ABI handling. One entry per DVM argument slot.
+
+| Value | Meaning |
+|-------|---------|
+| 0 | Not a struct, or small struct with no special handling needed |
+| 1-4 | Float HFA (Homogeneous Floating-point Aggregate) with N float members |
+| 5-8 | Double HFA with N-4 double members (5=1 double, 6=2 doubles, etc.) |
+| 9 | Hidden return pointer (first arg is pointer for large struct return) |
+| >16 | Large struct - value is byte size, copied to native stack |
+
+**HFA Explanation (ARM64):**
+
+On ARM64, structs containing only floats or only doubles are passed in FP registers, one member per register:
+
+```c
+typedef struct { float x, y; } Vec2;        // 2-member float HFA
+typedef struct { float x, y, z; } Vec3;     // 3-member float HFA
+typedef struct { double x, y, z; } Vec3d;   // 3-member double HFA
+```
+
+```
+# Vec2 make_vec2(float x, float y) - returns 2-float HFA
+function make_vec2 2 1 0x05 0x05            # arg/ret masks = float, float
+
+# float vec2_length(Vec2 v) - takes 2-float HFA
+function vec2_length 1 1 0x0 0x01 struct_args [2]
+#                                            ^ HFA with 2 floats
+
+# Vec3 vec3_add(Vec3 a, Vec3 b) - takes two 3-float HFAs, returns one
+# Each Vec3 uses 2 DVM slots (12 bytes = 2 slots), second slot is 0 (continuation)
+function vec3_add 4 2 0x0 0x15 struct_args [3 0 3 0]
+#                                           ^ a  ^ b (HFA markers)
+```
+
+**Large Struct Example:**
+
+```c
+typedef struct { float m[16]; } Mat4x4;  // 64 bytes - too large for registers
+
+// float mat4x4_trace(Mat4x4 m)
+function mat4x4_trace 1 1 0x0 0x01 struct_args [64]
+#                                              ^ 64-byte struct, copied to native stack
+```
+
+**Hidden Return Pointer:**
+
+```c
+typedef struct { float m[16]; } Mat4x4;
+
+// Mat4x4 mat4x4_identity(void)
+// Becomes: void mat4x4_identity(Mat4x4* result) with hidden first arg
+function mat4x4_identity 1 0 0x0 0x0 struct_args [9]
+#                                                ^ 9 = hidden return pointer
+```
+
+### Complete Examples
+
+```
+dlimport MathLib
+  path "libm.dylib"
+
+  # double sin(double x)
+  function sin 1 1 0x02 0x02
+
+  # float sinf(float x)
+  function sinf 1 1 0x01 0x01
+
+  # double pow(double base, double exp)
+  function pow 2 1 0x0a 0x02
+
+  # float fmaf(float a, float b, float c)
+  function fmaf 3 1 0x15 0x01
+end
+
+dlimport VectorLib
+  path "libvector.dylib"
+
+  # Vec2 vec2_add(Vec2 a, Vec2 b) - 2-float HFAs
+  function vec2_add 2 1 0x0 0x05 struct_args [2 2]
+
+  # Vec3 vec3_normalize(Vec3 v) - 3-float HFA in, 3-float HFA out
+  function vec3_normalize 2 2 0x0 0x15 struct_args [3 0]
+
+  # Mat4x4 mat4x4_multiply(Mat4x4 a, Mat4x4 b) - large structs
+  # Hidden return ptr + 2 large struct args
+  function mat4x4_multiply 3 0 0x0 0x0 struct_args [9 64 64]
+end
+```
+
+### Platform Notes
+
+- **x86_64 SysV**: Integer args in rdi, rsi, rdx, rcx, r8, r9; floats in xmm0-xmm7
+- **x86_64 Windows**: Integer args in rcx, rdx, r8, r9; floats share same slots
+- **ARM64**: Integer args in x0-x7; floats in s0-s7/d0-d7; HFAs expand to multiple FP regs
+
+The trampoline code (`dvm_trampoline.d`) uses these encodings to properly route arguments to the correct native registers.
 
 ## Configuration
 
