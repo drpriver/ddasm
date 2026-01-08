@@ -4,13 +4,13 @@
  */
 module cfront.c_parser;
 
-import core.stdc.stdio : fprintf, stderr;
 import dlib.aliases;
 import dlib.allocator : Allocator;
 import dlib.barray : Barray, make_barray;
 import dlib.stringbuilder : StringBuilder, Q, mwritef;
 import dlib.table : Table;
 import dlib.str_util: startswith;
+import dlib.logger : Logger, LogLevel;
 
 import cfront.c_pp_to_c : CToken, CTokenType;
 import cfront.c_const_eval: try_eval_constant, ConstValue;
@@ -106,7 +106,7 @@ struct CParser {
     str current_function_name;             // Current function name (for static local mangling)
     int static_local_counter;              // Counter for static locals in current function
     int lambda_counter;                     // Counter for anonymous function literals
-    StringBuilder error_sb;
+    Logger* logger;
     Barray!CFunction functions;
     Barray!CGlobalVar globals;
     Barray!CStructDef structs;
@@ -116,36 +116,27 @@ struct CParser {
 
 
     void errorf(A...)(CToken tok, A args){
-        error_sb.FORMAT(tok.file, ':', tok.line, ':', tok.column, ": ParseError: ");
+        logger.buff.FORMAT(tok.file, ':', tok.line, ':', tok.column, ": ParseError: ");
         foreach(a; args)
-            error_sb.write(a);
-        error_sb.write('\n');
+            logger.buff.write(a);
+        logger.buff.write('\n');
         if(tok.expansion_file.length){
-            error_sb.FORMAT("  note: expanded from macro used at ", tok.expansion_file, ':', tok.expansion_line, ':', tok.expansion_column, '\n');
+            logger.buff.FORMAT("  note: expanded from macro used at ", tok.expansion_file, ':', tok.expansion_line, ':', tok.expansion_column, '\n');
         }
-        str msg = error_sb.borrow();
-        fprintf(stderr, "%.*s", cast(int)msg.length, msg.ptr);
-        error_sb.reset();
+        logger.flush(LogLevel.ERROR);
     }
     void error(CToken token, str message){
         ERROR_OCCURRED = true;
         // Show expansion location first (where macro was used), then definition location
         if(token.expansion_file.length > 0){
-            fprintf(stderr, "%.*s:%d:%d: Parse Error at '%.*s': %.*s\n",
-                        cast(int)token.expansion_file.length, token.expansion_file.ptr,
-                        token.expansion_line, token.expansion_column,
-                        cast(int)token.lexeme.length, token.lexeme.ptr,
-                        cast(int)message.length, message.ptr);
-            fprintf(stderr, "  note: expanded from macro defined at %.*s:%d:%d\n",
-                        cast(int)token.file.length, token.file.ptr,
-                        token.line, token.column);
+            logger.buff.FORMAT(token.expansion_file, ':', token.expansion_line, ':', token.expansion_column,
+                ": Parse Error at '", token.lexeme, "': ", message, '\n');
+            logger.buff.FORMAT("  note: expanded from macro defined at ", token.file, ':', token.line, ':', token.column, '\n');
         } else {
-            fprintf(stderr, "%.*s:%d:%d: Parse Error at '%.*s': %.*s\n",
-                        cast(int)token.file.length, token.file.ptr,
-                        token.line, token.column,
-                        cast(int)token.lexeme.length, token.lexeme.ptr,
-                        cast(int)message.length, message.ptr);
+            logger.buff.FORMAT(token.file, ':', token.line, ':', token.column,
+                ": Parse Error at '", token.lexeme, "': ", message, '\n');
         }
+        logger.flush(LogLevel.ERROR);
     }
 
     void error(str message){
@@ -1136,7 +1127,6 @@ struct CParser {
         func_info.data.allocator = allocator;
         func_indices.data.allocator = allocator;
         global_indices.data.allocator = allocator;
-        error_sb.allocator = allocator;
 
         while(!at_end){
             // Handle #pragma (emitted as # pragma library ( "..." ) tokens)
@@ -5398,141 +5388,5 @@ struct CParser {
 
     CToken previous(){
         return tokens[current - 1];
-    }
-
-    // Dump all type tables for --debug-types flag
-    void dump_type_tables(){
-        import core.stdc.stdio : fprintf, stderr;
-
-        if(struct_types.count > 0){
-            fprintf(stderr, "\nStruct types (%zu):\n", struct_types.count);
-            foreach(ref entry; struct_types.items()){
-                str name = entry.key;
-                CType* t = entry.value;
-                fprintf(stderr, "  struct %.*s: size=%zu",
-                    cast(int)name.length, name.ptr,
-                    t.struct_size);
-                if(t.fields.length > 0){
-                    fprintf(stderr, " { ");
-                    foreach(i, ref f; t.fields){
-                        if(i > 0) fprintf(stderr, ", ");
-                        fprintf(stderr, "%.*s", cast(int)f.name.length, f.name.ptr);
-                    }
-                    fprintf(stderr, " }");
-                }
-                fprintf(stderr, "\n");
-            }
-        }
-
-        if(union_types.count > 0){
-            fprintf(stderr, "\nUnion types (%zu):\n", union_types.count);
-            foreach(ref entry; union_types.items()){
-                str name = entry.key;
-                CType* t = entry.value;
-                fprintf(stderr, "  union %.*s: size=%zu",
-                    cast(int)name.length, name.ptr,
-                    t.struct_size);
-                if(t.fields.length > 0){
-                    fprintf(stderr, " { ");
-                    foreach(i, ref f; t.fields){
-                        if(i > 0) fprintf(stderr, ", ");
-                        fprintf(stderr, "%.*s", cast(int)f.name.length, f.name.ptr);
-                    }
-                    fprintf(stderr, " }");
-                }
-                fprintf(stderr, "\n");
-            }
-        }
-
-        if(enum_types.count > 0){
-            fprintf(stderr, "\nEnum types (%zu):\n", enum_types.count);
-            foreach(ref entry; enum_types.items()){
-                str name = entry.key;
-                CType* t = entry.value;
-                fprintf(stderr, "  enum %.*s\n", cast(int)name.length, name.ptr);
-            }
-        }
-
-        if(typedef_types.count > 0){
-            fprintf(stderr, "\nTypedef types (%zu):\n", typedef_types.count);
-            foreach(ref entry; typedef_types.items()){
-                str name = entry.key;
-                CType* t = entry.value;
-                fprintf(stderr, "  typedef %.*s -> ", cast(int)name.length, name.ptr);
-                print_type_brief(t);
-                fprintf(stderr, "\n");
-            }
-        }
-    }
-
-    void print_type_brief(CType* t){
-        import core.stdc.stdio : fprintf, stderr;
-        if(t is null){
-            fprintf(stderr, "(null)");
-            return;
-        }
-        final switch(t.kind) with(CTypeKind) {
-            case UNSET: fprintf(stderr, "UNSET"); break;
-            case VOID: fprintf(stderr, "void"); break;
-            case CHAR:
-                if(!t.is_signed) fprintf(stderr, "unsigned ");
-                fprintf(stderr, "char");
-                break;
-            case SHORT:
-                if(!t.is_signed) fprintf(stderr, "unsigned ");
-                fprintf(stderr, "short");
-                break;
-            case INT:
-                if(!t.is_signed) fprintf(stderr, "unsigned ");
-                fprintf(stderr, "int");
-                break;
-            case LONG:
-                if(!t.is_signed) fprintf(stderr, "unsigned ");
-                fprintf(stderr, "long");
-                break;
-            case LONG_LONG:
-                if(!t.is_signed) fprintf(stderr, "unsigned ");
-                fprintf(stderr, "long long");
-                break;
-            case INT128:
-                if(!t.is_signed) fprintf(stderr, "unsigned ");
-                fprintf(stderr, "__int128");
-                break;
-            case FLOAT: fprintf(stderr, "float"); break;
-            case DOUBLE: fprintf(stderr, "double"); break;
-            case LONG_DOUBLE: fprintf(stderr, "long double"); break;
-            case POINTER:
-                print_type_brief(t.pointed_to);
-                fprintf(stderr, "*");
-                break;
-            case ARRAY:
-                print_type_brief(t.pointed_to);
-                fprintf(stderr, "[%zu]", t.array_size);
-                break;
-            case STRUCT:
-                fprintf(stderr, "struct %.*s", cast(int)t.struct_name.length, t.struct_name.ptr);
-                break;
-            case UNION:
-                fprintf(stderr, "union %.*s", cast(int)t.struct_name.length, t.struct_name.ptr);
-                break;
-            case ENUM:
-                fprintf(stderr, "enum %.*s", cast(int)t.struct_name.length, t.struct_name.ptr);
-                break;
-            case FUNCTION:
-                fprintf(stderr, "function");
-                break;
-            case EMBED:
-                fprintf(stderr, "EMBED");
-                break;
-            case INIT_LIST:
-                fprintf(stderr, "INIT_LIST");
-                break;
-            case ANY:
-                fprintf(stderr, "ANY");
-                break;
-            case VECTOR:
-                fprintf(stderr, "VECTOR");
-                break;
-        }
     }
 }

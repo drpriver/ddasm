@@ -4,8 +4,8 @@
  */
 module cfront.c_to_dasm;
 
-import core.stdc.stdio : fprintf, stderr;
 import dlib.aliases;
+import dlib.logger : Logger, LogLevel;
 
 // Platform-specific default C library name
 version(OSX){
@@ -403,6 +403,7 @@ bool needs_memcpy(size_t size){
 struct CDasmWriter {
     Allocator allocator;
     StringBuilder* sb;
+    Logger* logger;
     RegisterAllocator regallocator;
     LabelAllocator labelallocator;
 
@@ -457,9 +458,10 @@ struct CDasmWriter {
 
     @disable this();
 
-    this(StringBuilder* s, Allocator a){
+    this(StringBuilder* s, Allocator a, Logger* logger){
         allocator = a;
         sb = s;
+        this.logger = logger;
         reglocals.data.allocator = a;
         stacklocals.data.allocator = a;
         var_types.data.allocator = a;
@@ -541,30 +543,22 @@ struct CDasmWriter {
 
     void error(CToken token, str message){
         ERROR_OCCURRED = true;
-        fprintf(stderr, "%.*s:%d:%d: Code gen error at '%.*s': %.*s\n",
-                cast(int)token.file.length, token.file.ptr,
-                token.line,
-                token.column,
-                cast(int)token.lexeme.length, token.lexeme.ptr,
-                cast(int)message.length, message.ptr);
+        logger.buff.FORMAT(token.file, ':', token.line, ':', token.column, ": Code gen error at '", token.lexeme, "': ", message, '\n');
         if(token.expansion_file){
-            fprintf(stderr, "  note: expanded from macro defined at %.*s:%d:%d\n",
-                cast(int)token.expansion_file.length, token.expansion_file.ptr,
-                token.expansion_line, token.expansion_column);
+            logger.buff.FORMAT("  note: expanded from macro defined at ", token.expansion_file, ':', token.expansion_line, ':', token.expansion_column, '\n');
         }
+        logger.flush(LogLevel.ERROR);
     }
     void errorf(A...)(CToken token, A args){
-        StringBuilder sb = {allocator:allocator};
-        scope(exit) sb.cleanup;
-        sb.FORMAT(token.file, ':', token.line, ':',token.column,": Code gen error at '", token.lexeme, "': ");
+        ERROR_OCCURRED = true;
+        logger.buff.FORMAT(token.file, ':', token.line, ':', token.column, ": Code gen error at '", token.lexeme, "': ");
         foreach(a; args)
-            sb.write(a);
-        sb.write('\n');
+            logger.buff.write(a);
+        logger.buff.write('\n');
         if(token.expansion_file.length){
-            sb.FORMAT("  note: expanded from macro defined at ", token.expansion_file, ':', token.expansion_line, ':', token.expansion_column, '\n');
+            logger.buff.FORMAT("  note: expanded from macro defined at ", token.expansion_file, ':', token.expansion_line, ':', token.expansion_column, '\n');
         }
-        str s = sb.borrow;
-        fprintf(stderr, "%.*s\n", cast(int)s.length, s.ptr);
+        logger.flush(LogLevel.ERROR);
     }
 
     // Generate a module alias from library name

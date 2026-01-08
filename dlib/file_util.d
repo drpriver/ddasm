@@ -10,7 +10,7 @@ struct FileResult {
     Box!(void[]) value;
     int errored;
     pragma(inline, true)
-    auto unwrap(){
+    Box!(void[]) unwrap(){
         assert(!errored);
         return value;
     }
@@ -76,7 +76,7 @@ read_file(const char* filepath, Allocator a = MALLOCATOR, FileFlags flags = File
             memset(result.value.data.ptr+real_size, 0, size-real_size);
         return result;
     }
-    version(Windows){
+    else version(Windows){
         HANDLE handle = CreateFileA(
                 cast(char*)filepath,
                 GENERIC_READ,
@@ -118,6 +118,9 @@ read_file(const char* filepath, Allocator a = MALLOCATOR, FileFlags flags = File
             memset(result.value.data.ptr+real_size, 0, size-real_size);
         return result;
     }
+    else {
+        assert(0, "unimplemented");
+    }
 }
 
 
@@ -154,7 +157,7 @@ write_file(const void[] data, const char* filepath, FileFlags flags = FileFlags.
         }
         return 0;
     }
-    version(Posix){
+    else version(Posix){
         int fd = open(
                 filepath,
                 O_WRONLY | O_CREAT | O_TRUNC,
@@ -172,6 +175,9 @@ write_file(const void[] data, const char* filepath, FileFlags flags = FileFlags.
         }
         return 0;
     }
+    else {
+        assert(0, "unimplemented");
+    }
 }
 
 // Get file size without reading contents. Returns -1 on error.
@@ -182,7 +188,7 @@ long get_file_size(const char* filepath){
         if(err == -1) return -1;
         return s.st_size;
     }
-    version(Windows){
+    else version(Windows){
         HANDLE handle = CreateFileA(
                 cast(char*)filepath,
                 GENERIC_READ,
@@ -197,5 +203,25 @@ long get_file_size(const char* filepath){
         BOOL success = GetFileSizeEx(handle, &li_size);
         if(!success) return -1;
         return li_size.QuadPart;
+    }
+    else {
+        assert(0, "unimplemented");
+    }
+}
+
+// Check if regular file exists (returns false for directories).
+bool file_exists(const char* filepath){
+    version(Posix){
+        stat_t s;
+        if(stat(filepath, &s) != 0) return false;
+        return (s.st_mode & S_IFMT) == S_IFREG;
+    }
+    else version(Windows){
+        DWORD attrs = GetFileAttributesA(filepath);
+        if(attrs == INVALID_FILE_ATTRIBUTES) return false;
+        return (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0;
+    }
+    else {
+        assert(0, "unimplemented");
     }
 }

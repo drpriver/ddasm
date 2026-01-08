@@ -17,6 +17,7 @@ import dlib.box: Box, boxed;
 import dlib.str_util: endswith;
 import dlib.table;
 import dlib.aliases;
+import dlib.logger;
 
 import dvm.dvm_defs: Fuzzing, uintptr_t;
 import dvm.dvm_linked: LinkedModule, Function, FunctionType, FunctionTable, FunctionInfo;
@@ -46,6 +47,7 @@ else {
 
 extern(C)
 int main(int argc, char** argv){
+    Logger logger;
     bool disassemble = false;
     bool early_exit = false;
     bool force_interactive = false;
@@ -282,7 +284,7 @@ int main(int argc, char** argv){
         Box!(char[]) dasmtext = {allocator:MALLOCATOR};
         ubyte[] data = btext.as!(ubyte[]).data;
         import cfront.cfront : CompileFlags;
-        int err = cfront.cfront.compile_c_to_dasm(data, &dasmtext, sourcefile[], include_paths[], framework_paths[], CompileFlags.init, force_includes[]);
+        int err = cfront.cfront.compile_c_to_dasm(data, &dasmtext, sourcefile[], include_paths[], framework_paths[], CompileFlags.init, force_includes[], &logger);
         if(err) return err;
         // If codegen_only, print DASM text and exit
         if(codegen_only){

@@ -6,8 +6,9 @@ import dlib.allocator : Mallocator, Allocator, MALLOCATOR, FixedAllocator;
 import dlib.barray : Barray;
 import dlib.box : Box;
 import dlib.stringbuilder : StringBuilder;
+import dlib.logger;
 static import cfront.cfront;
-import core.stdc.stdio : fprintf, stdout, stderr, stdin, fread;
+import core.stdc.stdio : fprintf, stdout, stderr, stdin, fread, fwrite;
 
 import dlib.zstring : ZString;
 static import dlib.argparse;
@@ -21,11 +22,11 @@ static import core.stdc.string;
 
 extern(C)
 int main(int argc, char** argv) {
+    Logger logger;
     bool force_interactive = false;
     bool syntax_only = false;
     bool pp_only = false;
     bool print_ast = false;
-    bool debug_types = false;
     ZString sourcefile;
     Barray!str include_paths;
     include_paths.bdata.allocator = MALLOCATOR;
@@ -47,7 +48,7 @@ int main(int argc, char** argv) {
                 dest: ARGDEST(&sourcefile),
             ),
         ];
-        ArgToParse[8] _kw_args = [
+        ArgToParse[7] _kw_args = [
             ArgToParse(
                 name: "-I",
                 help: "Add directory to include search path. Can be specified multiple times.",
@@ -79,11 +80,6 @@ int main(int argc, char** argv) {
                 name: "--print-ast", altname: "-ast-dump",
                 help: "Print the AST after parsing.",
                 dest: ARGDEST(&print_ast),
-            ),
-            ArgToParse(
-                name: "--debug-types",
-                help: "Print type info during parsing and dump final type table.",
-                dest: ARGDEST(&debug_types),
             ),
             ArgToParse(
                 name: "-F",
@@ -193,9 +189,8 @@ int main(int argc, char** argv) {
         syntax_only: syntax_only,
         pp_only: pp_only,
         print_ast: print_ast,
-        debug_types: debug_types,
     };
-    int err = cfront.cfront.compile_c_to_dasm(bscript.data, &progtext, sourcefile[], include_paths[], framework_paths[], flags, force_includes[]);
+    int err = cfront.cfront.compile_c_to_dasm(bscript.data, &progtext, sourcefile[], include_paths[], framework_paths[], flags, force_includes[], &logger);
     if (err) return err;
     // Don't print progtext for flags that don't produce code
     if (!syntax_only && !pp_only && !print_ast)

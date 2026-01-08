@@ -6,7 +6,6 @@ module cfront.c_pp_token;
 
 import dlib.aliases;
 import dlib.allocator : Allocator;
-import dlib.table : Table;
 
 // Preprocessing token types (C standard phase 3)
 enum PPTokenType : uint {
@@ -82,19 +81,29 @@ struct PPMacroDef {
 }
 
 // Hide set for preventing infinite macro recursion (C standard "blue paint")
+// Uses a linked list approach for O(1) extension instead of copying entire table
 struct HideSet {
-    Table!(str, bool) hidden;
+    // Linked list node for hidden names
+    static struct Node {
+        str name;
+        Node* next;
+    }
+
+    Node* head;
+    Allocator allocator;
 
     static HideSet create(Allocator alloc){
         HideSet hs;
-        hs.hidden.data.allocator = alloc;
+        hs.allocator = alloc;
+        hs.head = null;
         return hs;
     }
 
     bool is_hidden(str name){
-        // Use iteration due to betterC slice comparison issues
-        foreach(item; hidden.items){
-            if(item.key==name) return true;
+        // Walk the linked list to check if name is hidden
+        // This is O(n) but n is typically very small (macro nesting depth)
+        for(Node* node = head; node !is null; node = node.next){
+            if(node.name == name) return true;
         }
         return false;
     }
@@ -102,13 +111,12 @@ struct HideSet {
     // Create a new hide set with an additional hidden name
     HideSet with_hidden(str name){
         HideSet result;
-        result.hidden.data.allocator = hidden.data.allocator;
-        // Copy existing
-        foreach(item; hidden.items){
-            result.hidden[item.key] = true;
-        }
-        // Add new
-        result.hidden[name] = true;
+        result.allocator = allocator;
+        // Allocate new node
+        Node* new_node = cast(Node*)allocator.alloc(Node.sizeof).ptr;
+        new_node.name = name;
+        new_node.next = head;  // Point to existing list
+        result.head = new_node;
         return result;
     }
 }

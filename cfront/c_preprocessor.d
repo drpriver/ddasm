@@ -5,7 +5,6 @@
  */
 module cfront.c_preprocessor;
 
-import core.stdc.stdio : fprintf, stderr;
 import core.stdc.stdlib : getenv;
 import core.stdc.time : time, localtime, tm;
 import dlib.aliases;
@@ -13,13 +12,15 @@ import dlib.allocator : Allocator;
 import dlib.barray : Barray, make_barray;
 import dlib.table : Table;
 import dlib.stringbuilder : StringBuilder, mwritef, E, Pad;
-import dlib.file_util : read_file, FileResult, FileFlags, get_file_size;
+import dlib.file_util : read_file, FileResult, FileFlags, get_file_size, file_exists;
 import dlib.box: Box, boxed;
+import dlib.logger;
 import cfront.c_pp_token;
 import cfront.c_pp_lexer : pp_tokenize;
 
 struct CPreprocessor {
     Allocator allocator;
+    Logger* logger;
 
     // Macro table
     Table!(str, PPMacroDef) macros;
@@ -452,10 +453,8 @@ struct CPreprocessor {
 
     // Check if a macro is defined and not #undef'd
     bool is_defined(str name){
-        foreach(item; macros.items){
-            if(item.key == name){
-                return !item.value.is_undefined;
-            }
+        if(auto p = name in macros){
+            return !p.is_undefined;
         }
         return false;
     }
@@ -792,24 +791,42 @@ struct CPreprocessor {
     PPMacroDef get_macro(PPToken tok){
         // Handle special predefined macros
         str name = tok.lexeme;
-        if(name == "__FILE__")
-            return get_file_macro(tok);
-        if(name == "__LINE__")
-            return get_line_macro(tok);
-        if(name == "__COUNTER__")
-            return get_counter_macro(tok);
-        if(name == "__INCLUDE_DEPTH__")
-            return get_include_depth_macro(tok);
-        if(name == "__BASE_FILE__")
-            return get_base_file_macro(tok);
-        if(name == "__DIR__")
-            return get_dir_macro(tok);
-        if(name == "__RANDOM__")
-            return get_random_macro(tok);
-        if(name == "__DATE__")
-            return get_date_macro(tok);
-        if(name == "__TIME__")
-            return get_time_macro(tok);
+
+        // Quick check: builtin macros all start with "__" and are 7+ chars
+        // This avoids string comparisons for most identifiers
+        if(name.length >= 7 && name[0] == '_' && name[1] == '_'){
+            // Switch on third char and length for fast dispatch
+            switch(name[2]){
+                case 'F':
+                    if(name == "__FILE__") return get_file_macro(tok);
+                    break;
+                case 'L':
+                    if(name == "__LINE__") return get_line_macro(tok);
+                    break;
+                case 'C':
+                    if(name == "__COUNTER__") return get_counter_macro(tok);
+                    break;
+                case 'I':
+                    if(name == "__INCLUDE_DEPTH__") return get_include_depth_macro(tok);
+                    break;
+                case 'B':
+                    if(name == "__BASE_FILE__") return get_base_file_macro(tok);
+                    break;
+                case 'D':
+                    if(name == "__DIR__") return get_dir_macro(tok);
+                    if(name == "__DATE__") return get_date_macro(tok);
+                    break;
+                case 'R':
+                    if(name == "__RANDOM__") return get_random_macro(tok);
+                    break;
+                case 'T':
+                    if(name == "__TIME__") return get_time_macro(tok);
+                    break;
+                default:
+                    break;
+            }
+        }
+
         if(auto value = name in macros){
             if(value.is_undefined) return PPMacroDef(is_null:true);
             return *value;
@@ -839,26 +856,14 @@ struct CPreprocessor {
     }
 
     // Report error
-    void error(str msg){
+    void error(A...)(A msg){
         error_occurred = true;
-        if(directive_line > 0){
-            fprintf(stderr, "%.*s:%d: Preprocessor error: %.*s\n",
-                    cast(int)current_file.length, current_file.ptr,
-                    directive_line,
-                    cast(int)msg.length, msg.ptr);
-        } else {
-            fprintf(stderr, "%.*s: Preprocessor error: %.*s\n",
-                    cast(int)current_file.length, current_file.ptr,
-                    cast(int)msg.length, msg.ptr);
-        }
+        logger.error(current_file, ':', directive_line, ": Preprocessor error: ", current_file, directive_line, msg, '\n');
     }
 
-    void error_at(PPToken tok, str msg){
+    void error_at(A...)(PPToken tok, A msg){
         error_occurred = true;
-        fprintf(stderr, "%.*s:%d:%d: Preprocessor error: %.*s\n",
-                cast(int)tok.file.length, tok.file.ptr,
-                tok.line, tok.column,
-                cast(int)msg.length, msg.ptr);
+        logger.error(tok.file, ':', tok.line, ':', tok.column, ": Preprocessor error: ", msg, '\n');
     }
 
     // Main entry point: process PPTokens
@@ -873,16 +878,30 @@ struct CPreprocessor {
         }
 
         size_t i = 0;
+        bool at_line_start = true;  // Track line-start state as we iterate
 
         while(i < input.length){
+            PPToken tok = input[i];
+
+            // Update line-start tracking based on token type
+            // (do this before processing so we have correct state for directive check)
+            bool current_at_line_start = at_line_start;
+            if(tok.type == PPTokenType.PP_NEWLINE){
+                at_line_start = true;
+            } else if(tok.type != PPTokenType.PP_WHITESPACE){
+                at_line_start = false;
+            }
+            // Whitespace doesn't change line-start state
+
             // Check for directive at start of line (# as first non-whitespace)
-            if(is_at_line_start(input, i) && is_hash(input, i)){
+            if(current_at_line_start && is_hash(input, i)){
                 i = process_directive(input, i, output);
+                at_line_start = true;  // After directive, we're at a new line start
                 if(error_occurred) return 1;
                 continue;
             }
 
-            PPToken tok = input[i];
+            tok = input[i];
 
             // Skip tokens in inactive blocks
             if(!is_active()){
@@ -1298,27 +1317,22 @@ struct CPreprocessor {
         // Log if this macro is being watched for define
         if(auto p = name in watched_macros){ if(*p & WatchFlags.DEFINE){
             int def_line = line.length > 0 ? line[0].line : 0;
-            StringBuilder def_sb;
-            def_sb.allocator = allocator;
-            def_sb.write("#define ");
-            def_sb.write(name);
+            logger.buff.FORMAT(current_file, ':', def_line, ": [watch] #define ", name);
             if(def.is_function_like){
-                def_sb.write("(");
+                logger.buff.write("(");
                 foreach(pi, param; def.params){
-                    if(pi > 0) def_sb.write(", ");
-                    def_sb.write(param);
+                    if(pi > 0) logger.buff.write(", ");
+                    logger.buff.write(param);
                 }
-                if(def.is_variadic) def_sb.write(", ...");
-                def_sb.write(")");
+                if(def.is_variadic) logger.buff.write(", ...");
+                logger.buff.write(")");
             }
-            def_sb.write(" ");
+            logger.buff.write(" ");
             foreach(tok; def.replacement){
-                def_sb.write(tok.lexeme);
+                logger.buff.write(tok.lexeme);
             }
-            fprintf(stderr, "%.*s:%d: [watch] %.*s\n",
-                    cast(int)current_file.length, current_file.ptr,
-                    def_line,
-                    cast(int)def_sb.cursor, def_sb.borrow().ptr);
+            logger.buff.write('\n');
+            logger.flush(LogLevel.INFO);
         }}
     }
 
@@ -1334,56 +1348,42 @@ struct CPreprocessor {
         int undef_line = line.length > 0 ? line[0].line : 0;
 
         // Log if this macro is being watched for undef
-        if(auto p = name in watched_macros){ if(*p & WatchFlags.UNDEF){
-            fprintf(stderr, "%.*s:%d: [watch] #undef %.*s\n",
-                    cast(int)current_file.length, current_file.ptr,
-                    undef_line,
-                    cast(int)name.length, name.ptr);
+        if(ubyte* p = name in watched_macros){ if(*p & WatchFlags.UNDEF){
+            logger.info(current_file, ':', undef_line, ": [watch] #undef ", name, '\n');
         }}
 
         // Mark as undefined
-        foreach(ref item; macros.items){
-            if(item.key == name){
-                item.value.is_undefined = true;
-                return;
-            }
+        if(PPMacroDef* p = name in macros){
+            p.is_undefined = true;
         }
     }
 
     // Process a forced include file (like -include flag)
     void process_force_include(str filename, Barray!PPToken* output){
-        // Resolve as non-system include
-        str full_path = resolve_include(filename, false);
-        if(full_path.length == 0){
-            fprintf(stderr, "-include: error: '%.*s' file not found\n",
-                cast(int)filename.length, filename.ptr);
-            error_occurred = true;
-            return;
-        }
-
         // Read file
         StringBuilder path_buf;
         path_buf.allocator = allocator;
-        path_buf.write(full_path);
+        path_buf.write(filename);
         path_buf.nul_terminate();
 
         FileResult fr = read_file(path_buf.borrow().ptr, allocator, FileFlags.NUL_TERMINATE | FileFlags.ZERO_PAD_TO_16);
         if(fr.errored){
-            fprintf(stderr, "-include: error reading '%.*s'\n",
-                cast(int)filename.length, filename.ptr);
+            logger.error("-include: error reading '", E(filename), "'\n");
             error_occurred = true;
             return;
         }
 
         // Tokenize included file
-        const(ubyte)[] file_data = cast(const(ubyte)[])fr.value.data;
-        size_t actual_len = 0;
-        while(actual_len < file_data.length && file_data[actual_len] != 0){
-            actual_len++;
+        const(ubyte)[] file_data = fr.value.as!(const(ubyte)[]).data;
+        // skip utf-8 bom if present
+        if(file_data.length >= 3 && file_data[0] == 0xef && file_data[1] == 0xbb && file_data[2] == 0xbf)
+            file_data = file_data[3..$];
+        while(file_data.length && file_data[$-1] == 0){
+            file_data = file_data[0..$-1];
         }
 
         Barray!PPToken include_tokens = make_barray!PPToken(allocator);
-        int err = pp_tokenize(file_data[0 .. actual_len], full_path, &include_tokens, allocator);
+        int err = pp_tokenize(file_data, filename, &include_tokens, allocator);
         if(err){
             error_occurred = true;
             return;
@@ -1397,14 +1397,14 @@ struct CPreprocessor {
         // Detect and record include guard pattern
         str guard = detect_include_guard(include_tokens[]);
         if(guard.length > 0){
-            include_guards[full_path] = guard;
+            include_guards[filename] = guard;
         }
 
         // Save current file and push include stack
         str saved_file = current_file;
-        current_file = full_path;
+        current_file = filename;
         PPIncludeFrame frame;
-        frame.filename = full_path;
+        frame.filename = filename;
         include_stack ~= frame;
 
         // Process included tokens recursively
@@ -1463,26 +1463,21 @@ struct CPreprocessor {
         str full_path = resolve_include(filename, is_system);
         if(full_path.length == 0){
             // Header not found
-            fprintf(stderr, "%.*s:%d: error: '%.*s' file not found\n",
-                cast(int)current_file.length, current_file.ptr,
-                tokens[start].line,
-                cast(int)filename.length, filename.ptr);
+            logger.error(current_file, ':', tokens[start].line, ": error: '", E(filename), "' file not found'\n");
             error_occurred = true;
             return line_end + 1;
         }
 
         // Check for already included (pragma once)
-        foreach(item; pragma_once_files.items){
-            if(item.key == full_path){
-                if(0)fprintf(stderr, "Skipping due to pragma once: '%.*s'\n", cast(int)full_path.length, full_path.ptr);
-                return line_end + 1;
-            }
+        if(full_path in pragma_once_files){
+            if(0)logger.debugf("Skipping due to pragma once: '%'\n", E(full_path));
+            return line_end + 1;
         }
 
         // Check for include guard - if we know the guard macro and it's defined, skip
         if(str* guard = full_path in include_guards){
             if(is_defined(*guard)){
-                if(0)fprintf(stderr, "Skipping '%.*s' due to include guard '%.*s'\n", cast(int)full_path.length, full_path.ptr, cast(int)guard.length, guard.ptr);
+                if(0)logger.debugf("Skipping '%' due to include guard '%'\n", E(full_path), *guard);
                 return line_end + 1;
             }
         }
@@ -1544,7 +1539,7 @@ struct CPreprocessor {
     str resolve_include(str filename, bool is_system){
         // Handle absolute paths
         if(filename.length > 0 && filename[0] == '/'){
-            if(file_exists(filename)) return filename;
+            if(path_exists(filename)) return filename;
             return "";
         }
 
@@ -1554,14 +1549,14 @@ struct CPreprocessor {
             str dir = get_directory(current_file);
             if(dir.length > 0){
                 str path = concat_path(dir, filename);
-                if(file_exists(path)) return path;
+                if(path_exists(path)) return path;
             }
         }
 
         // Try pushed include paths first (in reverse order - last pushed = highest priority)
         for(size_t i = pushed_include_paths.count; i > 0; i--){
             str path = concat_path(pushed_include_paths[i-1], filename);
-            if(file_exists(path)) return path;
+            if(path_exists(path)) return path;
         }
 
         version(OSX){
@@ -1573,7 +1568,7 @@ struct CPreprocessor {
         // Try configured include paths
         foreach(base; include_paths){
             str path = concat_path(base, filename);
-            if(file_exists(path)) return path;
+            if(path_exists(path)) return path;
         }
 
         return "";
@@ -1608,7 +1603,7 @@ struct CPreprocessor {
             sb.write(".framework/Headers/");
             sb.write(rest_of_path);
             str path = sb.borrow();
-            if(file_exists(path)) return path;
+            if(path_exists(path)) return path;
         }
 
         return "";
@@ -1634,14 +1629,13 @@ struct CPreprocessor {
         return sb.borrow();
     }
 
-    // Check if file exists
-    bool file_exists(str path){
+    // Check if file exists (uses stat instead of reading the whole file)
+    bool path_exists(str path){
         StringBuilder path_buf;
         path_buf.allocator = allocator;
         path_buf.write(path);
         path_buf.nul_terminate();
-        FileResult fr = read_file(path_buf.borrow().ptr, allocator, FileFlags.NONE);
-        return !fr.errored;
+        return file_exists(path_buf.borrow().ptr);
     }
 
     // Detect include guard pattern: #ifndef GUARD / #define GUARD ... #endif
@@ -1742,32 +1736,26 @@ struct CPreprocessor {
                     i++;
                 }
 
-                // Build original string
-                StringBuilder orig_sb;
-                orig_sb.allocator = allocator;
+                int pragma_line = line.length > 0 ? line[0].line : 0;
+                logger.buff.FORMAT(current_file, ':', pragma_line, ": ");
+
+                // Write original tokens
                 foreach(tok; tokens_to_expand[]){
-                    orig_sb.write(tok.lexeme);
+                    logger.buff.write(tok.lexeme);
                 }
 
-                // Expand macros
+                logger.buff.write(" -> ");
+
+                // Expand macros and write expanded tokens
                 Barray!PPToken expanded = make_barray!PPToken(allocator);
                 HideSet pragma_hs = HideSet.create(allocator);
                 expand_tokens(tokens_to_expand[], &expanded, pragma_hs);
-
-                // Build expanded string
-                StringBuilder exp_sb;
-                exp_sb.allocator = allocator;
                 foreach(tok; expanded[]){
-                    exp_sb.write(tok.lexeme);
+                    logger.buff.write(tok.lexeme);
                 }
 
-                int pragma_line = line.length > 0 ? line[0].line : 0;
-                fprintf(stderr, "%.*s:%d: %.*s -> %.*s\n",
-                        cast(int)current_file.length, current_file.ptr,
-                        pragma_line,
-                        cast(int)orig_sb.cursor, orig_sb.borrow().ptr,
-                        cast(int)exp_sb.cursor, exp_sb.borrow().ptr);
-
+                logger.buff.write('\n');
+                logger.flush(LogLevel.INFO);
             } else if(line[i].lexeme == "eval"){
                 // #pragma eval(tokens) - evaluate expression for debugging
                 i++;
@@ -1782,22 +1770,16 @@ struct CPreprocessor {
                     i++;
                 }
 
-                // Build original string
-                StringBuilder orig_sb;
-                orig_sb.allocator = allocator;
-                foreach(tok; tokens_to_eval[]){
-                    orig_sb.write(tok.lexeme);
-                }
-
                 // Evaluate expression
                 long value = evaluate_expression(tokens_to_eval[]);
 
                 int pragma_line = line.length > 0 ? line[0].line : 0;
-                fprintf(stderr, "%.*s:%d: %.*s = %ld\n",
-                        cast(int)current_file.length, current_file.ptr,
-                        pragma_line,
-                        cast(int)orig_sb.cursor, orig_sb.borrow().ptr,
-                        value);
+                logger.buff.FORMAT(current_file, ":", pragma_line, ": ");
+                foreach(tok; tokens_to_eval[]){
+                    logger.buff.write(tok.lexeme);
+                }
+                logger.buff.FORMAT(" = ", value, "\n");
+                logger.flush(LogLevel.INFO);
 
             } else if(line[i].lexeme == "reveal"){
                 // #pragma reveal(macroname) - show macro definition
@@ -1815,42 +1797,30 @@ struct CPreprocessor {
                     int pragma_line = line.length > 0 ? line[0].line : 0;
 
                     if(macro_def.is_null || macro_def.is_undefined){
-                        fprintf(stderr, "%.*s:%d: %.*s is not defined\n",
-                                cast(int)current_file.length, current_file.ptr,
-                                pragma_line,
-                                cast(int)macro_name.length, macro_name.ptr);
+                        logger.info(current_file, ":", pragma_line, ": ", macro_name, " is not defined\n");
                     } else if(macro_def.is_builtin){
-                        fprintf(stderr, "%.*s:%d: %.*s = <builtin>\n",
-                                cast(int)current_file.length, current_file.ptr,
-                                pragma_line,
-                                cast(int)macro_name.length, macro_name.ptr);
+                        logger.info(current_file, ":", pragma_line, ": ", macro_name, " = <builtin>\n");
                     } else {
-                        // Build #define string
-                        StringBuilder def_sb;
-                        def_sb.allocator = allocator;
-                        def_sb.write("#define ");
-                        def_sb.write(macro_name);
+                        // Build #define string directly to logger buffer
+                        logger.buff.FORMAT(macro_def.def_file, ":", macro_def.def_line, ": #define ", macro_name);
 
                         if(macro_def.is_function_like){
-                            def_sb.write("(");
+                            logger.buff.write("(");
                             foreach(pi, param; macro_def.params){
-                                if(pi > 0) def_sb.write(", ");
-                                def_sb.write(param);
+                                if(pi > 0) logger.buff.write(", ");
+                                logger.buff.write(param);
                             }
-                            if(macro_def.is_variadic) def_sb.write(", ...");
-                            def_sb.write(")");
+                            if(macro_def.is_variadic) logger.buff.write(", ...");
+                            logger.buff.write(")");
                         }
 
-                        def_sb.write(" ");
+                        logger.buff.write(" ");
                         foreach(tok; macro_def.replacement){
-                            def_sb.write(tok.lexeme);
+                            logger.buff.write(tok.lexeme);
                         }
 
-                        // Show definition location and the define
-                        fprintf(stderr, "%.*s:%d: %.*s\n",
-                                cast(int)macro_def.def_file.length, macro_def.def_file.ptr,
-                                macro_def.def_line,
-                                cast(int)def_sb.cursor, def_sb.borrow().ptr);
+                        logger.buff.write("\n");
+                        logger.flush(LogLevel.INFO);
                     }
                 }
 
@@ -1873,28 +1843,27 @@ struct CPreprocessor {
                 HideSet msg_hs = HideSet.create(allocator);
                 expand_tokens(msg_tokens[], &expanded, msg_hs);
 
-                // Build message from expanded tokens
-                StringBuilder msg_sb;
-                msg_sb.allocator = allocator;
+                // Build message from expanded tokens directly to logger buffer
+                int pragma_line = line.length > 0 ? line[0].line : 0;
+                logger.buff.FORMAT(current_file, ":", pragma_line, ": note: ");
+                bool has_content = false;
                 foreach(tok; expanded[]){
                     if(tok.type == PPTokenType.PP_STRING){
                         // Remove quotes from string literal
                         str s = tok.lexeme;
                         if(s.length >= 2 && s[0] == '"' && s[$-1] == '"'){
-                            msg_sb.write(s[1..$-1]);
+                            logger.buff.write(s[1..$-1]);
                         } else {
-                            msg_sb.write(s);
+                            logger.buff.write(s);
                         }
-                    } else if(tok.type != PPTokenType.PP_WHITESPACE || msg_sb.cursor > 0){
-                        msg_sb.write(tok.lexeme);
+                        has_content = true;
+                    } else if(tok.type != PPTokenType.PP_WHITESPACE || has_content){
+                        logger.buff.write(tok.lexeme);
+                        has_content = true;
                     }
                 }
-
-                int pragma_line = line.length > 0 ? line[0].line : 0;
-                fprintf(stderr, "%.*s:%d: note: %.*s\n",
-                        cast(int)current_file.length, current_file.ptr,
-                        pragma_line,
-                        cast(int)msg_sb.cursor, msg_sb.borrow().ptr);
+                logger.buff.write("\n");
+                logger.flush(LogLevel.INFO);
 
             } else if(line[i].lexeme == "library"){
                 // #pragma library("libname") - emit tokens for parser
@@ -1980,30 +1949,24 @@ struct CPreprocessor {
                     } else if(subcommand == "pop"){
                         // #pragma include_path pop
                         if(pushed_include_paths.count == 0){
-                            fprintf(stderr, "%.*s:%d: warning: #pragma include_path pop with nothing pushed\n",
-                                    cast(int)current_file.length, current_file.ptr,
-                                    pragma_line);
+                            logger.warn(current_file, ":", pragma_line, ": warning: #pragma include_path pop with nothing pushed\n");
                         } else {
                             pushed_include_paths.count--;
                         }
 
                     } else if(subcommand == "reveal"){
                         // #pragma include_path reveal - show all include paths
-                        fprintf(stderr, "%.*s:%d: include paths:\n",
-                                cast(int)current_file.length, current_file.ptr,
-                                pragma_line);
+                        logger.info(current_file, ":", pragma_line, ": include paths:\n");
 
                         // Show pushed paths first (in search order - reverse)
                         for(size_t j = pushed_include_paths.count; j > 0; j--){
                             str p = pushed_include_paths[j-1];
-                            fprintf(stderr, "  [pushed] %.*s\n",
-                                    cast(int)p.length, p.ptr);
+                            logger.info("  [pushed] ", p, "\n");
                         }
 
                         // Show configured paths
                         foreach(p; include_paths){
-                            fprintf(stderr, "  %.*s\n",
-                                    cast(int)p.length, p.ptr);
+                            logger.info("  ", p, "\n");
                         }
                     }
                 }
@@ -2060,10 +2023,7 @@ struct CPreprocessor {
         }
         error_occurred = true;
         int error_line = line.length > 0 ? line[0].line : 0;
-        fprintf(stderr, "%.*s:%d: #error %.*s\n",
-                cast(int)current_file.length, current_file.ptr,
-                error_line,
-                cast(int)sb.cursor, sb.borrow().ptr);
+        logger.error(current_file, ":", error_line, ": #error ", sb.borrow(), "\n");
     }
 
     // Handle #warning
@@ -2076,10 +2036,7 @@ struct CPreprocessor {
             }
         }
         int warning_line = line.length > 0 ? line[0].line : 0;
-        fprintf(stderr, "%.*s:%d: warning: #warning %.*s\n",
-                cast(int)current_file.length, current_file.ptr,
-                warning_line,
-                cast(int)sb.cursor, sb.borrow().ptr);
+        logger.warn(current_file, ":", warning_line, ": warning: #warning ", sb.borrow(), "\n");
     }
 
     // Handle #line directive
@@ -2194,10 +2151,7 @@ struct CPreprocessor {
             // Check for parameter clause (...)
             if(i >= line.length || !line[i].is_punct("(")){
                 // Parameter without clause - warn and ignore
-                fprintf(stderr, "%.*s:%d: warning: unknown embed parameter '%.*s'\n",
-                    cast(int)current_file.length, current_file.ptr,
-                    first_tok.line,
-                    cast(int)param_name.length, param_name.ptr);
+                logger.warn(current_file, ":", first_tok.line, ": warning: unknown embed parameter '", param_name, "'\n");
                 continue;
             }
 
@@ -2232,20 +2186,14 @@ struct CPreprocessor {
                 has_if_empty = true;
             } else {
                 // Unknown parameter - warn per spec (implementation-defined params)
-                fprintf(stderr, "%.*s:%d: warning: unknown embed parameter '%.*s'\n",
-                    cast(int)current_file.length, current_file.ptr,
-                    first_tok.line,
-                    cast(int)param_name.length, param_name.ptr);
+                logger.warn(current_file, ":", first_tok.line, ": warning: unknown embed parameter '", param_name, "'\n");
             }
         }
 
         // Resolve path
         str full_path = resolve_include(filename, is_system);
         if(full_path.length == 0){
-            fprintf(stderr, "%.*s:%d: error: '%.*s' file not found for #embed\n",
-                cast(int)current_file.length, current_file.ptr,
-                first_tok.line,
-                cast(int)filename.length, filename.ptr);
+            logger.error(current_file, ":", first_tok.line, ": error: '", filename, "' file not found for #embed\n");
             error_occurred = true;
             return;
         }
@@ -2257,10 +2205,7 @@ struct CPreprocessor {
         path_buf.nul_terminate();
         long file_size = get_file_size(path_buf.borrow().ptr);
         if(file_size < 0){
-            fprintf(stderr, "%.*s:%d: error: cannot stat '%.*s'\n",
-                cast(int)current_file.length, current_file.ptr,
-                first_tok.line,
-                cast(int)full_path.length, full_path.ptr);
+            logger.error(current_file, ":", first_tok.line, ": error: cannot stat '", full_path, "'\n");
             error_occurred = true;
             return;
         }
@@ -2834,27 +2779,17 @@ struct CPreprocessor {
 
             // Log if this macro is being watched for expand
             if(auto p = macro_def.name in watched_macros){ if(*p & WatchFlags.EXPAND){
-                StringBuilder inv_sb;
-                inv_sb.allocator = allocator;
-                inv_sb.write(macro_def.name);
-                inv_sb.write("(");
+                logger.buff.FORMAT(invocation.file, ":", invocation.line, ": [watch] ", macro_def.name, "(");
                 foreach(ai, arg; args[]){
-                    if(ai > 0) inv_sb.write(", ");
+                    if(ai > 0) logger.buff.write(", ");
                     foreach(tok; arg)
-                        inv_sb.write(tok.lexeme);
+                        logger.buff.write(tok.lexeme);
                 }
-                inv_sb.write(")");
-
-                StringBuilder exp_sb;
-                exp_sb.allocator = allocator;
+                logger.buff.write(") -> ");
                 foreach(tok; substituted[])
-                    exp_sb.write(tok.lexeme);
-
-                fprintf(stderr, "%.*s:%d: [watch] %.*s -> %.*s\n",
-                        cast(int)invocation.file.length, invocation.file.ptr,
-                        invocation.line,
-                        cast(int)inv_sb.cursor, inv_sb.borrow().ptr,
-                        cast(int)exp_sb.cursor, exp_sb.borrow().ptr);
+                    logger.buff.write(tok.lexeme);
+                logger.buff.write("\n");
+                logger.flush(LogLevel.DEBUG);
             }}
 
             // Set expansion location on all substituted tokens so nested macros
@@ -2895,16 +2830,11 @@ struct CPreprocessor {
 
             // Log if this macro is being watched for expand
             if(auto p = macro_def.name in watched_macros){ if(*p & WatchFlags.EXPAND){
-                StringBuilder exp_sb;
-                exp_sb.allocator = allocator;
+                logger.buff.FORMAT(invocation.file, ":", invocation.line, ": [watch] ", macro_def.name, " -> ");
                 foreach(tok; substituted[])
-                    exp_sb.write(tok.lexeme);
-
-                fprintf(stderr, "%.*s:%d: [watch] %.*s -> %.*s\n",
-                        cast(int)invocation.file.length, invocation.file.ptr,
-                        invocation.line,
-                        cast(int)macro_def.name.length, macro_def.name.ptr,
-                        cast(int)exp_sb.cursor, exp_sb.borrow().ptr);
+                    logger.buff.write(tok.lexeme);
+                logger.buff.write("\n");
+                logger.flush(LogLevel.DEBUG);
             }}
 
             // Set expansion location on all substituted tokens so nested macros

@@ -11,6 +11,7 @@ import dlib.barray : Barray, make_barray;
 import dlib.file_util : read_file, FileResult, FileFlags;
 import dlib.zstring : ZString;
 import dlib.term_util : get_cols;
+import dlib.logger;
 static import dlib.argparse;
 
 import cfront.c_pp_token;
@@ -19,6 +20,7 @@ import cfront.c_preprocessor : CPreprocessor;
 import cfront.cfront : DEFAULT_INCLUDE_PATHS, DEFAULT_FRAMEWORK_PATHS;
 
 extern(C) int main(int argc, char** argv) {
+    Logger logger;
     ZString sourcefile;
     Barray!str include_paths;
     include_paths.bdata.allocator = MALLOCATOR;
@@ -140,6 +142,7 @@ extern(C) int main(int argc, char** argv) {
     pp.include_paths = include_paths[];
     pp.framework_paths = framework_paths[];
     pp.force_includes = force_includes[];
+    pp.logger = &logger;
     pp.initialize();
 
     Barray!PPToken output = make_barray!PPToken(alloc);

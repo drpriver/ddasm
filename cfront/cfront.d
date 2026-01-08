@@ -9,8 +9,8 @@ import dlib.allocator : MALLOCATOR, ArenaAllocator, Allocator;
 import dlib.box : Box;
 import dlib.stringbuilder : StringBuilder;
 import dlib.barray : Barray, make_barray;
+import dlib.logger;
 
-// New token-based preprocessor
 import cfront.c_pp_token : PPToken;
 import cfront.c_pp_lexer : pp_tokenize;
 import cfront.c_preprocessor : CPreprocessor;
@@ -24,7 +24,6 @@ struct CompileFlags {
     bool syntax_only;
     bool pp_only;
     bool print_ast;
-    bool debug_types;
 }
 
 // Default system include paths (compile-time)
@@ -41,7 +40,10 @@ version(OSX) {
 } else version(linux) {
     version(X86_64)
         enum str[] DEFAULT_INCLUDE_PATHS = [
-            // XXX
+            // XXX: hardcoded
+            // also maybe we should provide our own headers?
+            "/usr/lib/gcc/x86_64-linux-gnu/11/include",
+            "/usr/lib/gcc/x86_64-linux-gnu/10/include",
             "/usr/lib/gcc/x86_64-linux-gnu/9/include",
             "/usr/local/include",
             "/usr/include/x86_64-linux-gnu",
@@ -81,7 +83,7 @@ version(OSX) {
     ];
 }
 
-int compile_c_to_dasm(const(ubyte)[] source, Box!(char[])* progtext, str source_file = "", str[] include_paths = [], str[] framework_paths = [], CompileFlags flags = CompileFlags.init, str[] force_includes = []) {
+int compile_c_to_dasm(const(ubyte)[] source, Box!(char[])* progtext, str source_file, str[] include_paths, str[] framework_paths, CompileFlags flags, str[] force_includes, Logger* logger){
     ArenaAllocator arena = ArenaAllocator(MALLOCATOR);
     scope(exit) arena.free_all();
 
@@ -107,6 +109,7 @@ int compile_c_to_dasm(const(ubyte)[] source, Box!(char[])* progtext, str source_
     preprocessor.include_paths = include_paths;
     preprocessor.framework_paths = framework_paths;
     preprocessor.force_includes = force_includes;
+    preprocessor.logger = logger;
     preprocessor.initialize();
     err = preprocessor.process(pp_tokens[], &processed);
     if (err) return 1;
@@ -159,17 +162,10 @@ int compile_c_to_dasm(const(ubyte)[] source, Box!(char[])* progtext, str source_
 
     // Parse
     CParser parser = CParser(arena.allocator(), tokens[]);
-    parser.debug_types = flags.debug_types;
+    parser.logger = logger;
     CTranslationUnit unit;
     err = parser.parse(&unit);
     if (err) return 1;
-
-    // Dump type tables if debug_types is enabled
-    if (flags.debug_types) {
-        import core.stdc.stdio : fprintf, stderr;
-        fprintf(stderr, "\n=== Type Tables ===\n");
-        parser.dump_type_tables();
-    }
 
     // Print AST if requested
     if (flags.print_ast) {
@@ -184,7 +180,7 @@ int compile_c_to_dasm(const(ubyte)[] source, Box!(char[])* progtext, str source_
 
     // Generate DASM
     StringBuilder sb = { allocator: progtext.allocator };
-    CDasmWriter writer = CDasmWriter(&sb, arena.allocator());
+    CDasmWriter writer = CDasmWriter(&sb, arena.allocator(), logger);
     err = writer.generate(&unit);
     writer.cleanup();
     if (err) {
