@@ -15,6 +15,8 @@ enum AllocatorKind {
     FIXED  = 5,
 }
 struct Allocator {
+    // Bit-pack the pointer + kind into a single word.
+    // Allocators must be 8-byte aligned.
     static assert(size_t.sizeof == (void*).sizeof);
     size_t _p;
     pragma(inline, true) AllocatorKind kind() const{ return cast(AllocatorKind)(_p & 0x7); }

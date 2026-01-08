@@ -78,13 +78,14 @@ read_file(const char* filepath, Allocator a = MALLOCATOR, FileFlags flags = File
     }
     else version(Windows){
         HANDLE handle = CreateFileA(
-                cast(char*)filepath,
-                GENERIC_READ,
-                FILE_SHARE_READ,
-                null,
-                OPEN_EXISTING,
-                FILE_ATTRIBUTE_NORMAL,
-                null);
+            cast(char*)filepath,
+            GENERIC_READ,
+            FILE_SHARE_READ,
+            null,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            null
+        );
         if(handle == INVALID_HANDLE_VALUE){
             result.errored = GetLastError();
             return result;
@@ -128,14 +129,14 @@ int
 write_file(const void[] data, const char* filepath, FileFlags flags = FileFlags.NONE){
     version(Windows){
         HANDLE handle = CreateFileA(
-                cast(char*)filepath,
-                GENERIC_WRITE,
-                0,
-                NULL,
-                CREATE_ALWAYS,
-                FILE_ATTRIBUTE_NORMAL,
-                NULL
-                );
+            cast(char*)filepath,
+            GENERIC_WRITE,
+            0,
+            NULL,
+            CREATE_ALWAYS,
+            FILE_ATTRIBUTE_NORMAL,
+            NULL
+        );
         if(handle == INVALID_HANDLE_VALUE)
             return GetLastError();
         scope(exit) CloseHandle(handle);
@@ -159,9 +160,9 @@ write_file(const void[] data, const char* filepath, FileFlags flags = FileFlags.
     }
     else version(Posix){
         int fd = open(
-                filepath,
-                O_WRONLY | O_CREAT | O_TRUNC,
-                S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+            filepath,
+            O_WRONLY | O_CREAT | O_TRUNC,
+            S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
         if(fd < 0)
             return errno;
         scope(exit) close(fd);
@@ -190,13 +191,14 @@ long get_file_size(const char* filepath){
     }
     else version(Windows){
         HANDLE handle = CreateFileA(
-                cast(char*)filepath,
-                GENERIC_READ,
-                FILE_SHARE_READ,
-                null,
-                OPEN_EXISTING,
-                FILE_ATTRIBUTE_NORMAL,
-                null);
+            cast(char*)filepath,
+            GENERIC_READ,
+            FILE_SHARE_READ,
+            null,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            null
+        );
         if(handle == INVALID_HANDLE_VALUE) return -1;
         scope(exit) CloseHandle(handle);
         LARGE_INTEGER li_size;
