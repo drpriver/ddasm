@@ -34,7 +34,7 @@ def main():
 
     # Run C tests (compile and execute)
     print("Running C tests...")
-    print("=========================")
+    print("=" * 25)
     print()
 
     test_files = sorted(script_dir.glob('*.c'))
@@ -72,7 +72,7 @@ def main():
     # Run DASM tests
     print()
     print("Running DASM tests...")
-    print("=========================")
+    print("=" * 25)
     print()
 
     dasm_files = sorted(script_dir.glob('*.dasm'))
@@ -126,7 +126,7 @@ def main():
                 fail_count += 1
 
     print()
-    print("=========================")
+    print("=" * 25)
     print(f"Results: {GREEN}{pass_count} passed{NC}, {RED if fail_count else ''}{fail_count} failed{NC}, {YELLOW}{skip_count} skipped{NC}")
 
     sys.exit(bool(fail_count))

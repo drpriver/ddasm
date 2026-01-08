@@ -11,6 +11,12 @@ import tempfile
 import os
 import sys
 
+# Colors for terminal output
+RED = '\033[0;31m'
+GREEN = '\033[0;32m'
+YELLOW = '\033[0;33m'
+NC = '\033[0m'  # No Color
+
 # Basic C types
 BASIC_TYPES = [
     "char",
@@ -270,17 +276,16 @@ def compare_results(gcc_results, ddasm_results):
 
 def test_basic_types():
     """Test basic C types."""
-    print("Testing basic C types...")
     code = generate_size_align_code([], BASIC_TYPES)
 
     gcc_out, gcc_err = compile_and_run_gcc(code)
     if gcc_err:
-        print(f"  SKIP: gcc failed: {gcc_err}")
+        print(f"{YELLOW}SKIP{NC}: basic C types (gcc failed: {gcc_err})")
         return 0, 1
 
     ddasm_out, ddasm_err = compile_and_run_ddasm(code)
     if ddasm_err:
-        print(f"  FAIL: ddasm failed: {ddasm_err}")
+        print(f"{RED}FAIL{NC}: basic C types (ddasm failed: {ddasm_err})")
         return 0, 1
 
     gcc_results = parse_output(gcc_out)
@@ -288,28 +293,27 @@ def test_basic_types():
     diffs = compare_results(gcc_results, ddasm_results)
 
     if diffs:
-        print("  FAIL: Differences found:")
+        print(f"{RED}FAIL{NC}: basic C types")
         for d in diffs:
-            print(d)
+            print(f"      {d}")
         return 0, 1
     else:
-        print(f"  PASS: {len(gcc_results)} measurements match")
+        print(f"{GREEN}PASS{NC}: basic C types ({len(gcc_results)} measurements)")
         return 1, 0
 
 
 def test_header_types(header, types, name, feature_macro=None):
     """Test types from a specific header."""
-    print(f"Testing {name}...")
     code = generate_size_align_code([header], types, feature_macro)
 
     gcc_out, gcc_err = compile_and_run_gcc(code)
     if gcc_err:
-        print(f"  SKIP: gcc failed: {gcc_err}")
+        print(f"{YELLOW}SKIP{NC}: {name} (gcc failed: {gcc_err})")
         return 0, 0, 1
 
     ddasm_out, ddasm_err = compile_and_run_ddasm(code)
     if ddasm_err:
-        print(f"  FAIL: ddasm failed: {ddasm_err}")
+        print(f"{RED}FAIL{NC}: {name} (ddasm failed: {ddasm_err})")
         return 0, 1, 0
 
     gcc_results = parse_output(gcc_out)
@@ -317,29 +321,28 @@ def test_header_types(header, types, name, feature_macro=None):
     diffs = compare_results(gcc_results, ddasm_results)
 
     if diffs:
-        print("  FAIL: Differences found:")
+        print(f"{RED}FAIL{NC}: {name}")
         for d in diffs:
-            print(d)
+            print(f"      {d}")
         return 0, 1, 0
     else:
-        print(f"  PASS: {len(gcc_results)} measurements match")
+        print(f"{GREEN}PASS{NC}: {name} ({len(gcc_results)} measurements)")
         return 1, 0, 0
 
 
 def test_struct_offsets(header, struct_type, members, feature_macro=None):
     """Test offsetof for struct members."""
     safe_name = struct_type.replace(' ', '_')
-    print(f"Testing {safe_name} offsets...")
     code = generate_offsetof_code(header, struct_type, members, feature_macro)
 
     gcc_out, gcc_err = compile_and_run_gcc(code)
     if gcc_err:
-        print(f"  SKIP: gcc failed: {gcc_err}")
+        print(f"{YELLOW}SKIP{NC}: {safe_name} offsets (gcc failed: {gcc_err})")
         return 0, 0, 1
 
     ddasm_out, ddasm_err = compile_and_run_ddasm(code)
     if ddasm_err:
-        print(f"  FAIL: ddasm failed: {ddasm_err}")
+        print(f"{RED}FAIL{NC}: {safe_name} offsets (ddasm failed: {ddasm_err})")
         return 0, 1, 0
 
     gcc_results = parse_output(gcc_out)
@@ -347,19 +350,18 @@ def test_struct_offsets(header, struct_type, members, feature_macro=None):
     diffs = compare_results(gcc_results, ddasm_results)
 
     if diffs:
-        print("  FAIL: Differences found:")
+        print(f"{RED}FAIL{NC}: {safe_name} offsets")
         for d in diffs:
-            print(d)
+            print(f"      {d}")
         return 0, 1, 0
     else:
-        print(f"  PASS: {len(gcc_results)} measurements match")
+        print(f"{GREEN}PASS{NC}: {safe_name} offsets ({len(gcc_results)} measurements)")
         return 1, 0, 0
 
 
 def main():
-    print("=" * 60)
-    print("ABI Compatibility Test Suite")
-    print("=" * 60)
+    print("Running ABI compatibility tests...")
+    print("=" * 25)
     print()
 
     total_pass = 0
@@ -370,7 +372,6 @@ def main():
     p, f = test_basic_types()
     total_pass += p
     total_fail += f
-    print()
 
     # Group header types by category
     categories = {}
@@ -381,38 +382,31 @@ def main():
 
     # Test header types by category
     for category, items in categories.items():
-        print(f"=== {category} Types ===")
         for header, types, skip in items:
             if skip:
-                print(f"Testing <{header}> types...")
-                print(f"  SKIP: marked as skipped")
+                print(f"{YELLOW}SKIP{NC}: <{header}> types (marked as skipped)")
                 total_skip += 1
             else:
                 p, f, s = test_header_types(header, types, f"<{header}> types")
                 total_pass += p
                 total_fail += f
                 total_skip += s
-        print()
 
     # Test struct offsets
-    print("=== Struct Member Offsets ===")
     for header, struct_type, members, skip in STRUCT_OFFSET_TYPES:
         if skip:
             safe_name = struct_type.replace(' ', '_')
-            print(f"Testing {safe_name} offsets...")
-            print(f"  SKIP: marked as skipped")
+            print(f"{YELLOW}SKIP{NC}: {safe_name} offsets (marked as skipped)")
             total_skip += 1
         else:
             p, f, s = test_struct_offsets(header, struct_type, members)
             total_pass += p
             total_fail += f
             total_skip += s
-    print()
 
-    # Summary
-    print("=" * 60)
-    print(f"Results: {total_pass} passed, {total_fail} failed, {total_skip} skipped")
-    print("=" * 60)
+    print()
+    print("=" * 25)
+    print(f"Results: {GREEN}{total_pass} passed{NC}, {RED if total_fail else ''}{total_fail} failed{NC}, {YELLOW}{total_skip} skipped{NC}")
 
     return 0 if total_fail == 0 else 1
 
