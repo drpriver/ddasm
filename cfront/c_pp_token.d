@@ -40,11 +40,7 @@ struct PPToken {
 
     // Check if this token matches a string
     bool matches(str s) const {
-        if(lexeme.length != s.length) return false;
-        for(size_t i = 0; i < lexeme.length; i++){
-            if(lexeme[i] != s[i]) return false;
-        }
-        return true;
+        return lexeme == s;
     }
 
     // Check if this is a specific punctuator

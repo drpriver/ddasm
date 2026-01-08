@@ -859,7 +859,7 @@ struct CPreprocessor {
     // Report error
     void error(A...)(A msg){
         error_occurred = true;
-        logger.error(current_file, ':', directive_line, ": Preprocessor error: ", current_file, directive_line, msg, '\n');
+        logger.error(current_file, ':', directive_line, ": Preprocessor error: ", msg, '\n');
     }
 
     void error_at(A...)(PPToken tok, A msg){
@@ -950,6 +950,47 @@ struct CPreprocessor {
                     // Expand to temp buffer, then process for builtins
                     Barray!PPToken expanded = make_barray!PPToken(allocator);
                     i = expand_macro_invocation(input, i, macro_def, hs, &expanded);
+
+                    // Check if expanded ends with function-like macro that should
+                    // combine with ( from remaining input (indirect macro call)
+                    while(expanded.count > 0 && i < input.length){
+                        PPToken last = expanded[][expanded.count - 1];
+                        if(last.type != PPTokenType.PP_IDENTIFIER) break;
+                        PPMacroDef func_macro = get_macro(last);
+                        if(func_macro.is_null || !func_macro.is_function_like) break;
+                        if(hs.is_hidden(last.lexeme)) break;
+                        // Check if next input token (after whitespace) is (
+                        size_t j = i;
+                        while(j < input.length && input[j].type == PPTokenType.PP_WHITESPACE) j++;
+                        if(j >= input.length || !input[j].is_punct("(")) break;
+                        // Remove last token from expanded
+                        expanded.count = expanded.count - 1;
+                        // Create a fake token array starting with the identifier
+                        // We need to invoke expand_macro_invocation starting at j-1
+                        // but the identifier is in `last`, not in input[j-1]
+                        // So we build a combined sequence and call expand_macro_invocation
+                        Barray!PPToken combined = make_barray!PPToken(allocator);
+                        combined ~= last;
+                        // Copy tokens from ( onwards until we find matching )
+                        j++;  // skip (
+                        int depth = 1;
+                        combined ~= input[j-1];  // add the (
+                        while(j < input.length && depth > 0){
+                            if(input[j].is_punct("(")) depth++;
+                            else if(input[j].is_punct(")")) depth--;
+                            combined ~= input[j];
+                            j++;
+                        }
+                        // Expand the function macro
+                        Barray!PPToken func_expanded = make_barray!PPToken(allocator);
+                        expand_macro_invocation(combined[], 0, func_macro, hs, &func_expanded);
+                        // Append to expanded
+                        foreach(ref et; func_expanded[])
+                            expanded ~= et;
+                        // Update i to skip the consumed tokens
+                        i = j;
+                    }
+
                     // Pass hide set with macro name to prevent re-expansion of hidden macros
                     expand_tokens(expanded[], output, hs.with_hidden(macro_def.name));
                     continue;
@@ -962,18 +1003,6 @@ struct CPreprocessor {
         }
 
         return 0;
-    }
-
-    // Check if we're at the start of a line (only whitespace before this point on the line)
-    bool is_at_line_start(PPToken[] tokens, size_t pos){
-        if(pos == 0) return true;
-        // Walk backwards to see if there's only whitespace since last newline
-        for(size_t j = pos; j > 0; j--){
-            PPToken prev = tokens[j - 1];
-            if(prev.type == PPTokenType.PP_NEWLINE) return true;
-            if(prev.type != PPTokenType.PP_WHITESPACE) return false;
-        }
-        return true;  // Start of file
     }
 
     // Check if current token is #
@@ -2631,10 +2660,40 @@ struct CPreprocessor {
                         i++;
                         continue;
                     }
-                    // Expand object-like macro and recursively process
+                    // Expand object-like macro to temporary buffer
                     i++;
                     HideSet new_hs = hs.with_hidden(macro_def.name);
-                    expand_tokens(macro_def.replacement, output, new_hs, for_if);
+                    Barray!PPToken expanded = make_barray!PPToken(allocator);
+                    expand_tokens(macro_def.replacement, &expanded, new_hs, for_if);
+
+                    // Check if expansion ends with a function-like macro name
+                    // that should combine with ( from the remaining input
+                    if(expanded.count > 0 && i < tokens.length){
+                        PPToken last = expanded[][expanded.count - 1];
+                        if(last.type == PPTokenType.PP_IDENTIFIER){
+                            PPMacroDef func_macro = get_macro(last);
+                            if(!func_macro.is_null && func_macro.is_function_like && !new_hs.is_hidden(last.lexeme)){
+                                // Check if next input token (after whitespace) is (
+                                size_t j = i;
+                                while(j < tokens.length && tokens[j].type == PPTokenType.PP_WHITESPACE) j++;
+                                if(j < tokens.length && tokens[j].is_punct("(")){
+                                    // Output all expanded tokens except the last identifier
+                                    foreach(k; 0 .. expanded.count - 1)
+                                        *output ~= expanded[][k];
+                                    // Combine last identifier with remaining input and process
+                                    Barray!PPToken to_process = make_barray!PPToken(allocator);
+                                    to_process ~= last;
+                                    foreach(k; i .. tokens.length)
+                                        to_process ~= tokens[k];
+                                    expand_tokens(to_process[], output, new_hs, for_if);
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    // No function macro combination needed, output expanded tokens
+                    foreach(et; expanded[])
+                        *output ~= et;
                     continue;
                 }
                 // Handle function-like macros
@@ -2652,10 +2711,10 @@ struct CPreprocessor {
                     if(j < tokens.length && tokens[j].is_punct("(")){
                         // Expand the macro to a temporary buffer
                         Barray!PPToken expanded = make_barray!PPToken(allocator);
-                        HideSet new_hs = hs.with_hidden(macro_def.name);
-                        i = expand_macro_invocation(tokens, i, macro_def, new_hs, &expanded);
-                        // Recursively process the expanded tokens (pass the updated hide set)
-                        expand_tokens(expanded[], output, new_hs, for_if);
+                        // Pass original hs, expand_macro_invocation will add macro internally
+                        i = expand_macro_invocation(tokens, i, macro_def, hs, &expanded);
+                        // Recursively process with hide set including macro
+                        expand_tokens(expanded[], output, hs.with_hidden(macro_def.name), for_if);
                         continue;
                     }
                 }
@@ -2690,7 +2749,11 @@ struct CPreprocessor {
         size_t i = start + 1;  // Skip macro name
         PPToken invocation = tokens[start];  // Where the macro was invoked
 
-        // Add macro to hide set
+        // Save original hide set for argument pre-expansion
+        // (arguments are expanded before substitution, without current macro hidden)
+        HideSet arg_hs = hs;
+
+        // Add macro to hide set for rescanning
         hs = hs.with_hidden(macro_def.name);
 
         if(macro_def.is_function_like){
@@ -2739,7 +2802,7 @@ struct CPreprocessor {
 
             // Substitute and expand
             Barray!PPToken substituted = make_barray!PPToken(allocator);
-            substitute(macro_def, args[], hs, &substituted);
+            substitute(macro_def, args[], arg_hs, &substituted);
 
             // Log if this macro is being watched for expand
             if(auto p = macro_def.name in watched_macros){ if(*p & WatchFlags.EXPAND){
