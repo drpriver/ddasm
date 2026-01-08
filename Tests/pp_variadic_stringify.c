@@ -9,7 +9,7 @@ const char* msg = CODE(
 );
 #ifdef __DDASM__
 // EXTENSION
-__EXPAND__(CODE(
+__MIXIN__(CODE(
     int foo(int a, int b){ 
         printf("%s\n", __func__);
         return a + b;

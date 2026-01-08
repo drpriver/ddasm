@@ -555,16 +555,16 @@ struct CPreprocessor {
         return PPMacroDef(tok.lexeme, box[], is_builtin:true);
     }
 
-    // Handle __EXPAND__(string-literal) - destringify and tokenize
-    size_t handle_expand_builtin(PPToken[] tokens, size_t start, Barray!PPToken* output){
-        size_t i = start + 1;  // Skip __EXPAND__
+    // Handle __MIXIN__(string-literal) - destringify and tokenize
+    size_t handle_mixin_builtin(PPToken[] tokens, size_t start, Barray!PPToken* output){
+        size_t i = start + 1;  // Skip __MIXIN__
 
         // Skip whitespace
         i = skip_ws(tokens, i);
 
         // Expect (
         if(i >= tokens.length || !tokens[i].is_punct("(")){
-            error("__EXPAND__ requires parentheses");
+            error("__MIXIN__ requires parentheses");
             return start + 1;
         }
         i++;
@@ -926,9 +926,9 @@ struct CPreprocessor {
 
             // Handle identifiers - check for macro expansion
             if(tok.type == PPTokenType.PP_IDENTIFIER){
-                // Handle __EXPAND__(string-literal) - destringify
-                if(tok.lexeme == "__EXPAND__"){
-                    i = handle_expand_builtin(input, i, output);
+                // Handle __MIXIN__(string-literal) - destringify
+                if(tok.lexeme == "__MIXIN__"){
+                    i = handle_mixin_builtin(input, i, output);
                     continue;
                 }
 
@@ -2493,9 +2493,9 @@ struct CPreprocessor {
                 continue;
             }
 
-            // Handle __EXPAND__ in #if context
-            if(tok.type == PPTokenType.PP_IDENTIFIER && tok.matches("__EXPAND__")){
-                i = handle_expand_builtin(tokens, i, output);
+            // Handle __MIXIN__ in #if context
+            if(tok.type == PPTokenType.PP_IDENTIFIER && tok.matches("__MIXIN__")){
+                i = handle_mixin_builtin(tokens, i, output);
                 continue;
             }
 

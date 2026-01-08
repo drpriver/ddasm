@@ -1,8 +1,8 @@
 #pragma library("libc")
 #include <stdio.h>
 // Shows off fun macros
-#define CODE __EXPAND__(__ENV__("CODE"))
-#define DEBUG __EXPAND__(__ENV__("DEBUG"))
+#define CODE __MIXIN__(__ENV__("CODE"))
+#define DEBUG __MIXIN__(__ENV__("DEBUG"))
 #define PWD __ENV__("PWD")
 int main(){
     // If CODE is not set, this will convert to ("hello");

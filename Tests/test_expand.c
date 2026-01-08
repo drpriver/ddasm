@@ -1,26 +1,26 @@
-// Test __EXPAND__
+// Test __MIXIN__
 
 // Basic expansion
-int x = __EXPAND__("1 + 2");
+int x = __MIXIN__("1 + 2");
 
 // Expand identifier
-__EXPAND__("int y = 42;")
+__MIXIN__("int y = 42;")
 
 // Expand from macro
 #define CODE "int z = 100;"
-__EXPAND__(CODE)
+__MIXIN__(CODE)
 
 // Use in expression
-int sum = __EXPAND__("10") + __EXPAND__("20");
+int sum = __MIXIN__("10") + __MIXIN__("20");
 
 // Test in #if
 #define DEBUG_VAL "1"
-#if __EXPAND__(DEBUG_VAL)
+#if __MIXIN__(DEBUG_VAL)
 int debug_enabled = 1;
 #endif
 
 #define ZERO "0"
-#if __EXPAND__(ZERO)
+#if __MIXIN__(ZERO)
 int should_not_appear = 1;
 #endif
 

@@ -390,7 +390,7 @@ Beyond the standard `__FILE__` and `__LINE__`, the preprocessor supports:
 | `__DIR__` | Directory of current file |
 | `__RANDOM__` | Random integer (different each expansion) |
 | `__ENV__(NAME)` | Environment variable as string (see below) |
-| `__EXPAND__(str)` | Destringify string into tokens (see below) |
+| `__MIXIN__(str)` | Destringify string into tokens (see below) |
 
 Example:
 ```c
@@ -405,19 +405,19 @@ int bar0 = __COUNTER__(bar);  // 0
 int foo1 = __COUNTER__(foo);  // 1
 ```
 
-#### `__EXPAND__(string-literal)`
+#### `__MIXIN__(string-literal)`
 
 Destringifies a string literal into preprocessor tokens - the inverse of `#` stringification.
 
 ```c
-int x = __EXPAND__("1 + 2");  // → int x = 1 + 2;
+int x = __MIXIN__("1 + 2");  // → int x = 1 + 2;
 
 #define CODE "int y = 42;"
-__EXPAND__(CODE)              // → int y = 42;
+__MIXIN__(CODE)              // → int y = 42;
 
 // Works in #if too:
 #define DEBUG "1"
-#if __EXPAND__(DEBUG)
+#if __MIXIN__(DEBUG)
 // ...
 #endif
 ```
@@ -435,16 +435,16 @@ const char* missing = __ENV__(NOTSET);      // → "" (empty string)
 const char* safe = __ENV__(NOTSET, "fallback");  // → "fallback"
 ```
 
-Combine with `__EXPAND__` for conditional compilation based on environment:
+Combine with `__MIXIN__` for conditional compilation based on environment:
 
 ```c
 #define BUILD_TYPE __ENV__(BUILD, "release")
-#if __EXPAND__(BUILD_TYPE) == release
+#if __MIXIN__(BUILD_TYPE) == release
 // release build
 #endif
 
 // Or use numeric env vars:
-#if __EXPAND__(__ENV__(DEBUG, "0"))
+#if __MIXIN__(__ENV__(DEBUG, "0"))
 int debug_mode = 1;
 #endif
 ```
