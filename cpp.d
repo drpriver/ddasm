@@ -8,7 +8,7 @@ static import core.stdc.string;
 import dlib.aliases;
 import dlib.allocator : Mallocator, Allocator, MALLOCATOR;
 import dlib.barray : Barray, make_barray;
-import dlib.file_util : read_file, FileResult, FileFlags;
+import dlib.file_cache: FileCache, FileError;
 import dlib.zstring : ZString;
 import dlib.term_util : get_cols;
 import dlib.logger;
@@ -20,6 +20,7 @@ import cfront.c_preprocessor : CPreprocessor;
 import cfront.cfront : DEFAULT_INCLUDE_PATHS, DEFAULT_FRAMEWORK_PATHS;
 
 extern(C) int main(int argc, char** argv) {
+    FileCache file_cache = FileCache(MALLOCATOR);
     Logger logger;
     ZString sourcefile;
     Barray!str include_paths;
@@ -112,13 +113,12 @@ extern(C) int main(int argc, char** argv) {
     Allocator alloc = Mallocator.allocator();
 
     // Read input file
-    FileResult fr = read_file(sourcefile.ptr, alloc, FileFlags.NUL_TERMINATE | FileFlags.ZERO_PAD_TO_16);
-    if (fr.errored) {
-        fprintf(stderr, "Error reading file: %s\n", sourcefile.ptr);
+    const(ubyte)[] source;
+    FileError fe = file_cache.read_file(sourcefile[], source);
+    if(fe != FileError.OK){
+        logger.error("Error reading file: ", sourcefile, "\n");
         return 1;
     }
-
-    const(ubyte)[] source = cast(const(ubyte)[])fr.value.data;
 
     // Find actual content length
     size_t actual_len = 0;
@@ -143,6 +143,7 @@ extern(C) int main(int argc, char** argv) {
     pp.framework_paths = framework_paths[];
     pp.force_includes = force_includes[];
     pp.logger = &logger;
+    pp.file_cache = &file_cache;
     pp.initialize();
 
     Barray!PPToken output = make_barray!PPToken(alloc);

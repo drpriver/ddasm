@@ -14,9 +14,8 @@ import dlib.zstring : ZString;
 static import dlib.argparse;
 import dlib.term_util : stdin_is_interactive, get_cols;
 import dlib.get_input : LineHistory, get_input_line;
-import dlib.file_util : read_file, FileFlags;
 import dlib.aliases : str;
-import dlib.file_cache: FileCache;
+import dlib.file_cache: FileCache, FileError;
 import cfront.cfront : DEFAULT_INCLUDE_PATHS, DEFAULT_FRAMEWORK_PATHS, CompileFlags;
 
 static import core.stdc.string;
@@ -125,18 +124,12 @@ int main(int argc, char** argv) {
             return error;
         }
     }
-    Box!(const(ubyte)[]) bscript;
-    scope(exit) bscript.dealloc;
+    const(ubyte)[] script;
     if (sourcefile.length) {
-        auto fe = read_file(sourcefile.ptr, MALLOCATOR, FileFlags.NUL_TERMINATE | FileFlags.ZERO_PAD_TO_16);
-        if (fe.errored) {
-            version(Windows)
-                fprintf(stderr, "Unable to read from '%s'\n", sourcefile.ptr);
-            else
-                fprintf(stderr, "Unable to read from '%s': %s\n", sourcefile.ptr, core.stdc.string.strerror(fe.errored));
-            return fe.errored;
+        FileError fe = file_cache.read_file(sourcefile[], script);
+        if(fe != FileError.OK){
+            logger.error("Unable to read from '", sourcefile, "'\n");
         }
-        bscript = fe.value.as!(const(ubyte)[]);
     }
     else if (force_interactive || stdin_is_interactive) {
         StringBuilder sb = {
@@ -160,7 +153,7 @@ int main(int argc, char** argv) {
             }
             sb.write('\n');
         }
-        bscript = sb.detach.as!(const(ubyte)[]);
+        script = sb.detach.as!(const(ubyte)[])[];
     }
     else {
         StringBuilder sb = { allocator: Mallocator.allocator() };
@@ -175,7 +168,7 @@ int main(int argc, char** argv) {
         }
         if (!sb.cursor)
             sb.write(' ');
-        bscript = sb.detach.as!(const(ubyte)[]);
+        script = sb.detach.as!(const(ubyte)[])[];
     }
 
     // Add default paths after user-specified ones
@@ -189,7 +182,7 @@ int main(int argc, char** argv) {
         pp_only: pp_only,
         print_ast: print_ast,
     };
-    int err = cfront.cfront.compile_c_to_dasm(bscript.data, &progtext, sourcefile[], include_paths[], framework_paths[], flags, force_includes[], &logger, &file_cache);
+    int err = cfront.cfront.compile_c_to_dasm(script, &progtext, sourcefile[], include_paths[], framework_paths[], flags, force_includes[], &logger, &file_cache);
     if (err) return err;
     // Don't print progtext for flags that don't produce code
     if (!syntax_only && !pp_only && !print_ast)

@@ -12,7 +12,6 @@ import dlib.allocator : Allocator;
 import dlib.barray : Barray, make_barray;
 import dlib.table : Table;
 import dlib.stringbuilder : StringBuilder, mwritef, E, Pad;
-import dlib.file_util : FileFlags;
 import dlib.box: Box, boxed;
 import dlib.logger;
 import dlib.file_cache : FileCache, FileError;
