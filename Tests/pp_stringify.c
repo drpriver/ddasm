@@ -1,5 +1,17 @@
 // Stringification edge cases
-
+#pragma library("libc")
+int strcmp(const char*, const char*);
+#ifdef __DDASM__
+#define FAIL(cond) __dasm {\
+    msg __FILE__ ":" XSTR(__LINE__) ":" #cond " failed"; \
+    dump; \
+    abort; \
+}
+#else
+void abort(void);
+#define FAIL(cond) abort()
+#endif
+#define assert(cond) if(!(cond)) {FAIL(cond);}
 #define STR(x) #x
 #define XSTR(x) STR(x)
 
@@ -18,8 +30,8 @@ char *d = STR(1 + 2);  // "1 + 2"
 // Stringify with quotes inside (should escape)
 char *e = STR(say "hello");  // "say \"hello\""
 
-// Stringify with backslashes (should escape)
-char *f = STR(path\to\file);  // "path\\to\\file"
+// Stringify with backslashes (not escaped - only quotes/backslashes in strings are)
+char *f = STR(path\to\file);  // "path\to\file"
 
 // Stringify macro argument that would expand
 #define VALUE 42
@@ -47,8 +59,9 @@ char *m = STR(CALL(func, 1));  // "CALL(func, 1)"
 #define DSTR(x) STR(STR(x))
 char *n = DSTR(test);  // "STR(test)"
 
-// Stringify with comma
-char *o = STR(a, b, c);  // "a, b, c"
+// Stringify with comma (needs variadic)
+#define STRV(...) #__VA_ARGS__
+char *o = STRV(a, b, c);  // "a, b, c"
 
 // Stringify special characters
 char *p = STR(!@#$%);  // "!@#$%"
@@ -56,4 +69,23 @@ char *p = STR(!@#$%);  // "!@#$%"
 // Stringify with ## in argument
 char *q = STR(a ## b);  // "a ## b"
 
-int main(){ return 0; }
+int main(){ 
+    assert(strcmp(a, "hello") == 0);
+    assert(strcmp(b, "hello world") == 0);
+    assert(strcmp(c, "123") == 0);
+    assert(strcmp(d, "1 + 2") == 0);
+    assert(strcmp(e, "say \"hello\"") == 0);
+    assert(strcmp(f, "path\to\file") == 0);
+    assert(strcmp(g, "VALUE") == 0);
+    assert(strcmp(h, "42") == 0);
+    assert(strcmp(i, "") == 0);
+    assert(strcmp(j, "a b") == 0);
+    assert(strcmp(k, "a + b * c") == 0);
+    assert(strcmp(l, "(a)(b)(c)") == 0);
+    assert(strcmp(m, "CALL(func, 1)") == 0);
+    assert(strcmp(n, "STR(test)") == 0);
+    assert(strcmp(o, "a, b, c") == 0);
+    assert(strcmp(p, "!@#$%") == 0);
+    assert(strcmp(q, "a ## b") == 0);
+    return 0; 
+}
