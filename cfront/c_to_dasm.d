@@ -3340,8 +3340,20 @@ struct CDasmWriter {
                 used_funcs[name] = true;  // Track for dlimport
                 str* func_alias = name in extern_funcs;
                 if(func_alias is null){
-                    error(expr.expr.token, "Extern function not found in module alias table");
-                    return -1;
+                    if(CFunction** f = name in func_info){
+                        if((*f).is_definition){
+                            sb.writef("    move r% function %\n", target, name);
+                            return 0;
+                        }
+                        else {
+                            error(expr.expr.token, "Extern function not found in alias table");
+                            return 1;
+                        }
+                    }
+                    else {
+                        error(expr.expr.token, "Extern function not found in module alias table");
+                        return -1;
+                    }
                 }
                 sb.writef("    move r% function %.%\n", target, *func_alias, name);
                 return 0;
