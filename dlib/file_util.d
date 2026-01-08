@@ -8,6 +8,7 @@ import dlib.allocator: MALLOCATOR, Allocator;
 
 struct FileResult {
     Box!(void[]) value;
+    size_t size;  // Actual file size (before padding)
     int errored;
     pragma(inline, true)
     Box!(void[]) unwrap(){
@@ -74,6 +75,7 @@ read_file(const char* filepath, Allocator a = MALLOCATOR, FileFlags flags = File
         }
         if(size != real_size)
             memset(result.value.data.ptr+real_size, 0, size-real_size);
+        result.size = real_size;
         return result;
     }
     else version(Windows){
@@ -117,6 +119,7 @@ read_file(const char* filepath, Allocator a = MALLOCATOR, FileFlags flags = File
         }
         if(size != real_size)
             memset(result.value.data.ptr+real_size, 0, size-real_size);
+        result.size = real_size;
         return result;
     }
     else {

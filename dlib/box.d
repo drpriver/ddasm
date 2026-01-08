@@ -112,6 +112,19 @@ struct Box(T){
             }
         }
         inout(U)[] opIndex() inout {return data;}
+        size_t opDollar(){ return data.length; }
+        static if(!isVoid)
+            ref inout(U) opIndex(size_t i) inout{
+                return data[i];
+            }
+        inout(U)[]
+        opSlice(size_t dim:0)(size_t start, size_t end) inout{
+            return data[start .. end];
+        }
+        inout(U)[]
+        opIndex()(inout(U)[] slice) inout{
+            return slice;
+        }
     }
 }
 

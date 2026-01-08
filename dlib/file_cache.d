@@ -84,11 +84,11 @@ struct FileCache {
                 f.flags |= CachedFlags.UNREADABLE;
                 return FileError.FAIL;
             }
-            const(ubyte)[] file_data = fr.value.as!(ubyte[])[];
+            const(ubyte)[] file_data = fr.value.as!(ubyte[])[0..fr.size];
             f.data = file_data;
-            data = skip_bom?strip_bom(file_data):file_data;
+            f.size = fr.size;
             f.flags |= CachedFlags.DATA_CACHED | CachedFlags.EXISTS | CachedFlags.SIZE_CACHED;
-            f.size = file_data.length;
+            data = skip_bom ? strip_bom(file_data) : file_data;
             return FileError.OK;
         }
 
@@ -99,9 +99,8 @@ struct FileCache {
             cache[key] = CachedFile(flags:CachedFlags.UNREADABLE);
             return FileError.FAIL;
         }
-        const(ubyte)[] file_data = fr.value.as!(ubyte[])[];
-        size_t file_size = fr.value.data.length;
-        cache[key] = CachedFile(data:file_data, size:file_size, flags:CachedFlags.DATA_CACHED | CachedFlags.SIZE_CACHED | CachedFlags.EXISTS);
+        const(ubyte)[] file_data = fr.value.as!(ubyte[])[0..fr.size];
+        cache[key] = CachedFile(data:file_data, size:fr.size, flags:CachedFlags.DATA_CACHED | CachedFlags.SIZE_CACHED | CachedFlags.EXISTS);
         data = skip_bom ? strip_bom(file_data) : file_data;
         return FileError.OK;
     }
@@ -170,10 +169,11 @@ struct FileCache {
 
     // Copy a key string using allocator.
     private str cache_key(str key){
+        import core.stdc.string : memcpy;
         if(str* k = key in cached_keys)
             return *k;
         char[] copy = allocator.alloc!(char)(key.length+1);
-        copy[0..key.length] = key[];
+        memcpy(copy.ptr, key.ptr, key.length);
         copy[key.length] = '\0';
         str result = copy[0..key.length];
         cached_keys[result] = result;

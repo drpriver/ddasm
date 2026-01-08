@@ -10,6 +10,7 @@ import dlib.box : Box;
 import dlib.stringbuilder : StringBuilder;
 import dlib.barray : Barray, make_barray;
 import dlib.logger;
+import dlib.file_cache : FileCache;
 
 import cfront.c_pp_token : PPToken;
 import cfront.c_pp_lexer : pp_tokenize;
@@ -83,9 +84,14 @@ version(OSX) {
     ];
 }
 
-int compile_c_to_dasm(const(ubyte)[] source, Box!(char[])* progtext, str source_file, str[] include_paths, str[] framework_paths, CompileFlags flags, str[] force_includes, Logger* logger){
+int compile_c_to_dasm(const(ubyte)[] source, Box!(char[])* progtext, str source_file, str[] include_paths, str[] framework_paths, CompileFlags flags, str[] force_includes, Logger* logger, FileCache* file_cache = null){
     ArenaAllocator arena = ArenaAllocator(MALLOCATOR);
     scope(exit) arena.free_all();
+
+    // Create file cache if not provided
+    FileCache local_cache = FileCache(arena.allocator());
+    if(file_cache is null)
+        file_cache = &local_cache;
 
     // Find actual content length (before NUL terminator, if any)
     size_t actual_len = source.length;
@@ -110,6 +116,7 @@ int compile_c_to_dasm(const(ubyte)[] source, Box!(char[])* progtext, str source_
     preprocessor.framework_paths = framework_paths;
     preprocessor.force_includes = force_includes;
     preprocessor.logger = logger;
+    preprocessor.file_cache = file_cache;
     preprocessor.initialize();
     err = preprocessor.process(pp_tokens[], &processed);
     if (err) return 1;

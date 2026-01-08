@@ -12,15 +12,17 @@ import dlib.allocator : Allocator;
 import dlib.barray : Barray, make_barray;
 import dlib.table : Table;
 import dlib.stringbuilder : StringBuilder, mwritef, E, Pad;
-import dlib.file_util : read_file, FileResult, FileFlags, get_file_size, file_exists;
+import dlib.file_util : FileFlags;
 import dlib.box: Box, boxed;
 import dlib.logger;
+import dlib.file_cache : FileCache, FileError;
 import cfront.c_pp_token;
 import cfront.c_pp_lexer : pp_tokenize;
 
 struct CPreprocessor {
     Allocator allocator;
     Logger* logger;
+    FileCache* file_cache;
 
     // Macro table
     Table!(str, PPMacroDef) macros;
@@ -1361,25 +1363,11 @@ struct CPreprocessor {
     // Process a forced include file (like -include flag)
     void process_force_include(str filename, Barray!PPToken* output){
         // Read file
-        StringBuilder path_buf;
-        path_buf.allocator = allocator;
-        path_buf.write(filename);
-        path_buf.nul_terminate();
-
-        FileResult fr = read_file(path_buf.borrow().ptr, allocator, FileFlags.NUL_TERMINATE | FileFlags.ZERO_PAD_TO_16);
-        if(fr.errored){
+        const(ubyte)[] file_data;
+        if(file_cache.read_file(filename, file_data) != FileError.OK){
             logger.error("-include: error reading '", E(filename), "'\n");
             error_occurred = true;
             return;
-        }
-
-        // Tokenize included file
-        const(ubyte)[] file_data = fr.value.as!(const(ubyte)[]).data;
-        // skip utf-8 bom if present
-        if(file_data.length >= 3 && file_data[0] == 0xef && file_data[1] == 0xbb && file_data[2] == 0xbf)
-            file_data = file_data[3..$];
-        while(file_data.length && file_data[$-1] == 0){
-            file_data = file_data[0..$-1];
         }
 
         Barray!PPToken include_tokens = make_barray!PPToken(allocator);
@@ -1482,26 +1470,16 @@ struct CPreprocessor {
             }
         }
 
-        // Read file - need to null-terminate path for C API
-        StringBuilder path_buf;
-        path_buf.allocator = allocator;
-        path_buf.write(full_path);
-        path_buf.nul_terminate();
-
-        FileResult fr = read_file(path_buf.borrow().ptr, allocator, FileFlags.NUL_TERMINATE | FileFlags.ZERO_PAD_TO_16);
-        if(fr.errored){
+        // Read file
+        const(ubyte)[] file_data;
+        if(file_cache.read_file(full_path, file_data) != FileError.OK){
+            logger.error(current_file, ':', tokens[start].line, ": error: cannot read '", E(full_path), "'\n");
+            error_occurred = true;
             return line_end + 1;
         }
 
-        // Tokenize included file - find actual content length (before NUL terminator)
-        const(ubyte)[] file_data = cast(const(ubyte)[])fr.value.data;
-        size_t actual_len = 0;
-        while(actual_len < file_data.length && file_data[actual_len] != 0){
-            actual_len++;
-        }
-
         Barray!PPToken include_tokens = make_barray!PPToken(allocator);
-        int err = pp_tokenize(file_data[0 .. actual_len], full_path, &include_tokens, allocator);
+        int err = pp_tokenize(file_data, full_path, &include_tokens, allocator);
         if(err){
             return line_end + 1;
         }
@@ -1629,13 +1607,9 @@ struct CPreprocessor {
         return sb.borrow();
     }
 
-    // Check if file exists (uses stat instead of reading the whole file)
+    // Check if file exists (cached)
     bool path_exists(str path){
-        StringBuilder path_buf;
-        path_buf.allocator = allocator;
-        path_buf.write(path);
-        path_buf.nul_terminate();
-        return file_exists(path_buf.borrow().ptr);
+        return file_cache.is_file(path) == FileError.OK;
     }
 
     // Detect include guard pattern: #ifndef GUARD / #define GUARD ... #endif
@@ -2199,12 +2173,8 @@ struct CPreprocessor {
         }
 
         // Get file size
-        StringBuilder path_buf;
-        path_buf.allocator = allocator;
-        path_buf.write(full_path);
-        path_buf.nul_terminate();
-        long file_size = get_file_size(path_buf.borrow().ptr);
-        if(file_size < 0){
+        size_t file_size;
+        if(file_cache.get_size(full_path, file_size) != FileError.OK){
             logger.error(current_file, ":", first_tok.line, ": error: cannot stat '", full_path, "'\n");
             error_occurred = true;
             return;
@@ -2629,13 +2599,8 @@ struct CPreprocessor {
                     str resolved = resolve_include(filename, is_system);
                     if(resolved.length > 0){
                         // File exists - check if empty
-                        StringBuilder path_buf;
-                        path_buf.allocator = allocator;
-                        path_buf.write(resolved);
-                        path_buf.nul_terminate();
-                        long file_size = get_file_size(path_buf.borrow().ptr);
-
-                        if(file_size >= 0){
+                        size_t file_size;
+                        if(file_cache.get_size(resolved, file_size) == FileError.OK){
                             long effective_size = file_size;
                             if(limit_value >= 0 && limit_value < effective_size){
                                 effective_size = limit_value;

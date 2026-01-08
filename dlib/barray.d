@@ -127,16 +127,15 @@ struct Barray(T){
         return count;
     }
 
-    size_t[2]
-    opSlice(size_t start, size_t end) inout{
-        size_t[2] result = [start, end];
-        return result;
+    inout(T)[]
+    opSlice(size_t dim:0)(size_t start, size_t end) inout{
+        return bdata[0..count][start .. end];
+    }
+    inout(T)[]
+    opIndex()(inout(T)[] slice) inout{
+        return slice;
     }
 
-    inout(T)[]
-    opIndex(size_t[2] slice) inout{
-        return bdata.data[0 .. count][slice[0] .. slice[1]];
-    }
 
     static struct _Allocator {
         static if(Allocator.state_size)
