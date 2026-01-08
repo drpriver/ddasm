@@ -552,7 +552,7 @@ struct CPreprocessor {
         size_t i = start + 1;  // Skip __EXPAND__
 
         // Skip whitespace
-        while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+        i = skip_ws(tokens, i);
 
         // Expect (
         if(i >= tokens.length || !tokens[i].is_punct("(")){
@@ -562,7 +562,7 @@ struct CPreprocessor {
         i++;
 
         // Skip whitespace
-        while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+        i = skip_ws(tokens, i);
 
         // Collect argument tokens until )
         Barray!PPToken arg_tokens = make_barray!PPToken(allocator);
@@ -653,7 +653,7 @@ struct CPreprocessor {
         size_t i = start + 1;  // Skip __ENV__
 
         // Skip whitespace
-        while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+        i = skip_ws(tokens, i);
 
         // Expect (
         if(i >= tokens.length || !tokens[i].is_punct("(")){
@@ -663,7 +663,7 @@ struct CPreprocessor {
         i++;
 
         // Skip whitespace
-        while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+        i = skip_ws(tokens, i);
 
         // Get the environment variable name (string)
         str env_name = "";
@@ -680,14 +680,14 @@ struct CPreprocessor {
         }
 
         // Skip whitespace
-        while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+        i = skip_ws(tokens, i);
 
         // Check for optional default value (comma followed by string)
         str default_value = "";
         bool has_default = false;
         if(i < tokens.length && tokens[i].is_punct(",")){
             i++;
-            while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+            i = skip_ws(tokens, i);
 
             if(i < tokens.length && tokens[i].type == PPTokenType.PP_STRING){
                 str s = tokens[i].lexeme;
@@ -701,7 +701,7 @@ struct CPreprocessor {
         }
 
         // Skip whitespace and expect )
-        while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+        i = skip_ws(tokens, i);
         if(i < tokens.length && tokens[i].is_punct(")")) i++;
 
         // Get the environment variable value
@@ -748,7 +748,7 @@ struct CPreprocessor {
         i++;  // Skip (
 
         // Skip whitespace
-        while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+        i = skip_ws(tokens, i);
 
         // Get the counter name (must be identifier)
         if(i >= tokens.length || tokens[i].type != PPTokenType.PP_IDENTIFIER){
@@ -759,7 +759,7 @@ struct CPreprocessor {
         i++;
 
         // Skip whitespace
-        while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+        i = skip_ws(tokens, i);
 
         // Must have closing paren
         if(i >= tokens.length || !tokens[i].is_punct(")")){
@@ -856,6 +856,12 @@ struct CPreprocessor {
         cond_stack ~= block;
     }
 
+    // Helper: skip whitespace tokens, return new index
+    static size_t skip_ws(PPToken[] tokens, size_t i){
+        while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+        return i;
+    }
+
     // Report error
     void error(A...)(A msg){
         error_occurred = true;
@@ -947,51 +953,9 @@ struct CPreprocessor {
                 PPMacroDef macro_def = get_macro(tok);
                 if(!macro_def.is_null){
                     HideSet hs = HideSet.create(allocator);
-                    // Expand to temp buffer, then process for builtins
                     Barray!PPToken expanded = make_barray!PPToken(allocator);
                     i = expand_macro_invocation(input, i, macro_def, hs, &expanded);
-
-                    // Check if expanded ends with function-like macro that should
-                    // combine with ( from remaining input (indirect macro call)
-                    while(expanded.count > 0 && i < input.length){
-                        PPToken last = expanded[][expanded.count - 1];
-                        if(last.type != PPTokenType.PP_IDENTIFIER) break;
-                        PPMacroDef func_macro = get_macro(last);
-                        if(func_macro.is_null || !func_macro.is_function_like) break;
-                        if(hs.is_hidden(last.lexeme)) break;
-                        // Check if next input token (after whitespace) is (
-                        size_t j = i;
-                        while(j < input.length && input[j].type == PPTokenType.PP_WHITESPACE) j++;
-                        if(j >= input.length || !input[j].is_punct("(")) break;
-                        // Remove last token from expanded
-                        expanded.count = expanded.count - 1;
-                        // Create a fake token array starting with the identifier
-                        // We need to invoke expand_macro_invocation starting at j-1
-                        // but the identifier is in `last`, not in input[j-1]
-                        // So we build a combined sequence and call expand_macro_invocation
-                        Barray!PPToken combined = make_barray!PPToken(allocator);
-                        combined ~= last;
-                        // Copy tokens from ( onwards until we find matching )
-                        j++;  // skip (
-                        int depth = 1;
-                        combined ~= input[j-1];  // add the (
-                        while(j < input.length && depth > 0){
-                            if(input[j].is_punct("(")) depth++;
-                            else if(input[j].is_punct(")")) depth--;
-                            combined ~= input[j];
-                            j++;
-                        }
-                        // Expand the function macro
-                        Barray!PPToken func_expanded = make_barray!PPToken(allocator);
-                        expand_macro_invocation(combined[], 0, func_macro, hs, &func_expanded);
-                        // Append to expanded
-                        foreach(ref et; func_expanded[])
-                            expanded ~= et;
-                        // Update i to skip the consumed tokens
-                        i = j;
-                    }
-
-                    // Pass hide set with macro name to prevent re-expansion of hidden macros
+                    i = expand_indirect_calls(&expanded, input, i, hs);
                     expand_tokens(expanded[], output, hs.with_hidden(macro_def.name));
                     continue;
                 }
@@ -1007,12 +971,45 @@ struct CPreprocessor {
 
     // Check if current token is #
     bool is_hash(PPToken[] tokens, size_t pos){
-        // Skip leading whitespace
-        while(pos < tokens.length && tokens[pos].type == PPTokenType.PP_WHITESPACE){
-            pos++;
-        }
+        pos = skip_ws(tokens, pos);
         if(pos >= tokens.length) return false;
         return tokens[pos].type == PPTokenType.PP_PUNCTUATOR && tokens[pos].matches("#");
+    }
+
+    // Handle indirect macro calls: when expanded tokens end with a function-like
+    // macro name and the next input token is '(', combine them
+    size_t expand_indirect_calls(Barray!PPToken* expanded, PPToken[] input, size_t i, HideSet hs){
+        while(expanded.count > 0 && i < input.length){
+            PPToken last = (*expanded)[][expanded.count - 1];
+            if(last.type != PPTokenType.PP_IDENTIFIER) break;
+            PPMacroDef func_macro = get_macro(last);
+            if(func_macro.is_null || !func_macro.is_function_like) break;
+            if(hs.is_hidden(last.lexeme)) break;
+            // Check if next input token (after whitespace) is (
+            size_t j = skip_ws(input, i);
+            if(j >= input.length || !input[j].is_punct("(")) break;
+            // Remove last token from expanded
+            expanded.count = expanded.count - 1;
+            // Build combined sequence: identifier + args from input
+            Barray!PPToken combined = make_barray!PPToken(allocator);
+            combined ~= last;
+            combined ~= input[j];  // add the (
+            j++;
+            int depth = 1;
+            while(j < input.length && depth > 0){
+                if(input[j].is_punct("(")) depth++;
+                else if(input[j].is_punct(")")) depth--;
+                combined ~= input[j];
+                j++;
+            }
+            // Expand the function macro
+            Barray!PPToken func_expanded = make_barray!PPToken(allocator);
+            expand_macro_invocation(combined[], 0, func_macro, hs, &func_expanded);
+            foreach(ref et; func_expanded[])
+                *expanded ~= et;
+            i = j;
+        }
+        return i;
     }
 
     // Find end of current line
@@ -1031,7 +1028,7 @@ struct CPreprocessor {
         directive_line = tokens.length > start ? tokens[start].line : 0;
 
         // Skip whitespace
-        while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+        i = skip_ws(tokens, i);
 
         // Skip #
         if(i >= tokens.length || !tokens[i].is_punct("#")){
@@ -1040,7 +1037,7 @@ struct CPreprocessor {
         i++;
 
         // Skip whitespace after #
-        while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+        i = skip_ws(tokens, i);
 
         // Empty directive (just #)
         if(i >= tokens.length || tokens[i].type == PPTokenType.PP_NEWLINE){
@@ -1104,7 +1101,7 @@ struct CPreprocessor {
         if(directive == "ifdef"){
             // Skip whitespace
             size_t i = 0;
-            while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+            i = skip_ws(line, i);
             if(i >= line.length || line[i].type != PPTokenType.PP_IDENTIFIER){
                 error("#ifdef requires identifier");
                 push_cond(false);
@@ -1115,7 +1112,7 @@ struct CPreprocessor {
         }
         else if(directive == "ifndef"){
             size_t i = 0;
-            while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+            i = skip_ws(line, i);
             if(i >= line.length || line[i].type != PPTokenType.PP_IDENTIFIER){
                 error("#ifndef requires identifier");
                 push_cond(false);
@@ -1161,62 +1158,28 @@ struct CPreprocessor {
                 }
             }
         }
-        else if(directive == "elifdef"){
+        else if(directive == "elifdef" || directive == "elifndef"){
+            bool negate = (directive == "elifndef");
             if(cond_stack.count == 0){
-                error("#elifdef without #if");
+                error(negate ? "#elifndef without #if" : "#elifdef without #if");
                 return;
             }
             auto top = &cond_stack[cond_stack.count - 1];
             if(top.seen_else){
-                error("#elifdef after #else");
+                error(negate ? "#elifndef after #else" : "#elifdef after #else");
                 return;
             }
             if(top.condition_met){
                 top.currently_active = false;
             } else {
                 if(is_parent_active()){
-                    // Get identifier
-                    size_t i = 0;
-                    while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+                    size_t i = skip_ws(line, 0);
                     if(i >= line.length || line[i].type != PPTokenType.PP_IDENTIFIER){
-                        error("#elifdef requires identifier");
+                        error(negate ? "#elifndef requires identifier" : "#elifdef requires identifier");
                         return;
                     }
                     bool defined = is_defined(line[i].lexeme);
-                    if(defined){
-                        top.currently_active = true;
-                        top.condition_met = true;
-                    } else {
-                        top.currently_active = false;
-                    }
-                } else {
-                    top.currently_active = false;
-                }
-            }
-        }
-        else if(directive == "elifndef"){
-            if(cond_stack.count == 0){
-                error("#elifndef without #if");
-                return;
-            }
-            auto top = &cond_stack[cond_stack.count - 1];
-            if(top.seen_else){
-                error("#elifndef after #else");
-                return;
-            }
-            if(top.condition_met){
-                top.currently_active = false;
-            } else {
-                if(is_parent_active()){
-                    // Get identifier
-                    size_t i = 0;
-                    while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
-                    if(i >= line.length || line[i].type != PPTokenType.PP_IDENTIFIER){
-                        error("#elifndef requires identifier");
-                        return;
-                    }
-                    bool defined = is_defined(line[i].lexeme);
-                    if(!defined){
+                    if(defined != negate){
                         top.currently_active = true;
                         top.condition_met = true;
                     } else {
@@ -1259,7 +1222,7 @@ struct CPreprocessor {
         size_t i = 0;
 
         // Skip whitespace
-        while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+        i = skip_ws(line, i);
 
         if(i >= line.length || line[i].type != PPTokenType.PP_IDENTIFIER){
             error("#define requires macro name");
@@ -1285,7 +1248,7 @@ struct CPreprocessor {
 
             while(i < line.length){
                 // Skip whitespace
-                while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+                i = skip_ws(line, i);
                 if(i >= line.length) break;
 
                 // Check for )
@@ -1299,7 +1262,7 @@ struct CPreprocessor {
                     def.is_variadic = true;
                     i++;
                     // Skip whitespace and expect )
-                    while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+                    i = skip_ws(line, i);
                     if(i < line.length && line[i].is_punct(")")) i++;
                     break;
                 }
@@ -1310,7 +1273,7 @@ struct CPreprocessor {
                     i++;
 
                     // Skip whitespace
-                    while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+                    i = skip_ws(line, i);
 
                     // Check for comma or )
                     if(i < line.length && line[i].is_punct(",")){
@@ -1325,7 +1288,7 @@ struct CPreprocessor {
             def.is_function_like = false;
             def.params = null;
             // Skip leading whitespace for object-like macro
-            while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+            i = skip_ws(line, i);
         }
 
         // Rest is replacement list
@@ -1369,7 +1332,7 @@ struct CPreprocessor {
     // Handle #undef
     void handle_undef(PPToken[] line){
         size_t i = 0;
-        while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+        i = skip_ws(line, i);
         if(i >= line.length || line[i].type != PPTokenType.PP_IDENTIFIER){
             error("#undef requires macro name");
             return;
@@ -1436,7 +1399,7 @@ struct CPreprocessor {
         size_t i = start;
 
         // Skip whitespace
-        while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+        i = skip_ws(tokens, i);
 
         if(i >= tokens.length){
             error("#include requires filename");
@@ -1657,14 +1620,14 @@ struct CPreprocessor {
         i++;
 
         // Skip whitespace
-        while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+        i = skip_ws(tokens, i);
 
         // Must be "ifndef"
         if(i >= tokens.length || tokens[i].type != PPTokenType.PP_IDENTIFIER || tokens[i].lexeme != "ifndef") return "";
         i++;
 
         // Skip whitespace
-        while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+        i = skip_ws(tokens, i);
 
         // Get guard macro name
         if(i >= tokens.length || tokens[i].type != PPTokenType.PP_IDENTIFIER) return "";
@@ -1684,12 +1647,12 @@ struct CPreprocessor {
             tokens[i].lexeme != "#") return "";
         i++;
 
-        while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+        i = skip_ws(tokens, i);
 
         if(i >= tokens.length || tokens[i].type != PPTokenType.PP_IDENTIFIER || tokens[i].lexeme != "define") return "";
         i++;
 
-        while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+        i = skip_ws(tokens, i);
 
         if(i >= tokens.length || tokens[i].type != PPTokenType.PP_IDENTIFIER || tokens[i].lexeme != guard_name) return "";
 
@@ -1719,7 +1682,7 @@ struct CPreprocessor {
     // Handle #pragma
     void handle_pragma(PPToken[] line, Barray!PPToken* output){
         size_t i = 0;
-        while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+        i = skip_ws(line, i);
 
         if(i < line.length && line[i].type == PPTokenType.PP_IDENTIFIER){
             if(line[i].lexeme == "once"){
@@ -1727,7 +1690,7 @@ struct CPreprocessor {
             } else if(line[i].lexeme == "expand"){
                 // #pragma expand(tokens) - print macro expansion for debugging
                 i++;
-                while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+                i = skip_ws(line, i);
 
                 // Collect remaining tokens
                 Barray!PPToken tokens_to_expand = make_barray!PPToken(allocator);
@@ -1761,7 +1724,7 @@ struct CPreprocessor {
             } else if(line[i].lexeme == "eval"){
                 // #pragma eval(tokens) - evaluate expression for debugging
                 i++;
-                while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+                i = skip_ws(line, i);
 
                 // Collect remaining tokens
                 Barray!PPToken tokens_to_eval = make_barray!PPToken(allocator);
@@ -1786,11 +1749,11 @@ struct CPreprocessor {
             } else if(line[i].lexeme == "reveal"){
                 // #pragma reveal(macroname) - show macro definition
                 i++;
-                while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+                i = skip_ws(line, i);
 
                 // Skip optional (
                 if(i < line.length && line[i].is_punct("(")) i++;
-                while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+                i = skip_ws(line, i);
 
                 if(i < line.length && line[i].type == PPTokenType.PP_IDENTIFIER){
                     str macro_name = line[i].lexeme;
@@ -1829,7 +1792,7 @@ struct CPreprocessor {
             } else if(line[i].lexeme == "message"){
                 // #pragma message "text" - print message (GCC/Clang compatible, but with macro expansion)
                 i++;
-                while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+                i = skip_ws(line, i);
 
                 // Collect tokens to expand
                 Barray!PPToken msg_tokens = make_barray!PPToken(allocator);
@@ -1900,7 +1863,7 @@ struct CPreprocessor {
             } else if(line[i].lexeme == "include_path"){
                 // #pragma include_path push/pop/reveal
                 i++;
-                while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+                i = skip_ws(line, i);
 
                 int pragma_line = line.length > 0 ? line[0].line : 0;
 
@@ -1910,7 +1873,7 @@ struct CPreprocessor {
 
                     if(subcommand == "push"){
                         // #pragma include_path push "path" or <path>
-                        while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+                        i = skip_ws(line, i);
 
                         str path_str = "";
                         if(i < line.length && line[i].type == PPTokenType.PP_STRING){
@@ -1993,7 +1956,7 @@ struct CPreprocessor {
                     if(i < line.length) i++;  // skip )
                 }
 
-                while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+                i = skip_ws(line, i);
 
                 if(i < line.length && line[i].type == PPTokenType.PP_IDENTIFIER){
                     watched_macros[line[i].lexeme] = flags;
@@ -2002,7 +1965,7 @@ struct CPreprocessor {
             } else if(line[i].lexeme == "unwatch"){
                 // #pragma unwatch MACRO - stop tracing macro
                 i++;
-                while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+                i = skip_ws(line, i);
 
                 if(i < line.length && line[i].type == PPTokenType.PP_IDENTIFIER){
                     if(auto p = line[i].lexeme in watched_macros){
@@ -2014,22 +1977,11 @@ struct CPreprocessor {
         }
     }
 
-    // Handle #error
-    void handle_error(PPToken[] line){
-        StringBuilder sb;
-        sb.allocator = allocator;
-        foreach(tok; line){
-            if(tok.type != PPTokenType.PP_WHITESPACE || sb.cursor > 0){
-                sb.write(tok.lexeme);
-            }
-        }
-        error_occurred = true;
-        int error_line = line.length > 0 ? line[0].line : 0;
-        logger.error(current_file, ":", error_line, ": #error ", sb.borrow(), "\n");
-    }
+    // Handle #error and #warning
+    void handle_error(PPToken[] line){ handle_diagnostic(line, true); }
+    void handle_warning(PPToken[] line){ handle_diagnostic(line, false); }
 
-    // Handle #warning
-    void handle_warning(PPToken[] line){
+    void handle_diagnostic(PPToken[] line, bool is_error){
         StringBuilder sb;
         sb.allocator = allocator;
         foreach(tok; line){
@@ -2037,14 +1989,19 @@ struct CPreprocessor {
                 sb.write(tok.lexeme);
             }
         }
-        int warning_line = line.length > 0 ? line[0].line : 0;
-        logger.warn(current_file, ":", warning_line, ": warning: #warning ", sb.borrow(), "\n");
+        int diag_line = line.length > 0 ? line[0].line : 0;
+        if(is_error){
+            error_occurred = true;
+            logger.error(current_file, ":", diag_line, ": #error ", sb.borrow(), "\n");
+        } else {
+            logger.warn(current_file, ":", diag_line, ": warning: #warning ", sb.borrow(), "\n");
+        }
     }
 
     // Handle #line directive
     void handle_line(PPToken[] line){
         size_t i = 0;
-        while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+        i = skip_ws(line, i);
 
         if(i >= line.length || line[i].type != PPTokenType.PP_NUMBER){
             error("#line requires a line number");
@@ -2070,7 +2027,7 @@ struct CPreprocessor {
         i++;
 
         // Check for optional filename
-        while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+        i = skip_ws(line, i);
 
         if(i < line.length && line[i].type == PPTokenType.PP_STRING){
             // Extract filename from string literal (remove quotes)
@@ -2087,7 +2044,7 @@ struct CPreprocessor {
         size_t i = 0;
 
         // Skip whitespace
-        while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+        i = skip_ws(line, i);
 
         if(i >= line.length){
             error("#embed requires filename");
@@ -2135,7 +2092,7 @@ struct CPreprocessor {
 
         while(i < line.length){
             // Skip whitespace
-            while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+            i = skip_ws(line, i);
             if(i >= line.length) break;
 
             if(line[i].type != PPTokenType.PP_IDENTIFIER){
@@ -2148,7 +2105,7 @@ struct CPreprocessor {
             i++;
 
             // Skip whitespace
-            while(i < line.length && line[i].type == PPTokenType.PP_WHITESPACE) i++;
+            i = skip_ws(line, i);
 
             // Check for parameter clause (...)
             if(i >= line.length || !line[i].is_punct("(")){
@@ -2255,7 +2212,7 @@ struct CPreprocessor {
     // Parse limit parameter value
     long parse_embed_limit(PPToken[] tokens){
         size_t i = 0;
-        while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+        i = skip_ws(tokens, i);
         if(i >= tokens.length) return -1;
 
         if(tokens[i].type != PPTokenType.PP_NUMBER) return -1;
@@ -2327,7 +2284,7 @@ struct CPreprocessor {
         size_t i = start + 1;  // Skip _Pragma
 
         // Skip whitespace
-        while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+        i = skip_ws(tokens, i);
 
         // Expect (
         if(i >= tokens.length || !tokens[i].is_punct("(")){
@@ -2336,7 +2293,7 @@ struct CPreprocessor {
         i++;
 
         // Skip whitespace
-        while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+        i = skip_ws(tokens, i);
 
         // Expect string literal
         if(i >= tokens.length || tokens[i].type != PPTokenType.PP_STRING){
@@ -2347,7 +2304,7 @@ struct CPreprocessor {
         i++;
 
         // Skip whitespace
-        while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+        i = skip_ws(tokens, i);
 
         // Expect )
         if(i >= tokens.length || !tokens[i].is_punct(")")){
@@ -2437,13 +2394,13 @@ struct CPreprocessor {
             if(for_if && tok.type == PPTokenType.PP_IDENTIFIER && tok.matches("defined")){
                 i++;
                 // Skip whitespace
-                while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+                i = skip_ws(tokens, i);
 
                 bool has_paren = false;
                 if(i < tokens.length && tokens[i].is_punct("(")){
                     has_paren = true;
                     i++;
-                    while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+                    i = skip_ws(tokens, i);
                 }
 
                 if(i < tokens.length && tokens[i].type == PPTokenType.PP_IDENTIFIER){
@@ -2458,7 +2415,7 @@ struct CPreprocessor {
                     *output ~= result;
 
                     if(has_paren){
-                        while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+                        i = skip_ws(tokens, i);
                         if(i < tokens.length && tokens[i].is_punct(")")) i++;
                     }
                     continue;
@@ -2469,7 +2426,7 @@ struct CPreprocessor {
             if(for_if && tok.type == PPTokenType.PP_IDENTIFIER && tok.matches("__has_include")){
                 i++;
                 // Skip whitespace
-                while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+                i = skip_ws(tokens, i);
                 // Expect (
                 if(i >= tokens.length || !tokens[i].is_punct("(")){
                     PPToken result;
@@ -2479,7 +2436,7 @@ struct CPreprocessor {
                     continue;
                 }
                 i++;
-                while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+                i = skip_ws(tokens, i);
 
                 // Parse header name
                 str filename;
@@ -2531,7 +2488,7 @@ struct CPreprocessor {
             // Handle __has_include_next (only in #if context, stub - always 0)
             if(for_if && tok.type == PPTokenType.PP_IDENTIFIER && tok.matches("__has_include_next")){
                 i++;
-                while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+                i = skip_ws(tokens, i);
                 if(i < tokens.length && tokens[i].is_punct("(")){
                     i++;
                     int depth = 1;
@@ -2552,7 +2509,7 @@ struct CPreprocessor {
             // Returns: 0 = not found, 1 = found and non-empty, 2 = found but empty
             if(for_if && tok.type == PPTokenType.PP_IDENTIFIER && tok.matches("__has_embed")){
                 i++;
-                while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+                i = skip_ws(tokens, i);
                 if(i >= tokens.length || !tokens[i].is_punct("(")){
                     PPToken result;
                     result.type = PPTokenType.PP_NUMBER;
@@ -2561,7 +2518,7 @@ struct CPreprocessor {
                     continue;
                 }
                 i++;
-                while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+                i = skip_ws(tokens, i);
 
                 // Parse header name
                 str filename;
@@ -2598,7 +2555,7 @@ struct CPreprocessor {
                     if(tokens[i].type == PPTokenType.PP_IDENTIFIER){
                         str param_name = tokens[i].lexeme;
                         i++;
-                        while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+                        i = skip_ws(tokens, i);
                         if(i < tokens.length && tokens[i].is_punct("(")){
                             i++;
                             size_t clause_start = i;
@@ -2675,7 +2632,7 @@ struct CPreprocessor {
                             if(!func_macro.is_null && func_macro.is_function_like && !new_hs.is_hidden(last.lexeme)){
                                 // Check if next input token (after whitespace) is (
                                 size_t j = i;
-                                while(j < tokens.length && tokens[j].type == PPTokenType.PP_WHITESPACE) j++;
+                                j = skip_ws(tokens, j);
                                 if(j < tokens.length && tokens[j].is_punct("(")){
                                     // Output all expanded tokens except the last identifier
                                     foreach(k; 0 .. expanded.count - 1)
@@ -2707,7 +2664,7 @@ struct CPreprocessor {
                     }
                     // Check for (
                     size_t j = i + 1;
-                    while(j < tokens.length && tokens[j].type == PPTokenType.PP_WHITESPACE) j++;
+                    j = skip_ws(tokens, j);
                     if(j < tokens.length && tokens[j].is_punct("(")){
                         // Expand the macro to a temporary buffer
                         Barray!PPToken expanded = make_barray!PPToken(allocator);
@@ -2758,7 +2715,7 @@ struct CPreprocessor {
 
         if(macro_def.is_function_like){
             // Skip whitespace
-            while(i < tokens.length && tokens[i].type == PPTokenType.PP_WHITESPACE) i++;
+            i = skip_ws(tokens, i);
 
             // Must have (
             if(i >= tokens.length || !tokens[i].is_punct("(")){
@@ -2909,7 +2866,7 @@ struct CPreprocessor {
             if(tok.is_punct("#") && i + 1 < repl.length){
                 // Skip whitespace
                 size_t j = i + 1;
-                while(j < repl.length && repl[j].type == PPTokenType.PP_WHITESPACE) j++;
+                j = skip_ws(repl, j);
 
                 if(j < repl.length && repl[j].type == PPTokenType.PP_IDENTIFIER){
                     int param_idx = macro_def.find_param(repl[j].lexeme);
@@ -2927,12 +2884,12 @@ struct CPreprocessor {
             if(i + 1 < repl.length){
                 // Look ahead for ##
                 size_t j = i + 1;
-                while(j < repl.length && repl[j].type == PPTokenType.PP_WHITESPACE) j++;
+                j = skip_ws(repl, j);
 
                 if(j < repl.length && repl[j].is_punct("##")){
                     // Find right operand
                     size_t k = j + 1;
-                    while(k < repl.length && repl[k].type == PPTokenType.PP_WHITESPACE) k++;
+                    k = skip_ws(repl, k);
 
                     if(k < repl.length){
                         // Get left token (possibly parameter)
@@ -3025,13 +2982,13 @@ struct CPreprocessor {
                         size_t next_k = k + 1;
                         while(have_result && next_k < repl.length){
                             // Skip whitespace
-                            while(next_k < repl.length && repl[next_k].type == PPTokenType.PP_WHITESPACE) next_k++;
+                            next_k = skip_ws(repl, next_k);
 
                             // Check for another ##
                             if(next_k < repl.length && repl[next_k].is_punct("##")){
                                 // Find the next operand
                                 size_t next_right_idx = next_k + 1;
-                                while(next_right_idx < repl.length && repl[next_right_idx].type == PPTokenType.PP_WHITESPACE) next_right_idx++;
+                                next_right_idx = skip_ws(repl, next_right_idx);
 
                                 if(next_right_idx < repl.length){
                                     // Get the next right operand
@@ -3127,7 +3084,7 @@ struct CPreprocessor {
                 if(macro_def.is_variadic && tok.matches("__VA_OPT__")){
                     i++;
                     // Skip whitespace
-                    while(i < repl.length && repl[i].type == PPTokenType.PP_WHITESPACE) i++;
+                    i = skip_ws(repl, i);
                     // Expect (
                     if(i >= repl.length || !repl[i].is_punct("(")){
                         continue;
