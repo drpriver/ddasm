@@ -2,7 +2,7 @@
  * Copyright © 2021-2025, David Priver
  */
 module dlib.table;
-import dlib.allocator: Mallocator;
+import dlib.allocator: Allocator;
 import dlib.box: Box;
 
 struct Item(K, V){
@@ -22,9 +22,9 @@ next_p2(size_t n){
     return 1LU << (1+bsr(n));
 }
 
-struct Table(K, V){
+struct Table(K, V, A=Allocator){
     alias It = Item!(K, V);
-    Box!(void[]) data;
+    Box!(void[], A) data;
     size_t count = 0;
 
     size_t capacity(){
@@ -50,7 +50,6 @@ struct Table(K, V){
 
     void reserve(size_t cap){
         cap = next_p2(cap);
-        // TODO: ensure power of 2
         size_t old_cap = capacity;
         if(cap <= old_cap) return;
         size_t new_cap = old_cap * 2;
@@ -150,6 +149,16 @@ struct Table(K, V){
     }
     ValueIter values(){
         return ValueIter(items, 0);
+    }
+    static struct KeyIter {
+        It[] items;
+        size_t cursor;
+        bool empty(){ return cursor == items.length;}
+        void popFront(){cursor++;}
+        K front(){ return items[cursor].key;}
+    }
+    KeyIter keys(){
+        return KeyIter(items, 0);
     }
 
     void

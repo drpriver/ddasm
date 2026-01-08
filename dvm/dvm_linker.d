@@ -63,7 +63,7 @@ struct LinkContext {
     FunctionTable* builtins;
     UnlinkedModule* unlinked;
     Table!(str, LinkedModule*)* modules;
-    FileCache* file_cache;
+    FileCache *file_cache;
 
     LinkedModule prog;
     void delegate(const char*, out str, out int, out int) find_loc;

@@ -2,7 +2,7 @@
  * Copyright © 2021-2025, David Priver
  */
 module dlib.barray;
-import dlib.allocator: Allocator;
+import dlib.allocator: Allocator, Mallocator;
 import dlib.box: Box;
 import core.stdc.string: memmove, memcpy;
 
@@ -179,6 +179,7 @@ struct Barray(T, A=Allocator){
         }
     }
 }
+alias Marray(T) = Barray!(T, Mallocator);
 
 Barray!(T, A)
 make_barray(T, A)(A a)if(A.state_size){

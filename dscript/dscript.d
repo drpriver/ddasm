@@ -1,7 +1,7 @@
 module dscript.dscript;
 import core.stdc.stdio: fprintf, stderr; // FIXME: should be a callback to report errors
 import dlib.aliases;
-import dlib.allocator: MALLOCATOR, Allocator;
+import dlib.allocator: MALLOCATOR, Allocator, Mallocator;
 import dlib.barray: Barray, make_barray;
 import dlib.parse_numbers: parse_unsigned_human;
 import dlib.table: Table;
@@ -262,7 +262,7 @@ bool is_ident_char()(ubyte c){
     return is_alpha(c) || is_digit(c) || c == '_' || c == '.';
 }
 
-__gshared Table!(str, TokenType) KEYWORDS = {data:{allocator:MALLOCATOR}};
+__gshared Table!(str, TokenType, Mallocator) KEYWORDS;
 
 __gshared KEYWORDSPOWERED = false;
 void powerup(){

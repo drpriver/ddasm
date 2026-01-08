@@ -24,73 +24,73 @@ expose_function(F)(F fun){
     f.arg_types = 0;   // All integer args by default
     f.ret_types = 0;   // Integer return by default
     static if(is(F : uintptr_t function())){
-        f.native_function_r = fun;
+        f.native_function_ = cast(void function())fun;
         f.n_ret = 1;
         f.n_args = 0;
         return f;
     }
     else static if(is(F : uintptr_t function(uintptr_t))){
-        f.native_function_ra = fun;
+        f.native_function_ = cast(void function())fun;
         f.n_ret = 1;
         f.n_args = 1;
         return f;
     }
     else static if(is(F : uintptr_t function(uintptr_t, uintptr_t))){
-        f.native_function_raa = fun;
+        f.native_function_ = cast(void function())fun;
         f.n_ret = 1;
         f.n_args = 2;
         return f;
     }
     else static if(is(F : uintptr_t function(uintptr_t, uintptr_t, uintptr_t))){
-        f.native_function_raaa = fun;
+        f.native_function_ = cast(void function())fun;
         f.n_ret = 1;
         f.n_args = 3;
         return f;
     }
     else static if(is(F : uintptr_t function(uintptr_t, uintptr_t, uintptr_t, uintptr_t))){
-        f.native_function_raaaa = fun;
+        f.native_function_ = cast(void function())fun;
         f.n_ret = 1;
         f.n_args = 4;
         return f;
     }
     else static if(is(F : uintptr_t function(uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t))){
-        f.native_function_raaaaa = fun;
+        f.native_function_ = cast(void function())fun;
         f.n_ret = 1;
         f.n_args = 5;
         return f;
     }
     else static if(is(F : void function())){
-        f.native_function_ = fun;
+        f.native_function_ = cast(void function())fun;
         f.n_ret = 0;
         f.n_args = 0;
         return f;
     }
     else static if(is(F : void function(uintptr_t))){
-        f.native_function_a = fun;
+        f.native_function_ = cast(void function())fun;
         f.n_ret = 0;
         f.n_args = 1;
         return f;
     }
     else static if(is(F : void function(uintptr_t, uintptr_t))){
-        f.native_function_aa = fun;
+        f.native_function_ = cast(void function())fun;
         f.n_ret = 0;
         f.n_args = 2;
         return f;
     }
     else static if(is(F : void function(uintptr_t, uintptr_t, uintptr_t))){
-        f.native_function_aaa = fun;
+        f.native_function_ = cast(void function())fun;
         f.n_ret = 0;
         f.n_args = 3;
         return f;
     }
     else static if(is(F : void function(uintptr_t, uintptr_t, uintptr_t, uintptr_t))){
-        f.native_function_aaaa = fun;
+        f.native_function_ = cast(void function())fun;
         f.n_ret = 0;
         f.n_args = 4;
         return f;
     }
     else static if(is(F : void function(uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t))){
-        f.native_function_aaaaa = fun;
+        f.native_function_ = cast(void function())fun;
         f.n_ret = 0;
         f.n_args = 5;
         return f;

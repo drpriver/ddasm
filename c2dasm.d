@@ -3,7 +3,7 @@
  * Copyright 2025, David Priver
  */
 import dlib.allocator : Mallocator, Allocator, MALLOCATOR, FixedAllocator;
-import dlib.barray : Barray;
+import dlib.barray : Barray, Marray;
 import dlib.box : Box;
 import dlib.stringbuilder : StringBuilder;
 import dlib.logger;
@@ -30,14 +30,11 @@ int main(int argc, char** argv) {
     bool pp_only = false;
     bool print_ast = false;
     ZString sourcefile;
-    Barray!str include_paths;
-    include_paths.bdata.allocator = MALLOCATOR;
+    Marray!str include_paths;
     scope(exit) include_paths.cleanup();
-    Barray!str framework_paths;
-    framework_paths.bdata.allocator = MALLOCATOR;
+    Marray!str framework_paths;
     scope(exit) framework_paths.cleanup();
-    Barray!str force_includes;
-    force_includes.bdata.allocator = MALLOCATOR;
+    Marray!str force_includes;
     scope(exit) force_includes.cleanup();
 
     with (dlib.argparse) with (ArgParseFlags) with (ArgToParseFlags) {

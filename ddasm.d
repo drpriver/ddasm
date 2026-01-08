@@ -1,17 +1,16 @@
 /*
  * Copyright © 2021-2023, David Priver
  */
-import core.stdc.string: strlen, strerror, memcpy, memset;
-import core.stdc.stdio: fprintf, stdout, stderr, fread, stdin, FILE, fwrite, fflush, fopen, fputs, fgets, fclose, getchar;
-import core.stdc.stdlib: calloc, malloc, free, atoi;
+import core.stdc.string: strlen;
+import core.stdc.stdio: fprintf, stdout, stderr, fread, stdin, getchar;
 
-import dlib.stringbuilder: StringBuilder;
+import dlib.stringbuilder: StringBuilder, E;
 import dlib.argparse;
 import dlib.zstring: ZString;
 import dlib.get_input: get_input_line, LineHistory;
 import dlib.term_util: get_cols, stdin_is_interactive;
 import dlib.allocator;
-import dlib.barray: Barray, make_barray;
+import dlib.barray: Barray, make_barray, Marray;
 import dlib.box: Box, boxed;
 import dlib.str_util: endswith;
 import dlib.table: Table;
@@ -68,13 +67,13 @@ int main(int argc, char** argv){
     uintptr_t[RegisterNames.RARGMAX-RegisterNames.RARG1] rargs;
     ZString[rargs.length] rargs_s;
     ZString sourcefile;
-    Barray!(str, Mallocator) include_paths;
+    Marray!str include_paths;
     scope(exit) include_paths.cleanup();
-    Barray!(str, Mallocator) framework_paths;
+    Marray!str framework_paths;
     scope(exit) framework_paths.cleanup();
-    Barray!(str, Mallocator) lib_paths;
+    Marray!str lib_paths;
     scope(exit) lib_paths.cleanup();
-    Barray!(str, Mallocator) force_includes;
+    Marray!str force_includes;
     scope(exit) force_includes.cleanup();
 
     with(ArgParseFlags) with(ArgToParseFlags) {
@@ -255,7 +254,7 @@ int main(int argc, char** argv){
     if(sourcefile.length){
         const(ubyte)[] file_data;
         if(file_cache.read_file(sourcefile[], file_data) != FileError.OK){
-            fprintf(stderr, "Unable to read from '%s'\n", sourcefile.ptr);
+            logger.errorf("Unable to read from '%s'\n", sourcefile);
             return 1;
         }
         source_text = cast(str)file_data;
@@ -339,12 +338,12 @@ int main(int argc, char** argv){
     UnlinkedModule prog;
     int err = parse_asm_string(MALLOCATOR, source_text, &prog);
     if(err){
-        fprintf(stderr, "Parsing failed\n");
+        logger.error("Parsing failed\n");
         return err;
     }
     // If parse_only, exit after successful parsing
     if(parse_only){
-        fprintf(stdout, "Parsing successful\n");
+        logger.error("Parsing successful\n");
         return 0;
     }
 
@@ -452,11 +451,6 @@ int main(int argc, char** argv){
 
 FunctionTable*
 BUILTINS(){
-    __gshared bool initialized = false;
-    __gshared FunctionTable table;
-    if(!initialized){
-        initialized = true;
-        table.data.allocator = MALLOCATOR;
-    }
+    __gshared FunctionTable table = {data:{allocator:MALLOCATOR}};
     return &table;
 }
