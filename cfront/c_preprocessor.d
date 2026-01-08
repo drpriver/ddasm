@@ -51,7 +51,6 @@ struct CPreprocessor {
 
     // #line directive state
     int line_offset = 0;      // Added to token line numbers for __LINE__
-    int line_offset_base = 0; // Token line where #line was issued
     str file_override;        // Override for __FILE__ (null = use token's file)
 
     // #pragma watch state
@@ -377,25 +376,6 @@ struct CPreprocessor {
         } else {
             def.replacement = null;
         }
-
-        macros[name] = def;
-    }
-
-    // Define a function-like macro that expands to nothing
-    void define_empty_func_macro(str name, int num_params){
-        PPMacroDef def;
-        def.name = name;
-        def.is_function_like = true;
-        def.is_variadic = false;
-        def.is_undefined = false;
-        def.replacement = null;  // Empty expansion
-
-        // Create dummy parameter names
-        Barray!str params = make_barray!str(allocator);
-        for(int i = 0; i < num_params; i++){
-            params ~= "_";  // Dummy param name
-        }
-        def.params = params[];
 
         macros[name] = def;
     }
@@ -1098,28 +1078,16 @@ struct CPreprocessor {
 
     // Handle conditional directives
     void handle_conditional(str directive, PPToken[] line){
-        if(directive == "ifdef"){
-            // Skip whitespace
-            size_t i = 0;
-            i = skip_ws(line, i);
+        if(directive == "ifdef" || directive == "ifndef"){
+            bool negate = (directive == "ifndef");
+            size_t i = skip_ws(line, 0);
             if(i >= line.length || line[i].type != PPTokenType.PP_IDENTIFIER){
-                error("#ifdef requires identifier");
+                error(negate ? "#ifndef requires identifier" : "#ifdef requires identifier");
                 push_cond(false);
                 return;
             }
             bool defined = is_defined(line[i].lexeme);
-            push_cond(defined);
-        }
-        else if(directive == "ifndef"){
-            size_t i = 0;
-            i = skip_ws(line, i);
-            if(i >= line.length || line[i].type != PPTokenType.PP_IDENTIFIER){
-                error("#ifndef requires identifier");
-                push_cond(false);
-                return;
-            }
-            bool defined = is_defined(line[i].lexeme);
-            push_cond(!defined);
+            push_cond(defined != negate);
         }
         else if(directive == "if"){
             if(!is_active()){
@@ -2701,6 +2669,30 @@ struct CPreprocessor {
         return tok;
     }
 
+    // Rescan substituted tokens for nested macros and _Pragma
+    void rescan_substituted(PPToken[] substituted, HideSet hs, Barray!PPToken* output){
+        size_t j = 0;
+        while(j < substituted.length){
+            PPToken tok = substituted[j];
+            if(tok.type == PPTokenType.PP_IDENTIFIER){
+                if(tok.lexeme == "_Pragma"){
+                    size_t new_j = handle_pragma_operator(substituted, j, output);
+                    if(new_j != j){
+                        j = new_j;
+                        continue;
+                    }
+                }
+                PPMacroDef nested = get_macro(tok);
+                if(!nested.is_null && !hs.is_hidden(tok.lexeme)){
+                    j = expand_macro_invocation(substituted, j, nested, hs, output);
+                    continue;
+                }
+            }
+            *output ~= tok;
+            j++;
+        }
+    }
+
     // Expand a macro invocation
     size_t expand_macro_invocation(PPToken[] tokens, size_t start, ref PPMacroDef macro_def, HideSet hs, Barray!PPToken* output){
         size_t i = start + 1;  // Skip macro name
@@ -2713,13 +2705,13 @@ struct CPreprocessor {
         // Add macro to hide set for rescanning
         hs = hs.with_hidden(macro_def.name);
 
+        Barray!PPToken substituted = make_barray!PPToken(allocator);
+
         if(macro_def.is_function_like){
-            // Skip whitespace
             i = skip_ws(tokens, i);
 
-            // Must have (
+            // Function-like macros require ( to be invoked
             if(i >= tokens.length || !tokens[i].is_punct("(")){
-                // Not an invocation, just output the identifier
                 *output ~= tokens[start];
                 return start + 1;
             }
@@ -2732,15 +2724,12 @@ struct CPreprocessor {
 
             while(i < tokens.length && depth > 0){
                 PPToken tok = tokens[i];
-
                 if(tok.is_punct("(")){
                     depth++;
                     current_arg ~= tok;
                 } else if(tok.is_punct(")")){
                     depth--;
                     if(depth == 0){
-                        // End of arguments - always add final arg if macro takes params
-                        // STR() has one empty arg, STR(a,b) has two args
                         if(macro_def.params.length > 0 || current_arg.count > 0 || args.count > 0){
                             args ~= current_arg[];
                         }
@@ -2748,7 +2737,6 @@ struct CPreprocessor {
                         current_arg ~= tok;
                     }
                 } else if(tok.is_punct(",") && depth == 1){
-                    // Argument separator
                     args ~= current_arg[];
                     current_arg = make_barray!PPToken(allocator);
                 } else {
@@ -2757,11 +2745,9 @@ struct CPreprocessor {
                 i++;
             }
 
-            // Substitute and expand
-            Barray!PPToken substituted = make_barray!PPToken(allocator);
             substitute(macro_def, args[], arg_hs, &substituted);
 
-            // Log if this macro is being watched for expand
+            // Log watch
             if(auto p = macro_def.name in watched_macros){ if(*p & WatchFlags.EXPAND){
                 logger.buff.FORMAT(invocation.file, ":", invocation.line, ": [watch] ", macro_def.name, "(");
                 foreach(ai, arg; args[]){
@@ -2775,44 +2761,12 @@ struct CPreprocessor {
                 logger.buff.write("\n");
                 logger.flush(LogLevel.DEBUG);
             }}
-
-            // Set expansion location on all substituted tokens so nested macros
-            // have the right invocation point
-            foreach(ref tok; substituted[]){
-                tok = with_expansion_loc(tok, invocation);
-            }
-
-            // Rescan for more macros and _Pragma
-            size_t j = 0;
-            while(j < substituted.count){
-                PPToken tok = substituted[j];
-                if(tok.type == PPTokenType.PP_IDENTIFIER){
-                    // Check for _Pragma operator
-                    if(tok.lexeme == "_Pragma"){
-                        size_t new_j = handle_pragma_operator(substituted[], j, output);
-                        if(new_j != j){
-                            j = new_j;
-                            continue;
-                        }
-                    }
-                    PPMacroDef nested = get_macro(tok);
-                    if(!nested.is_null && !hs.is_hidden(tok.lexeme)){
-                        j = expand_macro_invocation(substituted[], j, nested, hs, output);
-                        continue;
-                    }
-                }
-                *output ~= tok;  // Already has expansion_line set
-                j++;
-            }
-
-            return i;
         } else {
-            // Object-like macro - use substitute() to handle ## pasting
-            Barray!PPToken substituted = make_barray!PPToken(allocator);
+            // Object-like macro
             PPToken[][] empty_args;
             substitute(macro_def, empty_args, hs, &substituted);
 
-            // Log if this macro is being watched for expand
+            // Log watch
             if(auto p = macro_def.name in watched_macros){ if(*p & WatchFlags.EXPAND){
                 logger.buff.FORMAT(invocation.file, ":", invocation.line, ": [watch] ", macro_def.name, " -> ");
                 foreach(tok; substituted[])
@@ -2820,38 +2774,17 @@ struct CPreprocessor {
                 logger.buff.write("\n");
                 logger.flush(LogLevel.DEBUG);
             }}
-
-            // Set expansion location on all substituted tokens so nested macros
-            // have the right invocation point
-            foreach(ref tok; substituted[]){
-                tok = with_expansion_loc(tok, invocation);
-            }
-
-            // Rescan for more macros and _Pragma
-            size_t j = 0;
-            while(j < substituted.count){
-                PPToken tok = substituted[j];
-                if(tok.type == PPTokenType.PP_IDENTIFIER){
-                    // Check for _Pragma operator
-                    if(tok.lexeme == "_Pragma"){
-                        size_t new_j = handle_pragma_operator(substituted[], j, output);
-                        if(new_j != j){
-                            j = new_j;
-                            continue;
-                        }
-                    }
-                    PPMacroDef nested = get_macro(tok);
-                    if(!nested.is_null && !hs.is_hidden(tok.lexeme)){
-                        j = expand_macro_invocation(substituted[], j, nested, hs, output);
-                        continue;
-                    }
-                }
-                *output ~= tok;  // Already has expansion_line set
-                j++;
-            }
-
-            return i;
         }
+
+        // Set expansion location on all substituted tokens
+        foreach(ref tok; substituted[]){
+            tok = with_expansion_loc(tok, invocation);
+        }
+
+        // Rescan for nested macros and _Pragma
+        rescan_substituted(substituted[], hs, output);
+
+        return i;
     }
 
     // Substitute macro parameters
