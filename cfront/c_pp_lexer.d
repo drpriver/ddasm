@@ -268,6 +268,10 @@ struct PPLexer {
                 advance();
             }
         }
+        if(depth > 0){
+            error("unterminated block comment");
+            return;
+        }
         // Block comments become single space
         add_token(PPTokenType.PP_WHITESPACE, " ");
     }

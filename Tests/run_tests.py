@@ -2,6 +2,10 @@
 """Test runner for C and DASM tests.
 Compiles C files with c2dasm and runs them with ddasm.
 Runs DASM files directly with ddasm.
+
+Markers (in first line of file):
+  // SKIP  or  # SKIP   - Skip this test
+  // XFAIL or  # XFAIL  - Test is expected to fail
 """
 
 import os
@@ -39,34 +43,52 @@ def main():
 
     test_files = sorted(script_dir.glob('*.c'))
 
+    cpp = project_dir / 'Bin' / 'cpp'
+
     for test_file in test_files:
         filename = test_file.name
 
-        # Check for SKIP marker in file
+        # Check for SKIP/XFAIL markers in file
         with open(test_file, 'r') as f:
             first_line = f.readline()
             if '// SKIP' in first_line:
                 print(f"{YELLOW}SKIP{NC}: {filename}")
                 skip_count += 1
                 continue
-        # Step 1: Compile C to DASM
+            expect_fail = '// XFAIL' in first_line
+
+        # Use cpp for pp_xfail_* tests, ddasm for everything else
+        if filename.startswith('pp_xfail_'):
+            cmd = [str(cpp), str(test_file)]
+        else:
+            cmd = [str(ddasm), str(test_file)]
+
+        # Compile and run C file
         result = subprocess.run(
-            [str(ddasm), str(test_file)],
+            cmd,
             capture_output=True,
             text=True,
             timeout=1,
         )
 
         if result.returncode == 0:
-            print(f"{GREEN}PASS{NC}: {filename}")
-            pass_count += 1
+            if expect_fail:
+                print(f"{RED}FAIL{NC}: {filename} (expected failure but passed)")
+                fail_count += 1
+            else:
+                print(f"{GREEN}PASS{NC}: {filename}")
+                pass_count += 1
         else:
-            print(f"{RED}FAIL{NC}: {filename} (compile error)")
-            error_output = result.stderr or result.stdout
-            error_lines = error_output.strip().split('\n')[:5]
-            for line in error_lines:
-                print(f"      {line}")
-            fail_count += 1
+            if expect_fail:
+                print(f"{GREEN}PASS{NC}: {filename} (expected failure)")
+                pass_count += 1
+            else:
+                print(f"{RED}FAIL{NC}: {filename} (compile error)")
+                error_output = result.stderr or result.stdout
+                error_lines = error_output.strip().split('\n')[:5]
+                for line in error_lines:
+                    print(f"      {line}")
+                fail_count += 1
             continue
 
     # Run DASM tests
@@ -81,13 +103,14 @@ def main():
         filename = test_file.name
         expected_file = test_file.with_suffix('.expected')
 
-        # Check for SKIP marker in file
+        # Check for SKIP/XFAIL markers in file
         with open(test_file, 'r') as f:
             first_line = f.readline()
             if '# SKIP' in first_line:
                 print(f"{YELLOW}SKIP{NC}: {filename}")
                 skip_count += 1
                 continue
+            expect_fail = '# XFAIL' in first_line
 
         # Run ddasm and capture output
         result = subprocess.run(
@@ -106,24 +129,40 @@ def main():
                 expected_output = f.read().rstrip('\n')
 
             if actual_output == expected_output:
-                print(f"{GREEN}PASS{NC}: {filename}")
-                pass_count += 1
+                if expect_fail:
+                    print(f"{RED}FAIL{NC}: {filename} (expected failure but passed)")
+                    fail_count += 1
+                else:
+                    print(f"{GREEN}PASS{NC}: {filename}")
+                    pass_count += 1
             else:
-                print(f"{RED}FAIL{NC}: {filename}")
-                print(f"      Expected: {expected_output}")
-                print(f"      Actual:   {actual_output}")
-                fail_count += 1
+                if expect_fail:
+                    print(f"{GREEN}PASS{NC}: {filename} (expected failure)")
+                    pass_count += 1
+                else:
+                    print(f"{RED}FAIL{NC}: {filename}")
+                    print(f"      Expected: {expected_output}")
+                    print(f"      Actual:   {actual_output}")
+                    fail_count += 1
         else:
             # No expected file - just check that it runs without error
             if result.returncode == 0:
-                print(f"{GREEN}PASS{NC}: {filename} (no .expected file, checked execution only)")
-                pass_count += 1
+                if expect_fail:
+                    print(f"{RED}FAIL{NC}: {filename} (expected failure but passed)")
+                    fail_count += 1
+                else:
+                    print(f"{GREEN}PASS{NC}: {filename} (no .expected file, checked execution only)")
+                    pass_count += 1
             else:
-                print(f"{RED}FAIL{NC}: {filename}")
-                error_lines = actual_output.split('\n')[:5]
-                for line in error_lines:
-                    print(f"      {line}")
-                fail_count += 1
+                if expect_fail:
+                    print(f"{GREEN}PASS{NC}: {filename} (expected failure)")
+                    pass_count += 1
+                else:
+                    print(f"{RED}FAIL{NC}: {filename}")
+                    error_lines = actual_output.split('\n')[:5]
+                    for line in error_lines:
+                        print(f"      {line}")
+                    fail_count += 1
 
     print()
     print("=" * 25)

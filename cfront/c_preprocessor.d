@@ -439,6 +439,34 @@ struct CPreprocessor {
         }
         return false;
     }
+
+    // Check if two macro definitions are equivalent (C standard allows identical redefinition)
+    static bool macro_def_equal(ref PPMacroDef a, ref PPMacroDef b){
+        if(a.is_function_like != b.is_function_like) return false;
+        if(a.is_variadic != b.is_variadic) return false;
+        if(a.params.length != b.params.length) return false;
+        foreach(i, p; a.params){
+            if(p != b.params[i]) return false;
+        }
+        // Compare replacement lists (ignoring whitespace differences)
+        return replacement_lists_equal(a.replacement, b.replacement);
+    }
+
+    static bool replacement_lists_equal(PPToken[] a, PPToken[] b){
+        size_t ai = 0, bi = 0;
+        while(true){
+            // Skip whitespace
+            while(ai < a.length && a[ai].type == PPTokenType.PP_WHITESPACE) ai++;
+            while(bi < b.length && b[bi].type == PPTokenType.PP_WHITESPACE) bi++;
+            if(ai >= a.length && bi >= b.length) return true;
+            if(ai >= a.length || bi >= b.length) return false;
+            if(a[ai].type != b[bi].type) return false;
+            if(a[ai].lexeme != b[bi].lexeme) return false;
+            ai++;
+            bi++;
+        }
+    }
+
     PPMacroDef get_file_macro(PPToken tok){
         PPToken file_tok = tok;
         file_tok.type = PPTokenType.PP_STRING;
@@ -946,6 +974,12 @@ struct CPreprocessor {
             i++;
         }
 
+        // Check for unterminated conditionals (only at top level, not in includes)
+        if(include_stack.count == 0 && cond_stack.count > 0){
+            error("unterminated #if");
+            return 1;
+        }
+
         return 0;
     }
 
@@ -1040,10 +1074,11 @@ struct CPreprocessor {
         PPToken[] line_tokens = tokens[i .. line_end];
 
         // Conditional directives must be processed even in inactive blocks
-        if(directive == "if" || directive == "ifdef" ||
-            directive == "ifndef" || directive == "elif" ||
-            directive == "elifdef" || directive == "elifndef" ||
-            directive == "else" || directive == "endif"){
+        if(directive == "if" || directive == "ifdef"
+            || directive == "ifndef" || directive == "elif"
+            || directive == "elseif" // EXTENSION: elseif
+            || directive == "elifdef" || directive == "elifndef"
+            || directive == "else" || directive == "endif"){
             handle_conditional(directive, line_tokens);
             return line_end + 1;
         }
@@ -1070,7 +1105,8 @@ struct CPreprocessor {
         } else if(directive == "embed"){
             handle_embed(line_tokens, output);
         } else {
-            // Unknown directive - ignore
+            // Unknown directive - error
+            error("unknown preprocessor directive '#", directive, "'");
         }
 
         return line_end + 1;
@@ -1098,14 +1134,14 @@ struct CPreprocessor {
             long value = evaluate_expression(line);
             push_cond(value != 0);
         }
-        else if(directive == "elif"){
+        else if(directive == "elif" || directive == "elseif"){
             if(cond_stack.count == 0){
-                error("#elif without #if");
+                error('#', directive, " without #if");
                 return;
             }
             auto top = &cond_stack[cond_stack.count - 1];
             if(top.seen_else){
-                error("#elif after #else");
+                error('#', directive, " after #else");
                 return;
             }
             if(top.condition_met){
@@ -1237,7 +1273,15 @@ struct CPreprocessor {
 
                 // Parameter name
                 if(line[i].type == PPTokenType.PP_IDENTIFIER){
-                    params ~= line[i].lexeme;
+                    str param_name = line[i].lexeme;
+                    // Check for duplicate parameter
+                    foreach(existing; params[]){
+                        if(existing == param_name){
+                            error("duplicate macro parameter '", param_name, "'");
+                            return;
+                        }
+                    }
+                    params ~= param_name;
                     i++;
 
                     // Skip whitespace
@@ -1248,7 +1292,9 @@ struct CPreprocessor {
                         i++;
                     }
                 } else {
-                    break;
+                    // Not an identifier - error
+                    error("macro parameter must be an identifier");
+                    return;
                 }
             }
             def.params = params[];
@@ -1272,7 +1318,84 @@ struct CPreprocessor {
             replacement.count--;
         }
 
+        // Validate replacement list
+        PPToken[] repl = replacement[];
+
+        // Check for ## at start or end
+        size_t first_nonws = 0;
+        while(first_nonws < repl.length && repl[first_nonws].type == PPTokenType.PP_WHITESPACE)
+            first_nonws++;
+        if(first_nonws < repl.length && repl[first_nonws].is_punct("##")){
+            error("'##' cannot appear at start of macro expansion");
+            return;
+        }
+        if(repl.length > 0){
+            size_t last_nonws = repl.length - 1;
+            while(last_nonws > 0 && repl[last_nonws].type == PPTokenType.PP_WHITESPACE)
+                last_nonws--;
+            if(repl[last_nonws].is_punct("##")){
+                error("'##' cannot appear at end of macro expansion");
+                return;
+            }
+        }
+
+        // Check for consecutive ## operators
+        {
+            bool last_was_hashhash = false;
+            foreach(tok; repl){
+                if(tok.type == PPTokenType.PP_WHITESPACE) continue;
+                if(tok.is_punct("##")){
+                    if(last_was_hashhash){
+                        error("'##' cannot be adjacent to another '##'");
+                        return;
+                    }
+                    last_was_hashhash = true;
+                } else {
+                    last_was_hashhash = false;
+                }
+            }
+        }
+
+        // Check for # not followed by parameter (in function-like macros)
+        if(def.is_function_like){
+            for(size_t ri = 0; ri < repl.length; ri++){
+                if(repl[ri].is_punct("#") && !repl[ri].is_punct("##")){
+                    // Skip whitespace to find next token
+                    size_t next = ri + 1;
+                    while(next < repl.length && repl[next].type == PPTokenType.PP_WHITESPACE)
+                        next++;
+                    if(next >= repl.length || repl[next].type != PPTokenType.PP_IDENTIFIER ||
+                       def.find_param(repl[next].lexeme) < 0){
+                        // Check if it's __VA_ARGS__ for variadic
+                        if(!(def.is_variadic && next < repl.length && repl[next].matches("__VA_ARGS__"))){
+                            error("'#' is not followed by a macro parameter");
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+        // Note: # in object-like macros is a literal # token, not stringification
+
+        // Check for __VA_ARGS__ in non-variadic macro
+        if(!def.is_variadic){
+            foreach(tok; repl){
+                if(tok.type == PPTokenType.PP_IDENTIFIER && tok.matches("__VA_ARGS__")){
+                    error("'__VA_ARGS__' can only appear in variadic macro");
+                    return;
+                }
+            }
+        }
+
         def.replacement = replacement[];
+
+        // Check for redefinition with different replacement
+        if(auto existing = name in macros){
+            if(!existing.is_undefined && !macro_def_equal(*existing, def)){
+                error("macro '", name, "' redefined with different value");
+            }
+        }
+
         macros[name] = def;
 
         // Log if this macro is being watched for define
@@ -1369,7 +1492,7 @@ struct CPreprocessor {
         // Skip whitespace
         i = skip_ws(tokens, i);
 
-        if(i >= tokens.length){
+        if(i >= tokens.length || tokens[i].type == PPTokenType.PP_NEWLINE){
             error("#include requires filename");
             return find_line_end(tokens, start) + 1;
         }
@@ -1399,8 +1522,8 @@ struct CPreprocessor {
             }
             i++;
         } else {
-            // Might be macro-expanded
-            // For now, skip
+            // Neither <...> nor "..." - error
+            error("#include expects \"filename\" or <filename>");
             return find_line_end(tokens, start) + 1;
         }
 
@@ -2320,6 +2443,19 @@ struct CPreprocessor {
 
     // Evaluate preprocessor expression
     long evaluate_expression(PPToken[] tokens){
+        // Check for empty expression
+        bool has_content = false;
+        foreach(tok; tokens){
+            if(tok.type != PPTokenType.PP_WHITESPACE && tok.type != PPTokenType.PP_NEWLINE){
+                has_content = true;
+                break;
+            }
+        }
+        if(!has_content){
+            error("empty expression in #if");
+            return 0;
+        }
+
         // First expand macros (except in defined())
         Barray!PPToken expanded = make_barray!PPToken(allocator);
         HideSet expr_hs = HideSet.create(allocator);
@@ -2330,7 +2466,18 @@ struct CPreprocessor {
         eval.tokens = expanded[];
         eval.pos = 0;
         eval.pp = &this;
-        return eval.eval_conditional();
+        long result = eval.eval_conditional();
+
+        // Check for extra tokens after expression
+        eval.skip_ws();
+        if(eval.pos < eval.tokens.length){
+            auto tok = eval.tokens[eval.pos];
+            if(tok.type != PPTokenType.PP_NEWLINE && tok.type != PPTokenType.PP_EOF){
+                error_at(tok, "extra tokens in preprocessor expression");
+            }
+        }
+
+        return result;
     }
 
     // Expand macros and builtins. If for_if=true, also handles defined(), __has_include, etc.
@@ -2361,7 +2508,6 @@ struct CPreprocessor {
             // Handle defined operator (only in #if context)
             if(for_if && tok.type == PPTokenType.PP_IDENTIFIER && tok.matches("defined")){
                 i++;
-                // Skip whitespace
                 i = skip_ws(tokens, i);
 
                 bool has_paren = false;
@@ -2371,23 +2517,33 @@ struct CPreprocessor {
                     i = skip_ws(tokens, i);
                 }
 
-                if(i < tokens.length && tokens[i].type == PPTokenType.PP_IDENTIFIER){
-                    str name = tokens[i].lexeme;
-                    bool def = is_defined(name);
-                    i++;
-
-                    // Emit 1 or 0
+                if(i >= tokens.length || tokens[i].type != PPTokenType.PP_IDENTIFIER){
+                    error("operator 'defined' requires an identifier");
                     PPToken result;
                     result.type = PPTokenType.PP_NUMBER;
-                    result.lexeme = def ? "1" : "0";
+                    result.lexeme = "0";
                     *output ~= result;
-
-                    if(has_paren){
-                        i = skip_ws(tokens, i);
-                        if(i < tokens.length && tokens[i].is_punct(")")) i++;
-                    }
                     continue;
                 }
+
+                str name = tokens[i].lexeme;
+                bool def = is_defined(name);
+                i++;
+
+                PPToken result;
+                result.type = PPTokenType.PP_NUMBER;
+                result.lexeme = def ? "1" : "0";
+                *output ~= result;
+
+                if(has_paren){
+                    i = skip_ws(tokens, i);
+                    if(i >= tokens.length || !tokens[i].is_punct(")")){
+                        error("missing ')' after 'defined'");
+                    } else {
+                        i++;
+                    }
+                }
+                continue;
             }
 
             // Handle __has_include specially (only in #if context, takes header-name args)
@@ -2743,6 +2899,15 @@ struct CPreprocessor {
                     current_arg ~= tok;
                 }
                 i++;
+            }
+
+            // Check argument count
+            size_t expected = macro_def.params.length;
+            size_t got = args.count;
+            if(!macro_def.is_variadic && got != expected){
+                error_at(invocation, "macro '", macro_def.name, "' expects ", expected, " arguments, got ", got);
+            } else if(macro_def.is_variadic && got < expected){
+                error_at(invocation, "macro '", macro_def.name, "' requires at least ", expected, " arguments, got ", got);
             }
 
             substitute(macro_def, args[], arg_hs, &substituted);
@@ -3146,9 +3311,30 @@ struct CPreprocessor {
             result.type = PPTokenType.PP_NUMBER;
         } else {
             result.type = PPTokenType.PP_PUNCTUATOR;
+            // Validate punctuator - pasting must produce a valid pp-token
+            if(!is_valid_punctuator(result.lexeme)){
+                error("pasting '", left.lexeme, "' and '", right.lexeme, "' creates invalid token '", result.lexeme, "'");
+            }
         }
 
         return result;
+    }
+
+    static bool is_valid_punctuator(str s){
+        // Valid C punctuators (including digraphs)
+        static immutable str[] valid = [
+            "[", "]", "(", ")", "{", "}", ".", "->",
+            "++", "--", "&", "*", "+", "-", "~", "!",
+            "/", "%", "<<", ">>", "<", ">", "<=", ">=", "==", "!=",
+            "^", "|", "&&", "||", "?", ":", ";", "...",
+            "=", "*=", "/=", "%=", "+=", "-=", "<<=", ">>=", "&=", "^=", "|=",
+            ",", "#", "##",
+            "<:", ":>", "<%", "%>", "%:", "%:%:",  // digraphs
+        ];
+        foreach(v; valid){
+            if(s == v) return true;
+        }
+        return false;
     }
 }
 
@@ -3409,6 +3595,12 @@ struct ExprEvaluator {
             return parse_char(tok.lexeme);
         }
 
+        // End of expression or unknown token - error
+        if(tok.type == PPTokenType.PP_EOF || tok.type == PPTokenType.PP_NEWLINE){
+            pp.error("expected value in expression");
+        } else {
+            pp.error_at(tok, "unexpected token '", tok.lexeme, "' in preprocessor expression");
+        }
         return 0;
     }
 
