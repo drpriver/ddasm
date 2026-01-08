@@ -2975,6 +2975,14 @@ struct CPreprocessor {
                         i = j + 1;
                         continue;
                     }
+                    // Check for #__VA_ARGS__ in variadic macro
+                    if(macro_def.is_variadic && repl[j].matches("__VA_ARGS__")){
+                        // Stringify all variadic arguments with commas
+                        PPToken str_tok = stringify_va_args(args, macro_def.params.length);
+                        *output ~= str_tok;
+                        i = j + 1;
+                        continue;
+                    }
                 }
             }
 
@@ -3276,6 +3284,54 @@ struct CPreprocessor {
                 }
             } else {
                 sb.write(tok.lexeme);
+            }
+        }
+
+        sb.write('"');
+
+        PPToken result;
+        result.type = PPTokenType.PP_STRING;
+        result.lexeme = sb.borrow();
+        return result;
+    }
+
+    // Stringify variadic arguments (__VA_ARGS__)
+    PPToken stringify_va_args(PPToken[][] args, size_t va_start){
+        StringBuilder sb;
+        sb.allocator = allocator;
+        sb.write('"');
+
+        bool prev_was_space = true;
+        bool first_arg = true;
+        for(size_t ai = va_start; ai < args.length; ai++){
+            // Add comma between arguments
+            if(!first_arg){
+                sb.write(',');
+                sb.write(' ');
+                prev_was_space = true;
+            }
+            first_arg = false;
+
+            foreach(tok; args[ai]){
+                // Treat newlines same as whitespace - collapse to single space
+                if(tok.type == PPTokenType.PP_WHITESPACE || tok.type == PPTokenType.PP_NEWLINE){
+                    if(!prev_was_space){
+                        sb.write(' ');
+                        prev_was_space = true;
+                    }
+                    continue;
+                }
+                prev_was_space = false;
+
+                // Escape quotes and backslashes in strings/chars
+                if(tok.type == PPTokenType.PP_STRING || tok.type == PPTokenType.PP_CHAR){
+                    foreach(c; tok.lexeme){
+                        if(c == '"' || c == '\\') sb.write('\\');
+                        sb.write(c);
+                    }
+                } else {
+                    sb.write(tok.lexeme);
+                }
             }
         }
 

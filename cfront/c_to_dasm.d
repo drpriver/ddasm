@@ -1364,12 +1364,17 @@ struct CDasmWriter {
                     sb.writef("% ", H(word_val));
                 }
                 // No need to emit trailing zeros - linker zero-inits
-            } else {
+            }
+            // const folder is retarded, special case for now
+            else if(gvar.initializer.as_literal && gvar.initializer.as_literal.value.type == CTokenType.STRING){
+                sb.writef("% ", gvar.initializer.as_literal.value.lexeme);
+            }
+            else {
                 // Scalar variable - use try_eval_constant which handles floats
                 ConstValue cv = try_eval_constant(gvar.initializer);
                 if(!cv.is_const()){
                     error(gvar.name, "initializer element is not a compile-time constant");
-                    sb.write("0 ");
+                    return 1;
                 } else {
                     ulong bits = 0;
                     if(vtype.is_float32()){
