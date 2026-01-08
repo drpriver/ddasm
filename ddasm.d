@@ -68,13 +68,13 @@ int main(int argc, char** argv){
     uintptr_t[RegisterNames.RARGMAX-RegisterNames.RARG1] rargs;
     ZString[rargs.length] rargs_s;
     ZString sourcefile;
-    Barray!str include_paths = make_barray!str(MALLOCATOR);
+    Barray!(str, Mallocator) include_paths;
     scope(exit) include_paths.cleanup();
-    Barray!str framework_paths = make_barray!str(MALLOCATOR);
+    Barray!(str, Mallocator) framework_paths;
     scope(exit) framework_paths.cleanup();
-    Barray!str lib_paths = make_barray!str(MALLOCATOR);
+    Barray!(str, Mallocator) lib_paths;
     scope(exit) lib_paths.cleanup();
-    Barray!str force_includes = make_barray!str(MALLOCATOR);
+    Barray!(str, Mallocator) force_includes;
     scope(exit) force_includes.cleanup();
 
     with(ArgParseFlags) with(ArgToParseFlags) {

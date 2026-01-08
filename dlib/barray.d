@@ -6,9 +6,9 @@ import dlib.allocator: Allocator;
 import dlib.box: Box;
 import core.stdc.string: memmove, memcpy;
 
-struct Barray(T){
+struct Barray(T, A=Allocator){
     size_t count;
-    Box!(T[]) bdata;
+    Box!(T[], A) bdata;
 
     void
     clear(){ count = 0; }
@@ -61,7 +61,7 @@ struct Barray(T){
     }
 
     size_t
-    alloc_index(size_t N){
+    alloc_index(){
         ensure_additional(1);
         return count++;
     }
@@ -81,6 +81,7 @@ struct Barray(T){
             count--;
             return;
         }
+        assert(index < count);
         size_t n_move = count - index - 1;
         memmove(bdata.data.ptr+index, bdata.data.ptr+index+1, n_move*T.sizeof);
         count--;
@@ -113,7 +114,6 @@ struct Barray(T){
     void
     cleanup(){
         bdata.dealloc;
-        bdata.data = null;
         count = 0;
     }
     inout(T)[]
@@ -138,8 +138,8 @@ struct Barray(T){
 
 
     static struct _Allocator {
-        static if(Allocator.state_size)
-            Allocator a;
+        static if(A.state_size)
+            A a;
     }
     alias AParam = typeof(_Allocator.tupleof);
 
@@ -147,7 +147,7 @@ struct Barray(T){
     typeof(this)
     from(AParam a, scope const(T)[] values){
         typeof(this) result;
-        static if(Allocator.state_size)
+        static if(A.state_size)
             result.bdata.allocator = a[0];
         result.extend(values);
         return result;
@@ -180,51 +180,15 @@ struct Barray(T){
     }
 }
 
-Barray!(T)
-make_barray(T)(Allocator a){
-    Barray!(T) result;
+Barray!(T, A)
+make_barray(T, A)(A a)if(A.state_size){
+    Barray!(T, A) result;
     result.bdata.allocator = a;
     return result;
 }
 
-
-struct Deque(T){
-    Box!(T[]) bdata;
-    size_t front;
-    size_t back;
-    size_t count(){
-        return back - front;
-    }
-    T pop(){
-        assert(back != front);
-        T result = bdata.data[--back];
-        return result;
-    }
-    T pop_front(){
-        assert(back != front);
-        T result = bdata.data[front++];
-        return result;
-    }
-    void push(T val){
-        if(back >= bdata.data.length){
-            size_t new_capacity = bdata.data.length?bdata.data.length*2:8;
-            bdata.good_resize(new_capacity);
-        }
-        bdata.data[back++] = val;
-    }
-    void push_front(T val){
-        if(!front && !back){
-            push(val);
-            return;
-        }
-        if(!front){
-            size_t new_capacity = bdata.data.length?bdata.data.length*2:8;
-            bdata.good_resize(new_capacity);
-            size_t n_move = back;
-            memmove(bdata.data.ptr+new_capacity/2, bdata.data.ptr+n_move, n_move*T.sizeof);
-            front = new_capacity/2;
-            back += new_capacity/2;
-        }
-        bdata.data[--front] = val;
-    }
+Barray!(T, A)
+make_barray(T, A)()if(!A.state_size){
+    Barray!(T, A) result;
+    return result;
 }

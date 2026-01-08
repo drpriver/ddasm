@@ -6,19 +6,31 @@ import dlib.allocator: Allocator;
 ///
 /// Box: A box is a container around a section of memory +
 /// the allocator that allocated that memory.
-struct Box(T){
-    Allocator allocator;
+struct Box(T, A=Allocator){
+    static if(A.state_size)
+        A allocator;
+    else
+        alias allocator = A;
     static if(!is(T == U[], U)){
         T* pointer;
         enum isVoid = is(T == void);
         static if(isVoid){
             size_t size;
+            bool opCast(T: bool)(){
+                return pointer !is null && size;
+            }
+            Box!(T, Allocator) erase(){ return Box!(T, Allocator)(allocator.allocator(), pointer, size); }
         }
         else {
             ref T opUnary(string s)() if(s == "*"){
                 return *pointer;
             }
+            bool opCast(T: bool)(){
+                return pointer !is null;
+            }
+            Box!(T, Allocator) erase(){ return Box!(T, Allocator)(allocator.allocator(), pointer); }
         }
+
 
         void
         dealloc(){
@@ -59,6 +71,10 @@ struct Box(T){
     else {
         U[] data;
         enum isVoid = is(U == void);
+        bool opCast(T: bool)(){
+            return data.length;
+        }
+        Box!(T, Allocator) erase(){ return Box!(T, Allocator)(allocator.allocator(), data); }
 
         Box!(CastTo) as(CastTo)(){
             // `is` is so fucking weird
@@ -66,10 +82,10 @@ struct Box(T){
                 // casting slices is broken in betterC
                 // (causes weird linker errors in unrelated code, with dmd 2.098).
                 static if(isVoid){
-                    size_t size = data.length*U.sizeof;
+                    size_t size = data.length;
                 }
                 else {
-                    size_t size = data.length;
+                    size_t size = data.length*U.sizeof;
                 }
                 assert(size % C.sizeof == 0);
                 size_t newlength = size / C.sizeof;
@@ -129,27 +145,52 @@ struct Box(T){
 }
 
 
-Box!T
-boxed(T)(Allocator a, T* val){
+Box!(T, A)
+boxed(T, A)(A a, T* val)if(A.state_size){
     T* copy = (a.alloc!T)(1).ptr;
     *copy = *val;
-    return Box!T(a, copy);
+    return Box!(T, A)(a, copy);
 }
 
-Box!T
-boxed(T)(Allocator a, T[] val){
+Box!(T, A)
+boxed(T, A)(A a, T[] val)if(A.state_size){
     T[] copy = (a.alloc!T)(val.length);
     copy[] = val[];
-    return Box!T(a, copy);
+    return Box!(T, A)(a, copy);
 }
 
-Box!(T[])
-boxed(T)(Allocator a, size_t len){
+Box!(T[], A)
+boxed(T, A)(A a, size_t len)if(A.state_size){
     T[] p = (a.zalloc!T)(len);
     return Box!(T[])(a, p);
 }
-Box!T
-boxed(T)(Allocator a){
+Box!(T, A)
+boxed(T, A)(A a)if(A.state_size){
     T* p = (a.zalloc!T)(1).ptr;
     return Box!T(a, p);
+}
+
+Box!(T, A)
+boxed(T, A)(T* val)if(!A.state_size){
+    T* copy = (a.alloc!T)(1).ptr;
+    *copy = *val;
+    return Box!(T, A)(copy);
+}
+
+Box!(T, A)
+boxed(T, A)(T[] val)if(!A.state_size){
+    T[] copy = (a.alloc!T)(val.length);
+    copy[] = val[];
+    return Box!(T, A)(copy);
+}
+
+Box!(T[], A)
+boxed(T, A)(size_t len)if(!A.state_size){
+    T[] p = (a.zalloc!T)(len);
+    return Box!(T[], A)(p);
+}
+Box!(T, A)
+boxed(T, A)()if(!A.state_size){
+    T* p = (a.zalloc!T)(1).ptr;
+    return Box!T(p, A);
 }
