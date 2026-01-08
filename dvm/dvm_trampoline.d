@@ -102,7 +102,8 @@ else version(X86_64) {
         uintptr_t call_native_trampoline(
             void* func_ptr,
             uintptr_t* args,
-            size_t n_args
+            size_t n_args,
+            uintptr_t* ret2 = null  // Optional: capture rdx for 2-slot struct returns
         ) {
             // Copy args to local storage for stable asm access
             uintptr_t[16] local_args = void;
@@ -128,33 +129,69 @@ else version(X86_64) {
 
             // r10 = func_ptr, r11 = stack_args ptr, r12 = n_stack_args, r13 = stack_bytes
             // rbx used to save original rsp (callee-saved)
-            return __asm!uintptr_t(
-                // Save original rsp in callee-saved register
-                "movq %rsp, %rbx\n" ~
-                // Allocate stack space
-                "subq %r13, %rsp\n" ~
-                // Copy stack args left-to-right (first stack arg at lowest address)
-                "testq %r12, %r12\n" ~
-                "jz 2f\n" ~                         // skip if no stack args
-                // r14 = index (start at 0)
-                "xorq %r14, %r14\n" ~
-                // r15 = dest on stack
-                "movq %rsp, %r15\n" ~
-                "1:\n" ~
-                "movq (%r11, %r14, 8), %rax\n" ~    // load arg[index]
-                "movq %rax, (%r15)\n" ~             // store to stack
-                "addq $$8, %r15\n" ~                // advance dest
-                "addq $$1, %r14\n" ~                // increment index
-                "cmpq %r12, %r14\n" ~               // compare to n_stack_args
-                "jb 1b\n" ~                         // loop while index < n
-                "2:\n" ~
-                // Call the function
-                "callq *%r10\n" ~
-                // Restore stack
-                "movq %rbx, %rsp",
-                "={rax},{rdi},{rsi},{rdx},{rcx},{r8},{r9},{r10},{r11},{r12},{r13},~{rbx},~{r14},~{r15},~{memory}",
-                a0, a1, a2, a3, a4, a5, func_ptr, stack_args, n_stack_args, stack_bytes
-            );
+            if (ret2 !is null) {
+                // Capture both rax and rdx for 2-slot struct returns
+                // r14 is reused to save ret2 ptr (callee-saved r14 is clobbered anyway)
+                return __asm!uintptr_t(
+                    // Save original rsp in callee-saved register
+                    "movq %rsp, %rbx\n" ~
+                    // Save ret2 ptr in callee-saved register (we'll use it after call)
+                    "movq %r14, %r15\n" ~  // r14 has ret2, save to r15
+                    // Allocate stack space
+                    "subq %r13, %rsp\n" ~
+                    // Copy stack args left-to-right (first stack arg at lowest address)
+                    "testq %r12, %r12\n" ~
+                    "jz 2f\n" ~                         // skip if no stack args
+                    // use rax as index (start at 0), rcx as dest
+                    "xorq %rcx, %rcx\n" ~
+                    "movq %rsp, %rax\n" ~
+                    "1:\n" ~
+                    "movq (%r11, %rcx, 8), %r14\n" ~    // load arg[index]
+                    "movq %r14, (%rax)\n" ~             // store to stack
+                    "addq $$8, %rax\n" ~                // advance dest
+                    "addq $$1, %rcx\n" ~                // increment index
+                    "cmpq %r12, %rcx\n" ~               // compare to n_stack_args
+                    "jb 1b\n" ~                         // loop while index < n
+                    "2:\n" ~
+                    // Reload register args (they may have been clobbered)
+                    // Call the function
+                    "callq *%r10\n" ~
+                    // Store rdx to *ret2 (ret2 ptr is in r15)
+                    "movq %rdx, (%r15)\n" ~
+                    // Restore stack
+                    "movq %rbx, %rsp",
+                    "={rax},{rdi},{rsi},{rdx},{rcx},{r8},{r9},{r10},{r11},{r12},{r13},{r14},~{rbx},~{r15},~{memory}",
+                    a0, a1, a2, a3, a4, a5, func_ptr, stack_args, n_stack_args, stack_bytes, ret2
+                );
+            } else {
+                return __asm!uintptr_t(
+                    // Save original rsp in callee-saved register
+                    "movq %rsp, %rbx\n" ~
+                    // Allocate stack space
+                    "subq %r13, %rsp\n" ~
+                    // Copy stack args left-to-right (first stack arg at lowest address)
+                    "testq %r12, %r12\n" ~
+                    "jz 2f\n" ~                         // skip if no stack args
+                    // r14 = index (start at 0)
+                    "xorq %r14, %r14\n" ~
+                    // r15 = dest on stack
+                    "movq %rsp, %r15\n" ~
+                    "1:\n" ~
+                    "movq (%r11, %r14, 8), %rax\n" ~    // load arg[index]
+                    "movq %rax, (%r15)\n" ~             // store to stack
+                    "addq $$8, %r15\n" ~                // advance dest
+                    "addq $$1, %r14\n" ~                // increment index
+                    "cmpq %r12, %r14\n" ~               // compare to n_stack_args
+                    "jb 1b\n" ~                         // loop while index < n
+                    "2:\n" ~
+                    // Call the function
+                    "callq *%r10\n" ~
+                    // Restore stack
+                    "movq %rbx, %rsp",
+                    "={rax},{rdi},{rsi},{rdx},{rcx},{r8},{r9},{r10},{r11},{r12},{r13},~{rbx},~{r14},~{r15},~{memory}",
+                    a0, a1, a2, a3, a4, a5, func_ptr, stack_args, n_stack_args, stack_bytes
+                );
+            }
         }
     }
     else version(Windows) {
