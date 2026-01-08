@@ -186,4 +186,10 @@ struct FileCache {
             cached_keys[key] = key;
     }
 
+    // Insert virtual file data (not from filesystem).
+    void insert(str path, const(ubyte)[] data){
+        str key = cache_key(path);
+        cache[key] = CachedFile(data:data, size:data.length, flags:CachedFlags.DATA_CACHED | CachedFlags.SIZE_CACHED | CachedFlags.EXISTS);
+    }
+
 }

@@ -10,20 +10,20 @@ import dlib.argparse;
 import dlib.zstring: ZString;
 import dlib.get_input: get_input_line, LineHistory;
 import dlib.term_util: get_cols, stdin_is_interactive;
-import dlib.file_util: read_file, FileFlags, FileResult;
 import dlib.allocator;
-import dlib.barray: Barray;
+import dlib.barray: Barray, make_barray;
 import dlib.box: Box, boxed;
 import dlib.str_util: endswith;
-import dlib.table;
+import dlib.table: Table;
 import dlib.aliases;
-import dlib.logger;
+import dlib.logger: Logger;
 
 import dvm.dvm_defs: Fuzzing, uintptr_t;
 import dvm.dvm_linked: LinkedModule, Function, FunctionType, FunctionTable, FunctionInfo;
 import dvm.dvm_unlinked: UnlinkedModule;
 import dvm.dvm_machine: Machine, RunFlags;
 import dvm.dvm_linker: link_module;
+import dlib.file_cache: FileCache, FileError;
 import dvm.dvm_regs: RegisterNames;
 
 import dasm.dasm_parser: parse_asm_string;
@@ -45,49 +45,65 @@ static if(Fuzzing){
 }
 else {
 
+enum Language {
+    UNSET,
+    DASM,
+    DS,
+    C,
+}
 extern(C)
 int main(int argc, char** argv){
+    FileCache file_cache = FileCache(MALLOCATOR);
     Logger logger;
     bool disassemble = false;
     bool early_exit = false;
     bool force_interactive = false;
     bool no_interactive = false;
     bool debugger = false;
-    bool highlevel = false;
     bool no_run = false;
     bool codegen_only = false;
     bool parse_only = false;
+    bool preprocess = false;
+    Language lang = Language.UNSET;
     uintptr_t[RegisterNames.RARGMAX-RegisterNames.RARG1] rargs;
     ZString[rargs.length] rargs_s;
     ZString sourcefile;
-    Barray!str include_paths;
-    include_paths.bdata.allocator = MALLOCATOR;
+    Barray!str include_paths = make_barray!str(MALLOCATOR);
     scope(exit) include_paths.cleanup();
-    Barray!str framework_paths;
-    framework_paths.bdata.allocator = MALLOCATOR;
+    Barray!str framework_paths = make_barray!str(MALLOCATOR);
     scope(exit) framework_paths.cleanup();
-    Barray!str lib_paths;
-    lib_paths.bdata.allocator = MALLOCATOR;
+    Barray!str lib_paths = make_barray!str(MALLOCATOR);
     scope(exit) lib_paths.cleanup();
-    Barray!str force_includes;
-    force_includes.bdata.allocator = MALLOCATOR;
+    Barray!str force_includes = make_barray!str(MALLOCATOR);
     scope(exit) force_includes.cleanup();
 
     with(ArgParseFlags) with(ArgToParseFlags) {
     ArgToParse[1] pos_args = [
         {
             name: "source",
-            help: "Source file (.dasm file) to read from.
-            If not given, will read from stdin.",
+            help: "Source file to read from.
+            If not given, will read from stdin.
+            Will be interpreted based on file extension (default is C).",
             dest: ARGDEST(&sourcefile),
         },
     ];
-    ArgToParse[14] _kw_args = [
+    version(OSX)
+        bool hide_framework = false;
+    else
+        bool hide_framework = true;
+    ArgToParse[16] kw_args = [
         {
             name: "-I",
             help: "Add directory to include search path (for C files). Can be specified multiple times.",
             dest: ArgUser((str path) { include_paths ~= path; return 0; }, "path"),
             num: NumRequired(0, int.max),
+        },
+        {
+            name: "-F",
+            help: "Add directory to framework search path (for C files). Can be specified multiple times.",
+            dest: ArgUser((str path) { framework_paths ~= path; return 0; }, "path"),
+            num: NumRequired(0, int.max),
+            flags: hide_framework?ArgToParseFlags.HIDDEN:ArgToParseFlags.ARG_TO_PARSE_NONE,
         },
         {
             name: "-L",
@@ -106,11 +122,6 @@ int main(int argc, char** argv){
             dest: ARGDEST(&no_interactive),
         },
         {
-            name: "--dev-null",
-            help: "Builtin funcs don't print anymore",
-            dest: ARGDEST(&dvm_modules.builtins.devnull),
-        },
-        {
             name: "--disassemble-every-op", altname: "--dis",
             help: "Print out the disassembly before executing each op",
             dest: ARGDEST(&disassemble),
@@ -121,13 +132,49 @@ int main(int argc, char** argv){
             dest: ARGDEST(&debugger),
         },
         {
+            name: "--lang",
+            help: "Force interpretation of the source
+                   as this language.",
+            dest: ArgUser((str l) { 
+                switch(l){
+                    case "c":
+                    case "C":
+                        lang = Language.C;
+                        break;
+                    case "dasm":
+                    case "DASM":
+                        lang = Language.DASM;
+                        break;
+                    case "ds":
+                    case "davescript":
+                        lang = Language.DS;
+                        break;
+                    default:
+                        return 1;
+                }
+                return 0; 
+            }, "language"),
+        },
+        {
             name: "--ds", altname: "--davescript",
             help: "Force interpretation of the source as
             davescript instead of dasm",
-            dest: ARGDEST(&highlevel),
+            dest: ArgAction((){ lang = Language.DS; return 0;}),
+        },
+        {
+            name: "--dasm",
+            help: "Force interpretation of the source as dasm",
+            dest: ArgAction((){ lang = Language.DASM; return 0;}),
+        },
+        {
+            name: "-c",
+            help: "Force interpretation of the source as C",
+            dest: ArgAction((){ lang = Language.C; return 0;}),
         },
         {
             name: "-a", altname: "--args",
+            // The integer coercion is honestly pretty janky, we'll remove it
+            // after we fix the examples.
             help: "Set rarg1 to ... to the following values (coerced to integers if possible)",
             dest: ARGDEST(&rargs_s[0]),
             num: NumRequired(0, rargs_s.length),
@@ -154,16 +201,8 @@ int main(int argc, char** argv){
             dest: ArgUser((str path) { force_includes ~= path; return 0; }, "file"),
             num: NumRequired(0, int.max),
         },
-        {
-            name: "-F",
-            help: "Add directory to framework search path (for C files). Can be specified multiple times.",
-            dest: ArgUser((str path) { framework_paths ~= path; return 0; }, "path"),
-            num: NumRequired(0, int.max),
-        },
     ];
     // Only have -F arg on macos
-    version(OSX) ArgToParse[] kw_args = _kw_args[];
-    else ArgToParse[] kw_args = _kw_args[0..$-1];
     enum {HELP=0, VERSION=1}
     ArgToParse[2] early_args = [
         {
@@ -212,18 +251,14 @@ int main(int argc, char** argv){
         else
             break;
     }
-    Box!(str) btext;
+    str source_text;
     if(sourcefile.length){
-        FileResult fe = read_file(sourcefile.ptr);
-        if(fe.errored){
-            version(Posix)
-                fprintf(stderr, "Unable to read from '%s': %s\n", sourcefile.ptr, strerror(fe.errored));
-            // TODO: get error message from windows
-            version(Windows)
-                fprintf(stderr, "Unable to read from '%s'\n", sourcefile.ptr);
-            return fe.errored;
+        const(ubyte)[] file_data;
+        if(file_cache.read_file(sourcefile[], file_data) != FileError.OK){
+            fprintf(stderr, "Unable to read from '%s'\n", sourcefile.ptr);
+            return 1;
         }
-        btext = fe.value.as!str;
+        source_text = cast(str)file_data;
     }
     else if(!no_interactive && (force_interactive || stdin_is_interactive())){
         StringBuilder sb = {allocator: MALLOCATOR};
@@ -246,7 +281,7 @@ int main(int argc, char** argv){
             }
             sb.write('\n');
         }
-        btext = sb.detach.as!str;
+        source_text = sb.detach()[]; // leak it
     }
     else {
         StringBuilder sb = {allocator: MALLOCATOR};
@@ -261,41 +296,48 @@ int main(int argc, char** argv){
         }
         if(!sb.cursor)
             sb.write(' ');
-        btext = sb.detach.as!str;
+        file_cache.insert("(stdin)", cast(const(ubyte)[])sb.borrow);
+        source_text = sb.borrow;
     }
-    if(highlevel || sourcefile[].endswith(".ds")){
+    if(!lang){
+        if(sourcefile[].endswith(".ds"))
+            lang = Language.DS;
+        else if(sourcefile[].endswith(".c") || sourcefile[].endswith(".h"))
+            lang = Language.C;
+        else if(sourcefile[].endswith(".dasm"))
+            lang = Language.DASM;
+        else
+            lang = Language.C;
+    }
+    if(lang == Language.DS){
         static import dscript.dscript;
         static import dscript_to_dasm;
         dscript.dscript.powerup;
         Box!(char[]) dasmtext = {allocator:MALLOCATOR};
-        ubyte[] data = btext.as!(ubyte[]).data;
-        int err = dscript_to_dasm.compile_to_dasm(data, &dasmtext);
+        int err = dscript_to_dasm.compile_to_dasm(cast(ubyte[])source_text, &dasmtext);
         if(err) return err;
-        btext.dealloc();
-        btext = Box!str(btext.allocator, dasmtext.data);
+        source_text = dasmtext.data; // leak
         dscript.dscript.powerdown;
     }
-    else if(sourcefile[].endswith(".c")){
+    else if(lang == Language.C){
         import cfront.cfront : DEFAULT_INCLUDE_PATHS, DEFAULT_FRAMEWORK_PATHS, DEFAULT_LIBRARY_PATHS;
         static import cfront.cfront;
         // Add default paths
         include_paths.extend(DEFAULT_INCLUDE_PATHS);
         framework_paths.extend(DEFAULT_FRAMEWORK_PATHS);
         Box!(char[]) dasmtext = {allocator:MALLOCATOR};
-        ubyte[] data = btext.as!(ubyte[]).data;
         import cfront.cfront : CompileFlags;
-        int err = cfront.cfront.compile_c_to_dasm(data, &dasmtext, sourcefile[], include_paths[], framework_paths[], CompileFlags.init, force_includes[], &logger);
+        int err = cfront.cfront.compile_c_to_dasm(cast(ubyte[])source_text, &dasmtext, sourcefile[], include_paths[], framework_paths[], CompileFlags.init, force_includes[], &logger, &file_cache);
         if(err) return err;
         // If codegen_only, print DASM text and exit
-        if(codegen_only){
-            fprintf(stdout, "%.*s\n", cast(int)dasmtext.data.length, dasmtext.data.ptr);
-            return 0;
-        }
-        btext.dealloc();
-        btext = Box!str(btext.allocator, dasmtext.data);
+        source_text = dasmtext.data; // leak
+    }
+    if(codegen_only){
+        logger.sink(source_text);
+        return 0;
     }
     UnlinkedModule prog;
-    int err = parse_asm_string(MALLOCATOR, btext.data, &prog);
+    int err = parse_asm_string(MALLOCATOR, source_text, &prog);
     if(err){
         fprintf(stderr, "Parsing failed\n");
         return err;
@@ -306,12 +348,12 @@ int main(int argc, char** argv){
         return 0;
     }
 
-    LinkedModule linked_prog = {source_text: btext, name: prog.name};
+    LinkedModule linked_prog = {source_text: source_text, name: prog.name};
     {
         void find_loc(const char* first_char, out str fn, out int line, out int column){
             import dasm.dasm_tokenizer: Tokenizer;
             import dasm.dasm_token: Token, TokenType;
-            str text = btext.data;
+            str text = source_text;
             Tokenizer tokenizer = Tokenizer.from(text);
             Token tok = tokenizer.current_token_and_advance;
             while(tok._text != first_char){
@@ -367,7 +409,7 @@ int main(int argc, char** argv){
             }
             loaded[dlimport.alias_name] = dyn_mod;
         }
-        err = link_module(MALLOCATOR, temp, BUILTINS, &prog, &linked_prog, &find_loc, &loaded);
+        err = link_module(MALLOCATOR, temp, BUILTINS, &prog, &linked_prog, &find_loc, &loaded, &file_cache);
     }
     if(err){
         fprintf(stderr, "Linking failed\n");

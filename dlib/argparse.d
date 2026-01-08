@@ -36,6 +36,7 @@ enum ArgType: ubyte {
     BITFLAG,
     ENUM,
     USER_DEFINED,
+    FLAG_ACTION,
 }
 
 static immutable string[ArgType.max+1] ArgTypeNames = [
@@ -49,6 +50,7 @@ static immutable string[ArgType.max+1] ArgTypeNames = [
     "flag",
     "enum",
     "user",
+    "action",
 ];
 
 struct ArgParseEnumType {
@@ -76,6 +78,7 @@ struct ArgParseDestination {
     union {
         SimpleDest dest;
         UserType ut;
+        int delegate() user_action;
     };
     int delegate(void*) user_append_proc;
 }
@@ -85,6 +88,13 @@ ArgUser(scope int delegate(str) parse_proc, str type_name, str default_str = nul
     ArgParseDestination result;
     result.type = ArgType.USER_DEFINED;
     result.ut = UserType(parse_proc, type_name, default_str);
+    return result;
+}
+ArgParseDestination
+ArgAction(scope int delegate() action){
+    ArgParseDestination result;
+    result.type = ArgType.FLAG_ACTION;
+    result.user_action = action;
     return result;
 }
 ArgParseDestination
@@ -150,6 +160,8 @@ ArgParseDestination
 ArgEnumDest(void* dest, const ArgParseEnumType* enu){
     return ArgParseDestination(ArgType.ENUM, SimpleDest(dest, enu));
 }
+
+
 
 enum ArgToParseFlags: ulong {
     ARG_TO_PARSE_NONE = 0,
@@ -259,7 +271,7 @@ print_argparse_help(const ArgParser* p, int columns){
     foreach(const ref ArgToParse arg; p.keyword){
         if(arg.flags & ArgToParseFlags.HIDDEN)
             continue;
-        if(arg.dest.type == ArgType.FLAG){
+        if(arg.dest.type == ArgType.FLAG || arg.dest.type == ArgType.FLAG_ACTION){
             if(arg.altname.length){
                 auto to_print = " [%.*s | %.*s]".length - 8 + arg.name.length + arg.altname.length;
                 hs.update(cast(int)to_print);
@@ -443,6 +455,9 @@ print_arg_help(const ArgToParse* arg, int columns){
         case ArgType.FLAG:{
             print_wrapped_help(help, columns);
         }break;
+        case ArgType.FLAG_ACTION:{
+            print_wrapped_help(help, columns);
+        }break;
         case ArgType.STRING:{
             auto s = cast(str*)arg.dest.dest.pointer;
             printf(" = '%.*s'", cast(int)s.length, s.ptr);
@@ -556,7 +571,7 @@ parse_args(ArgParser* parser, char*[]args, ArgParseFlags flags = ArgParseFlags.N
                             pos_arg++;
                         kwarg = new_kwarg;
                         kwarg.visited = true;
-                        if(kwarg.dest.type == FLAG || kwarg.dest.type == BITFLAG){
+                        if(kwarg.dest.type == FLAG || kwarg.dest.type == BITFLAG || kwarg.dest.type == FLAG_ACTION){
                             ArgParseError error = set_flag(kwarg);
                             if(error) {
                                 parser.failed_arg_to_parse = kwarg;
@@ -642,6 +657,10 @@ find_matching_kwarg(ArgParser* parser, char[] s){
 ArgParseError
 set_flag(ArgToParse* arg){
 with(ArgType) with(ArgParseError){
+    if(arg.dest.type == FLAG_ACTION){
+        arg.num_parsed += 1;
+        return cast(ArgParseError)arg.dest.user_action();
+    }
     if(arg.dest.type == BITFLAG){
         auto dest = cast(ulong*)arg.dest.dest.pointer;
         if(*dest & arg.dest.dest.bitflag)
@@ -727,6 +746,7 @@ with(ArgType) with(ArgParseError){
             // fall-through
         case FLAG:
             // This is weird, but it is a configuration error.
+        case FLAG_ACTION:
             return set_flag(arg);
         case STRING:{
             // This is a hack, our target is actually a LongString.

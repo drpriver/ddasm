@@ -11,7 +11,7 @@ import dlib.stringbuilder;
 import dlib.parse_numbers: parse_hex_inner;
 import dlib.table;
 import dlib.str_util: split;
-import dlib.file_util: read_file, FileResult;
+import dlib.file_cache: FileCache, FileError;
 
 import dvm.dvm_defs;
 import dvm.dvm_linked;
@@ -63,6 +63,7 @@ struct LinkContext {
     FunctionTable* builtins;
     UnlinkedModule* unlinked;
     Table!(str, LinkedModule*)* modules;
+    FileCache* file_cache;
 
     LinkedModule prog;
     void delegate(const char*, out str, out int, out int) find_loc;
@@ -304,15 +305,13 @@ struct LinkContext {
                     case EMBED:{
                         // Read file and copy bytes as words
                         import core.stdc.string: memcpy;
-                        ZString path = make_string(arg.embed.path);
-                        FileResult file = read_file(path.ptr, temp_allocator);
-                        if(file.errored){
+                        const(ubyte)[] file_data;
+                        if(file_cache.read_file(arg.embed.path, file_data, skip_bom: false) != FileError.OK){
                             err_print(arg.first_char, "Failed to read embed file: ", arg.embed.path);
                             return AsmError.LINK_ERROR;
                         }
-                        scope(exit) file.value.dealloc;
                         // Validate offset and length
-                        size_t file_len = file.value.data.length;
+                        size_t file_len = file_data.length;
                         if(arg.embed.offset >= file_len){
                             err_print(arg.first_char, "Embed offset exceeds file size");
                             return AsmError.LINK_ERROR;
@@ -328,7 +327,7 @@ struct LinkContext {
                             return AsmError.LINK_ERROR;
                         }
                         // Copy data (var storage already zero-initialized)
-                        ubyte* src = cast(ubyte*)file.value.data.ptr + arg.embed.offset;
+                        const(ubyte)* src = file_data.ptr + arg.embed.offset;
                         memcpy(dest, src, arg.embed.length);
                         pos += num_words;
                     }break;
@@ -589,12 +588,14 @@ link_module(
     LinkedModule* prog,
     scope void delegate(const char*, out str, out int, out int) find_loc,
     Table!(str, LinkedModule*)* modules,
+    FileCache* file_cache,
 ){
     LinkContext ctx;
     ctx.allocator = allocator;
     ctx.temp_allocator = temp_allocator;
     ctx.builtins  = builtins;
     ctx.unlinked  = unlinked;
+    ctx.file_cache = file_cache;
     ctx.prog.bytecode.allocator = allocator;
     ctx.prog.strings.bdata.allocator = allocator;
     ctx.prog.arrays.bdata.allocator = allocator;

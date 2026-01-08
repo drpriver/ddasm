@@ -82,7 +82,7 @@ struct FunctionInfo {
 
 struct LinkedModule {
     str name;
-    Box!(str) source_text;
+    str source_text;
     Box!(uintptr_t[]) bytecode;
     Barray!(ZString) strings;
     Barray!(IntegerArray) arrays;

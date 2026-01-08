@@ -84,14 +84,9 @@ version(OSX) {
     ];
 }
 
-int compile_c_to_dasm(const(ubyte)[] source, Box!(char[])* progtext, str source_file, str[] include_paths, str[] framework_paths, CompileFlags flags, str[] force_includes, Logger* logger, FileCache* file_cache = null){
+int compile_c_to_dasm(const(ubyte)[] source, Box!(char[])* progtext, str source_file, str[] include_paths, str[] framework_paths, CompileFlags flags, str[] force_includes, Logger* logger, FileCache* file_cache){
     ArenaAllocator arena = ArenaAllocator(MALLOCATOR);
     scope(exit) arena.free_all();
-
-    // Create file cache if not provided
-    FileCache local_cache = FileCache(arena.allocator());
-    if(file_cache is null)
-        file_cache = &local_cache;
 
     // Find actual content length (before NUL terminator, if any)
     size_t actual_len = source.length;

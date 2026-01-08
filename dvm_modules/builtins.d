@@ -5,8 +5,6 @@ import dlib.aliases;
 import dvm.dvm_defs: Fuzzing, uintptr_t;
 import dlib.get_input: get_input_line, LineHistory;
 
-__gshared bool devnull = false;
-
 Function*
 expose_varargs(void* fun, uint n_fixed) {
     Function* f = cast(Function*)MALLOCATOR.zalloc(Function.sizeof).ptr;
@@ -120,7 +118,6 @@ get_io_module(){
     mod.functions["fprintf"] = FunctionInfo("fprintf", expose_varargs(cast(void*)&fprintf, 2));
     reg("puts",
         (uintptr_t arg){
-            if(devnull) return;
             if(!Fuzzing)fprintf(stdout, "%s\n", cast(char*)arg);
         }
     );
